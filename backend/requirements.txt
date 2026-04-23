@@ -1,0 +1,43 @@
+# Web framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# Database
+sqlalchemy>=2.0.0
+alembic>=1.13.0
+
+# Agent framework
+langgraph>=1.0.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+
+# Checkpoint storage (SQLite)
+langgraph-checkpoint-sqlite>=0.1.0
+
+# Audio processing
+librosa>=0.10.0
+soundfile>=0.12.0
+
+# HTTP client
+httpx>=0.27.0
+
+# Utilities
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-multipart>=0.0.9
+aiofiles>=23.0.0
+passlib[bcrypt]>=1.7.4
+
+# OpenAI
+openai>=1.12.0
+
+# basic-pitch - older versions conflict with Python 3.11+, latest only supports up to Python 3.11
+basic-pitch
+
+# Dev dependencies
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+black>=24.0.0
+isort>=5.13.0
+
+mido
