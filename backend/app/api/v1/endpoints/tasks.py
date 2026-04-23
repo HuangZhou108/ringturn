@@ -39,7 +39,7 @@ def get_or_create_default_user(db: Session) -> User:
         db.refresh(user)
     return user
 
-@router.post("", response_model=TaskCreateResponse)
+@router.post("")
 async def create_task(
     request: TaskCreate,
     background_tasks: BackgroundTasks,
@@ -50,108 +50,125 @@ async def create_task(
 
     异步触发Agent执行，立即返回task_id
     """
-    # 获取或创建默认用户
-    user = get_or_create_default_user(db)
-    user_id = user.id
+    try:
+        # 获取或创建默认用户
+        user = get_or_create_default_user(db)
+        user_id = user.id
 
-    # 生成任务ID
-    task_id = str(uuid.uuid4())
+        # 生成任务ID
+        task_id = str(uuid.uuid4())
 
-    # 创建任务记录
-    task = TaskModel(
-        id=task_id,
-        user_id=user_id,
-        user_request=request.user_request,
-        source_type=request.source_type,
-        source_value=request.source_value,
-        status=TaskStatus.pending,
-    )
-    db.add(task)
-    db.commit()
+        # 创建任务记录
+        task = TaskModel(
+            id=task_id,
+            user_id=user_id,
+            user_request=request.user_request,
+            source_type=request.source_type,
+            source_value=request.source_value,
+            status=TaskStatus.pending,
+        )
+        db.add(task)
+        db.commit()
 
-    # 异步触发Agent执行
-    background_tasks.add_task(run_agent_task, task_id)
+        # 异步触发Agent执行
+        background_tasks.add_task(run_agent_task, task_id)
 
-    return TaskCreateResponse(
-        task_id=task_id,
-        status=task.status.value,
-        created_at=task.created_at,
-    )
+        return {
+            "code": 200,
+            "data": {
+                "task_id": task_id,
+                "status": task.status.value,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+            },
+            "message": "任务创建成功。",
+        }
+    except Exception as e:
+        return {
+            "code": 400,
+            "data": {},
+            "message": f"任务创建失败: {str(e)}",
+        }
 
-@router.get("/{task_id}", response_model=TaskDetailResponse)
+@router.get("/{task_id}")
 async def get_task(
     task_id: str,
     db: Session = Depends(get_db),
 ):
-    """
-    获取任务详情
-    """
+    """获取任务详情"""
     task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
     if not task:
         raise TaskNotFoundException(task_id)
 
-    return TaskDetailResponse(
-        task_id=task.id,
-        user_request=task.user_request,
-        status=task.status.value,
-        source_type=task.source_type,
-        source_value=task.source_value,
-        final_audio_url=task.final_audio_url,
-        audio_duration=task.audio_duration,
-        plan=task.plan,
-        created_at=task.created_at,
-        updated_at=task.updated_at,
-    )
+    return {
+        "code": 200,
+        "data": {
+            "task_id": task.id,
+            "user_request": task.user_request,
+            "status": task.status.value,
+            "source_type": task.source_type,
+            "source_value": task.source_value,
+            "final_audio_url": task.final_audio_url,
+            "audio_duration": task.audio_duration,
+            "plan": task.plan,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+        },
+        "message": "获取任务详情成功。",
+    }
 
-@router.get("/{task_id}/status", response_model=TaskStatusResponse)
+@router.get("/{task_id}/status")
 async def get_task_status(
     task_id: str,
     db: Session = Depends(get_db),
 ):
-    """
-    获取任务状态（包括进度信息）
-    """
+    """获取任务状态（包括进度信息）"""
     task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
     if not task:
         raise TaskNotFoundException(task_id)
 
-    return TaskStatusResponse(
-        task_id=task.id,
-        status=task.status.value,
-        current_subtask=task.current_subtask,
-        subtask_progress=task.subtask_progress or 0.0,
-        message="获取任务状态成功",
-    )
+    return {
+        "code": 200,
+        "data": {
+            "task_id": task.id,
+            "status": task.status.value,
+            "current_subtask": task.current_subtask,
+            "subtask_progress": task.subtask_progress or 0.0,
+            "message": "获取任务状态成功。",
+        },
+        "message": "获取任务状态成功。",
+    }
 
-@router.get("/{task_id}/result", response_model=TaskResultResponse)
+@router.get("/{task_id}/result")
 async def get_task_result(
     task_id: str,
     db: Session = Depends(get_db),
 ):
-    """
-    获取任务生成结果
-    """
+    """获取任务生成结果"""
     task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
     if not task:
         raise TaskNotFoundException(task_id)
 
     if task.status != TaskStatus.completed:
-        return TaskResultResponse(
-            audio_url=None,
-            duration=None,
-            format="mp3",
-        )
+        return {
+            "code": 200,
+            "data": None,
+            "message": "任务未完成。",
+        }
 
-    return TaskResultResponse(
-        audio_url=task.final_audio_url,
-        duration=task.audio_duration,
-        format="mp3",
-    )
+    return {
+        "code": 200,
+        "data": {
+            "audio_url": task.final_audio_url,
+            "duration": task.audio_duration,
+            "format": "mp3",
+        },
+        "message": "获取任务结果成功。",
+    }
 
-@router.post("/{task_id}/feedback", response_model=TaskCreateResponse)
+@router.post("/{task_id}/feedback")
 async def submit_feedback(
     task_id: str,
-    content: str,
+    request: FeedbackCreate,
     db: Session = Depends(get_db),
 ):
     """
@@ -167,44 +184,59 @@ async def submit_feedback(
         id=new_task_id,
         user_id=parent_task.user_id,
         parent_task_id=task_id,
-        user_request=f"[优化] {parent_task.user_request} - 反馈: {content}",
+        user_request=f"[优化] {parent_task.user_request} - 反馈: {request.feedback}",
         status=TaskStatus.pending,
     )
     db.add(child_task)
+
+    # 同时记录反馈
+    feedback = Feedback(
+        task_id=task_id,
+        content=request.feedback,
+    )
+    db.add(feedback)
     db.commit()
 
-    # TODO: 异步执行子任务优化
+    return {
+        "code": 200,
+        "data": {
+            "task_id": new_task_id,
+            "parent_task_id": task_id,
+            "status": child_task.status.value,
+        },
+        "message": "创建子任务成功。",
+    }
 
-    return TaskCreateResponse(
-        task_id=new_task_id,
-        status=child_task.status.value,
-        created_at=child_task.created_at,
-    )
-
-@router.delete("/{task_id}", response_model=TaskCancelResponse)
+@router.delete("/{task_id}")
 async def cancel_task(
     task_id: str,
     db: Session = Depends(get_db),
 ):
-    """
-    取消任务
-    """
+    """取消任务"""
     task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
     if not task:
         raise TaskNotFoundException(task_id)
 
     if task.status in [TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled]:
-        raise TaskCannotBeCancelledException(task_id)
+        return {
+            "code": 400,
+            "data": None,
+            "message": "任务已完成，无法取消。",
+        }
 
     previous_status = task.status.value
     task.status = TaskStatus.cancelled
     db.commit()
 
-    return TaskCancelResponse(
-        task_id=task.id,
-        previous_status=previous_status,
-        current_status=task.status.value,
-    )
+    return {
+        "code": 200,
+        "data": {
+            "task_id": task.id,
+            "previous_status": previous_status,
+            "current_status": task.status.value,
+        },
+        "message": "任务已取消。",
+    }
 
 async def run_agent_task(task_id: str, db: Session):
     """

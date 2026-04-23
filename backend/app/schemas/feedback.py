@@ -3,7 +3,10 @@ from datetime import datetime
 
 class FeedbackCreate(BaseModel):
     """创建反馈请求"""
-    content: str = Field(..., description="用户反馈内容")
+    feedback: str = Field(..., alias="feedback", description="用户反馈内容")
+
+    class Config:
+        populate_by_name = True
 
 class FeedbackCreateResponse(BaseModel):
     """创建反馈响应（创建子任务）"""
