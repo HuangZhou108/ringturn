@@ -187,7 +187,7 @@ FLUIDSYNTH_PATH=fluidsynth  # Linux/macOS
 # FLUIDSYNTH_PATH=C:\Program Files\FluidSynth\bin\fluidsynth.exe  # Windows
 
 # 音色库文件路径（相对backend目录）
-SOUNDFONT_PATH=./soundfonts/piano.sf2
+SOUNDFONT_PATH=./soundfonts/default.sf2
 
 # ============ 质量评估 ============
 # 选择评估模型: "utmos" 或 "speechmetrics"

@@ -44,7 +44,9 @@ async def evaluate_quality(
                 result["quality_issues"].append("与原曲相似度较低")
 
     except Exception as e:
-        print(f"[WARN] 质量评估出错: {e}")
+        import traceback
+        print(f"[WARN] 质量评估出错: {type(e).__name__}: {e}")
+        print(f"  Traceback: {traceback.format_exc()}")
 
     # 判断是否达标
     result["passed"] = (
@@ -64,14 +66,16 @@ async def _librosa_quality_check(audio_path: str) -> dict:
     try:
         y, sr = librosa.load(audio_path, sr=None)
 
+        quality["quality_issues"] = []
+
         # 1. 响度检查
         rms = librosa.feature.rms(y=y)[0]
         mean_rms = float(np.mean(rms))
         if mean_rms < 0.01:
-            quality["quality_issues"] = ["音频过轻"]
+            quality["quality_issues"].append("音频过轻")
             quality["overall_score"] = 3.0
         elif mean_rms > 0.8:
-            quality["quality_issues"] = ["音频可能过载"]
+            quality["quality_issues"].append("音频可能过载")
             quality["overall_score"] = 3.5
         else:
             quality["clarity"] = min(5.0, 3.5 + mean_rms * 2)
@@ -94,7 +98,7 @@ async def _librosa_quality_check(audio_path: str) -> dict:
         zcr = librosa.feature.zero_crossing_rate(y)[0]
         mean_zcr = float(np.mean(zcr))
         if mean_zcr > 0.3:
-            quality["quality_issues"] = ["可能存在噪声或削波"]
+            quality["quality_issues"].append("可能存在噪声或削波")
 
         # 计算综合分数
         base_score = 4.0
@@ -106,11 +110,10 @@ async def _librosa_quality_check(audio_path: str) -> dict:
         quality["naturalness"] = quality["overall_score"] - 0.2
         quality["musicality"] = quality["overall_score"] - 0.3
 
-        if "quality_issues" not in quality:
-            quality["quality_issues"] = []
-
     except Exception as e:
-        print(f"[WARN] librosa 质量检查失败: {e}")
+        import traceback
+        print(f"[WARN] librosa 质量检查失败: {type(e).__name__}: {e}")
+        print(f"  Traceback: {traceback.format_exc()}")
         quality = {
             "overall_score": 4.0,
             "naturalness": 4.0,

@@ -4,7 +4,7 @@ from typing import Optional
 from datetime import datetime
 import uuid
 
-from app.db.session import get_db
+from app.db.session import get_db, SessionLocal
 from app.models import Task as TaskModel, TaskStatus, User, Feedback
 from app.schemas import (
     TaskCreate,
@@ -238,17 +238,23 @@ async def cancel_task(
         "message": "任务已取消。",
     }
 
-async def run_agent_task(task_id: str, db: Session):
+async def run_agent_task(task_id: str):
     """
     在后台运行Agent任务
 
     Args:
         task_id: 任务ID
-        db: 数据库会话
+
+    注意：由于 BackgroundTasks 无法使用依赖注入的 db，
+    需要在函数内部创建数据库会话
     """
+    db = SessionLocal()
     try:
         # 更新状态为planning
         task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+        if not task:
+            print(f"[ERROR] Task {task_id} not found")
+            return
         task.status = TaskStatus.planning
         db.commit()
 
@@ -259,17 +265,23 @@ async def run_agent_task(task_id: str, db: Session):
         result = await agent_executor.execute()
 
         # 更新任务状态为completed
-        task.status = TaskStatus.completed
-        task.final_audio_url = result["audio_url"]
-        task.audio_duration = result["duration"]
-        task.current_subtask = None
-        task.subtask_progress = 1.0
-        db.commit()
+        task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+        if task:
+            task.status = TaskStatus.completed
+            task.final_audio_url = result["audio_url"]
+            task.audio_duration = result["duration"]
+            task.current_subtask = None
+            task.subtask_progress = 1.0
+            db.commit()
+            print(f"[SUCCESS] Task {task_id} completed")
 
     except Exception as e:
+        print(f"[ERROR] Task {task_id} failed: {e}")
         # 更新任务状态为failed
         task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
-        task.status = TaskStatus.failed
-        task.error_message = str(e)
-        db.commit()
-        raise
+        if task:
+            task.status = TaskStatus.failed
+            task.error_message = str(e)
+            db.commit()
+    finally:
+        db.close()

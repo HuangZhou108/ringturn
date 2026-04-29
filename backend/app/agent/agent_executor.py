@@ -202,8 +202,11 @@ class AgentExecutor:
                 self.db.commit()
                 raise
 
-        # 全部完成
+        # 全部完成，同步结果到task
         self.task.subtask_progress = 100
+        self.task.final_audio_url = self.state.get("final_audio_url")
+        self.task.audio_duration = self.state.get("audio_duration")
+        self.db.commit()
 
     async def _execute_step(self, step: str) -> None:
         """

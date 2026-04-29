@@ -2,8 +2,10 @@
 文件上传接口
 """
 import os
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Form
+from typing import Optional
 from datetime import datetime
+import json
 
 from app.schemas.upload import UploadResponse, UploadMetadata
 from app.services.file_service import file_service
@@ -18,14 +20,23 @@ ALLOWED_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".ogg"}
 @router.post("", response_model=UploadResponse)
 async def upload_audio(
     file: UploadFile = File(...),
-    metadata: UploadMetadata | None = None,
+    metadata: Optional[str] = Form(None),
 ):
     """
     上传音频文件
 
     支持格式: mp3, wav, flac, m4a, ogg
     最大文件大小: 50MB
+    metadata: 可选的 JSON 字符串 {"title": "...", "artist": "..."}
     """
+    # 解析 metadata
+    metadata_obj: Optional[UploadMetadata] = None
+    if metadata:
+        try:
+            meta_dict = json.loads(metadata)
+            metadata_obj = UploadMetadata(**meta_dict)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="metadata 必须是有效的 JSON 格式")
     # 验证文件格式
     if not file.filename:
         raise HTTPException(status_code=400, detail="未提供文件名")

@@ -56,12 +56,17 @@ class LLMService:
         if not self.client:
             self._init_client()
 
+        model = model or settings.OPENAI_MODEL
+        print(f"[LLM REQUEST] model={model}, base_url={self.client.base_url}")
+        print(f"[LLM REQUEST] messages={messages}")
+
         response = await self.client.chat.completions.create(
-            model=model or settings.OPENAI_MODEL,
+            model=model,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
         )
+        print(f"[LLM RESPONSE] {response}")
         return response.choices[0].message.content
 
     async def parse_user_request(self, user_request: str) -> dict:

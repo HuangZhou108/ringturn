@@ -16,7 +16,7 @@ SUBTASKS = [
 class TaskCreate(BaseModel):
     """创建任务请求"""
     user_request: str = Field(..., description="用户的自然语言描述")
-    source_type: Literal["upload", "link", "search"] = "link"
+    source_type: Literal["upload", "search"] = "upload"
     source_value: str | None = None
 
 class TaskCreateResponse(BaseModel):

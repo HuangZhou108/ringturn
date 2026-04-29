@@ -80,7 +80,7 @@ OPENAI_MODEL=gpt-4
 CHORDMINI_URL=http://localhost:8001
 BASIC_PITCH_MODEL_PATH=./models/basic-pitch
 FLUIDSYNTH_PATH=fluidsynth
-SOUNDFONT_PATH=./soundfonts/piano.sf2
+SOUNDFONT_PATH=./soundfonts/default.sf2
 QUALITY_EVAL_MODEL=utmos
 DATABASE_URL=sqlite:///./ringturn.db
 ```

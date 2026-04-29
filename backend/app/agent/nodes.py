@@ -36,10 +36,6 @@ async def fetch_source_node(state: AgentState, db: Session, tools) -> None:
 
         state["audio_path"] = str(file_path)
 
-    elif source_type == "link":
-        # TODO: 实现从URL下载
-        raise NotImplementedError("link类型暂未实现")
-
     elif source_type == "search":
         # TODO: 实现搜索功能
         raise NotImplementedError("search类型暂未实现")
@@ -144,9 +140,9 @@ async def render_node(state: AgentState, db: Session, tools) -> None:
     task_id = state["task_id"]
     output_path = Path(settings.RINGTONES_DIR) / f"{task_id}.mp3"
 
-    # 简单的乐器配置（后续需要音色库）
+    # 乐器配置（使用配置文件中的音色库）
     instruments = {
-        "piano": "soundfonts/piano.sf2",  # TODO: 添加音色库文件
+        "default": settings.SOUNDFONT_PATH,
     }
 
     await tools.render_audio(
