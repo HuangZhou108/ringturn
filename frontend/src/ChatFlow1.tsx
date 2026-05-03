@@ -12,7 +12,7 @@ interface Message {
     fileName?: string
     fileInfo?: string
     userFile?: string
-    taskId?: string  // 新增：关联的任务ID
+    taskId?: string  // 关联的任务ID
 }
 
 function ChatFlow1() {
@@ -29,10 +29,10 @@ function ChatFlow1() {
     const fetchHistoryRef = useRef<(() => Promise<void>) | null>(null)
     const location = useLocation()
     const sentRef = useRef(false)
-    const userMessage = location.state?.userMessage as string | undefined
     const [audioFile, setAudioFile] = useState<File | null>(null)
     const [audioFileId, setAudioFileId] = useState<string | null>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const fileId = useRef<string | null>(null)
 
     const nextId = () => {
         idCounter.current += 1
@@ -203,6 +203,10 @@ function ChatFlow1() {
 
     useEffect(() => {
         const userMessage = location.state?.userMessage as string | undefined
+        const userFileId = location.state?.audioFileId as string | undefined
+
+        fileId.current = userFileId || null
+
         if (userMessage && !sentRef.current) {
             sentRef.current = true
             handleAutoSend(userMessage)
@@ -237,7 +241,7 @@ function ChatFlow1() {
                 const fileMsg: Message = {
                     id: nextId(),
                     type: 'user',
-                    userFile: file.name,
+                    userFile: res.data.filename,
                 }
                 setMessages(prev => [...prev, fileMsg])
             } else {

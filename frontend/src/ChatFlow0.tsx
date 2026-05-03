@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import {useRef, useState} from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 
@@ -7,15 +7,40 @@ function ChatFlow0() {
     const { t, i18n } = useTranslation()
     const [showLang, setShowLang] = useState(false)
     const [inputValue, setInputValue] = useState('')
+    const fileInputRef = useRef<HTMLInputElement>(null)
+    const [audioFile, setAudioFile] = useState<File | null>(null)
+    const [audioFileId, setAudioFileId] = useState<string | null>(null)
 
-    const handleSend = async () => {
+    const handleSend = () => {
         if (!inputValue.trim()) return
+        navigate('/chat', {
+            state: {
+                userMessage: inputValue.trim(),
+                audioFileId: audioFileId,
+            }
+        })
+    }
 
-        // 先调用创建任务接口（可选）
-        // const res = await api.createTask({ user_request: inputValue.trim() })
+    const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
 
-        // 跳转到聊天页面，携带用户输入
-        navigate('/chat', { state: { userMessage: inputValue.trim() } })
+        const validFormats = ['mp3', 'wav', 'flac', 'm4a', 'ogg']
+        const ext = file.name.split('.').pop()?.toLowerCase()
+        if (!ext || !validFormats.includes(ext)) {
+            return
+        }
+        if (file.size > 50 * 1024 * 1024) return
+
+        setAudioFile(file)
+        try {
+            const res = await api.uploadFile(file)
+            if (res.code === 200) {
+                setAudioFileId(res.data.file_id)
+            }
+        } catch {
+            // 静默失败
+        }
     }
 
     return (
@@ -132,11 +157,15 @@ function ChatFlow0() {
                                 </svg>
                             </button>
                             {/* 附件按钮 */}
-                            <button className="w-10 h-10 bg-[#f0f9ff] rounded-2xl flex items-center justify-center shadow-[inset_0px_2px_4px_0px_#0000000D]">
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                className="w-10 h-10 bg-[#f0f9ff] rounded-2xl flex items-center justify-center shadow-[inset_0px_2px_4px_0px_#0000000D] hover:bg-[#e0f2fe] transition"
+                            >
                                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
                                     <path d="M8 17.99976L8 11.99976L10 11.99976L10 13.99976L18 13.99976L18 15.99976L10 15.99976L10 17.99976L8 17.99976ZM0 15.99976L0 13.99976L6 13.99976L6 15.99976L0 15.99976ZM4 11.99976L4 9.99976L0 9.99976L0 7.99976L4 7.99976L4 5.99976L6 5.99976L6 11.99976L4 11.99976ZM8 9.99976L8 7.99976L18 7.99976L18 9.99976L8 9.99976ZM12 5.99976L12 -0.00024L14 -0.00024L14 1.99976L18 1.99976L18 3.99976L14 3.99976L14 5.99976L12 5.99976ZM0 3.99976L0 1.99976L10 1.99976L10 3.99976L0 3.99976Z" fill="#00639d"/>
                                 </svg>
                             </button>
+                            <input ref={fileInputRef} type="file" accept=".mp3,.wav,.flac,.m4a,.ogg" onChange={handleFileSelect} className="hidden" />
                         </div>
                         {/* 发送按钮 */}
                         <button
