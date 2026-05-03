@@ -1,0 +1,109 @@
+export interface ApiResponse<T = unknown> {
+    code: number
+    data: T
+    message: string | null
+}
+
+// 任务状态
+export type TaskStatus =
+    | 'pending'
+    | 'planning'
+    | 'executing'
+    | 'waiting_input'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+
+// 来源类型
+export type SourceType = 'upload' | 'link' | 'search'
+
+// 任务创建请求
+export interface CreateTaskRequest {
+    user_request: string
+    source_type?: SourceType
+    source_value?: string
+}
+
+// 任务创建响应
+export interface CreateTaskResponse {
+    task_id: string
+    status: TaskStatus
+    created_at: string
+}
+
+// 任务详情
+export interface Task {
+    id: string
+    user_id: number
+    parent_task_id?: string
+    user_request: string
+    source_type: SourceType
+    source_value?: string
+    status: TaskStatus
+    current_subtask?: string
+    subtask_progress: number
+    plan?: unknown
+    current_plan_index: number
+    thread_id?: string
+    final_audio_url?: string
+    audio_duration?: number
+    created_at: string
+    updated_at: string
+    error_message?: string
+}
+
+// 任务状态信息
+export interface TaskStatusInfo {
+    task_id: string
+    status: TaskStatus
+    current_subtask?: string
+    subtask_progress: number
+    message?: string
+}
+
+// 任务生成结果
+export interface TaskResult {
+    audio_url?: string
+    duration?: number
+    format?: string
+}
+
+// 反馈
+export interface Feedback {
+    id: number
+    task_id: string
+    content: string
+    created_at: string
+}
+
+// 任务取消结果
+export interface TaskCancelResult {
+    task_id: string
+    previous_status: string
+    current_status: string
+}
+
+// 任务列表响应
+export interface TaskListResponse {
+    total: number
+    page: number
+    page_size: number
+    tasks: TaskListItem[]
+}
+
+export interface TaskListItem {
+    task_id: string
+    user_request: string
+    status: TaskStatus
+    final_audio_url?: string | null
+    audio_duration?: number | null
+    created_at: string
+}
+
+// 偏好
+export interface Preference {
+    id: number
+    user_id: number
+    key: string
+    value: unknown
+}
