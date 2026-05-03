@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import {useState, useEffect, useRef} from 'react'
+import { useLocation } from 'react-router-dom'
 import { api } from './api'
 import type { TaskListItem } from './types'
 
@@ -26,6 +27,12 @@ function ChatFlow1() {
     const instruments = ['Acoustic Piano', 'Violin']
     const idCounter = useRef(0)
     const fetchHistoryRef = useRef<(() => Promise<void>) | null>(null)
+    const location = useLocation()
+    const sentRef = useRef(false)
+    const userMessage = location.state?.userMessage as string | undefined
+    const [audioFile, setAudioFile] = useState<File | null>(null)
+    const [audioFileId, setAudioFileId] = useState<string | null>(null)
+    const fileInputRef = useRef<HTMLInputElement>(null)
 
     const nextId = () => {
         idCounter.current += 1
@@ -92,7 +99,14 @@ function ChatFlow1() {
         try {
             const res = await api.createTask({
                 user_request: inputValue.trim(),
+                source_value: audioFileId || JSON.stringify({
+                    instrument: instrument,
+                    duration: duration,
+                    tempo: tempo,
+                    filename: filename,
+                }),
             })
+
 
             if (res.code === 200) {
                 setCurrentTaskId(res.data.task_id)
@@ -175,6 +189,65 @@ function ChatFlow1() {
             msg.id === msgId ? { ...msg, ...updates } : msg
         ))
     }
+
+    const handleAutoSend = async (text: string) => {
+        const newUserMessage: Message = {
+            id: nextId(),
+            type: 'user',
+            content: text,
+        }
+        setMessages(prev => [...prev, newUserMessage])
+
+        // 调用后端接口 + 模拟 AI 回复...
+    }
+
+    useEffect(() => {
+        const userMessage = location.state?.userMessage as string | undefined
+        if (userMessage && !sentRef.current) {
+            sentRef.current = true
+            handleAutoSend(userMessage)
+        }
+    }, [location.state])
+
+    const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+
+        // 验证格式
+        const validFormats = ['mp3', 'wav', 'flac', 'm4a', 'ogg']
+        const ext = file.name.split('.').pop()?.toLowerCase()
+        if (!ext || !validFormats.includes(ext)) {
+            showError(`不支持的格式: .${ext}，支持: ${validFormats.join(', ')}`)
+            return
+        }
+
+        // 验证大小 (50MB)
+        if (file.size > 50 * 1024 * 1024) {
+            showError('文件过大，最大支持 50MB')
+            return
+        }
+
+        setAudioFile(file)
+
+        try {
+            const res = await api.uploadFile(file)
+            if (res.code === 200) {
+                setAudioFileId(res.data.file_id)
+                // 显示上传成功消息
+                const fileMsg: Message = {
+                    id: nextId(),
+                    type: 'user',
+                    userFile: file.name,
+                }
+                setMessages(prev => [...prev, fileMsg])
+            } else {
+                showError(res.message || '文件上传失败')
+            }
+        } catch {
+            showError(t('chat.networkError'))
+        }
+    }
+
 
     // const handleSend = () => {
     //     if (!inputValue.trim()) return
@@ -584,11 +657,22 @@ function ChatFlow1() {
                                 <svg width="13" height="20" viewBox="0 0 13 20" fill="none" xmlns="http://www.w3.org/2000/svg">
                                     <path d="M12.5 13.75C12.5 15.48315 11.8916 16.95801 10.67505 18.1748C9.4585 19.39136 7.9834 20 6.25 20C4.5166 20 3.0415 19.39136 1.82495 18.1748C0.608398 16.95801 0 15.48315 0 13.75V4.5C0 3.25 0.4375 2.1875 1.3125 1.3125C2.1875 0.4375 3.25 0 4.5 0C5.75 0 6.8125 0.4375 7.6875 1.3125C8.5625 2.1875 9 3.25 9 4.5V13.25C9 14.0166 8.7334 14.6665 8.19995 15.19995C7.6665 15.7334 7.0166 16 6.25 16C5.4834 16 4.8335 15.7334 4.30005 15.19995C3.7666 14.6665 3.5 14.0166 3.5 13.25V4H5.5V13.25C5.5 13.4668 5.5708 13.6455 5.7124 13.78735C5.854 13.92896 6.0332 14 6.25 14C6.4668 14 6.646 13.92896 6.7876 13.78735C6.9292 13.6455 7 13.4668 7 13.25V4.5C6.9834 3.8 6.73755 3.20825 6.26245 2.72485C5.7876 2.24145 5.19995 2 4.5 2C3.80005 2 3.2085 2.24145 2.7251 2.72485C2.2417 3.20825 2 3.8 2 4.5V13.75C1.9834 14.93335 2.3916 15.9375 3.2251 16.7622C4.05835 17.5872 5.06665 18 6.25 18C7.4165 18 8.4082 17.5872 9.2251 16.7622C10.0417 15.9375 10.4668 14.93335 10.5 13.75V4H12.5V13.75H12.5V20H10.5V20H6.25H12.5Z" fill="#94a3b8"/>
                                 </svg>
-                                <button className="w-11 h-11 bg-[#f0f9ff] rounded-2xl flex items-center justify-center shadow-[inset_0px_2px_4px_0px_#0000000D]">
-                                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <button
+                                    onClick={() => fileInputRef.current?.click()}
+                                    className="w-11 h-11 bg-[#f0f9ff] rounded-2xl flex items-center justify-center shadow-[inset_0px_2px_4px_0px_#0000000D] hover:bg-[#e0f2fe] transition"
+                                >
+                                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
                                         <path d="M8 17.99976L8 11.99976L10 11.99976L10 13.99976L18 13.99976L18 15.99976L10 15.99976L10 17.99976L8 17.99976ZM0 15.99976L0 13.99976L6 13.99976L6 15.99976L0 15.99976ZM4 11.99976L4 9.99976L0 9.99976L0 7.99976L4 7.99976L4 5.99976L6 5.99976L6 11.99976L4 11.99976ZM8 9.99976L8 7.99976L18 7.99976L18 9.99976L8 9.99976ZM12 5.99976L12 -0.00024L14 -0.00024L14 1.99976L18 1.99976L18 3.99976L14 3.99976L14 5.99976L12 5.99976ZM0 3.99976L0 1.99976L10 1.99976L10 3.99976L0 3.99976Z" fill="#00639d"/>
                                     </svg>
                                 </button>
+                                {/* 隐藏的文件输入 */}
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept=".mp3,.wav,.flac,.m4a,.ogg"
+                                    onChange={handleFileSelect}
+                                    className="hidden"
+                                />
                             </div>
                         </div>
                     </div>

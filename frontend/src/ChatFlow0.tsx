@@ -1,9 +1,22 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 
 function ChatFlow0() {
+    const navigate = useNavigate()
     const { t, i18n } = useTranslation()
     const [showLang, setShowLang] = useState(false)
+    const [inputValue, setInputValue] = useState('')
+
+    const handleSend = async () => {
+        if (!inputValue.trim()) return
+
+        // 先调用创建任务接口（可选）
+        // const res = await api.createTask({ user_request: inputValue.trim() })
+
+        // 跳转到聊天页面，携带用户输入
+        navigate('/chat', { state: { userMessage: inputValue.trim() } })
+    }
 
     return (
         <div className="flex flex-col h-screen bg-[#cfe9ff] font-['Inter']">
@@ -95,6 +108,14 @@ function ChatFlow0() {
                         <div className="flex-1 min-h-[25px]">
                             <textarea
                                 placeholder={t('input.placeholder')}
+                                value={inputValue}
+                                onChange={(e) => setInputValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                        e.preventDefault()
+                                        handleSend()
+                                    }
+                                }}
                                 className="w-full h-full bg-transparent outline-none resize-none text-xl text-[#94a3b8] placeholder-[#94a3b8] leading-tight"
                             />
                         </div>
@@ -117,8 +138,11 @@ function ChatFlow0() {
                                 </svg>
                             </button>
                         </div>
-                        {/* 发送按钮（右侧） */}
-                        <button className="w-10 h-10 bg-[#00639d] rounded-2xl flex items-center justify-center self-center shadow-[0px_10px_15px_-3px_#00639d4D,0px_4px_6px_-4px_#00639d4D]">
+                        {/* 发送按钮 */}
+                        <button
+                            onClick={handleSend}
+                            className="w-10 h-10 bg-[#00639d] rounded-2xl flex items-center justify-center self-center shadow-[0px_10px_15px_-3px_#00639d4D,0px_4px_6px_-4px_#00639d4D] hover:bg-[#005288] transition"
+                        >
                             <svg width="19" height="16" viewBox="0 0 19 16" fill="none">
                                 <path d="M0 16V0L19 8L0 16ZM2 13L13.85 8L2 3V6.5L8 8L2 9.5V13Z" fill="#f7f9ff"/>
                             </svg>

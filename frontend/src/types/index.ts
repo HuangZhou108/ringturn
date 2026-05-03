@@ -107,3 +107,12 @@ export interface Preference {
     key: string
     value: unknown
 }
+
+export interface UploadResult {
+    file_id: string
+    filename: string
+    file_size: number
+    format: string
+    duration: number
+    created_at: string
+}

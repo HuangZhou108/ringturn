@@ -1,4 +1,5 @@
-import type { ApiResponse, CreateTaskRequest, CreateTaskResponse, Task, TaskStatusInfo, TaskResult, TaskCancelResult,TaskListResponse } from '../types'
+import type { ApiResponse, CreateTaskRequest, CreateTaskResponse,
+    Task, TaskStatusInfo, TaskResult, TaskCancelResult,TaskListResponse, UploadResult } from '../types'
 
 const BASE_URL = '/api/v1'
 
@@ -48,6 +49,22 @@ export const api = {
         if (params?.page_size) query.append('page_size', String(params.page_size))
         if (params?.status) query.append('status', params.status)
         return request<TaskListResponse>(`/users/${userId}/tasks?${query.toString()}`)
+    },
+
+    // 上传音频文件
+    uploadFile: async (file: File, metadata?: { title?: string; artist?: string }) => {
+        const formData = new FormData()
+        formData.append('file', file)
+        if (metadata) {
+            formData.append('metadata', JSON.stringify(metadata))
+        }
+
+        const res = await fetch('/api/v1/upload', {
+            method: 'POST',
+            body: formData,
+        })
+
+        return res.json() as Promise<ApiResponse<UploadResult>>
     },
 }
 
