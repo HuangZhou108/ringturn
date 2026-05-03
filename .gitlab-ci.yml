@@ -1,0 +1,35 @@
+stages:
+  - lint
+  - test
+
+# ============================================
+# 阶段 1: 代码检查
+# ============================================
+lint-backend:
+  stage: lint
+  script:
+    - cd backend
+    - pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -q black isort
+    - python3 -m black app/
+    - python3 -m isort app/
+  tags:
+    - shell
+  rules:
+    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_COMMIT_BRANCH != "main"
+
+# ============================================
+# 阶段 2: 测试
+# ============================================
+test-backend:
+  stage: test
+  script:
+    - cd backend
+    - apt-get update -qq && apt-get install -y -qq fluidsynth > /dev/null 2>&1
+    - pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
+    - python3 -m pytest tests/ -v --tb=short
+  tags:
+    - shell
+  rules:
+    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_COMMIT_BRANCH != "main"

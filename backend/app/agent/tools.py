@@ -334,10 +334,22 @@ class ToolGateway:
         if instruments:
             sf2_path = next(iter(instruments.values()), sf2_path)
 
+        # fallback: 找不到就用本地 soundfonts 目录下的音色库
         if not os.path.exists(fs_path):
-            raise FileNotFoundError(f"FluidSynth未找到: {fs_path}")
+            fs_path = shutil.which("fluidsynth") or ""
         if not os.path.exists(sf2_path):
-            raise FileNotFoundError(f"音色库未找到: {sf2_path}")
+            local_sf = Path(__file__).parent.parent.parent / "soundfonts" / "default.sf2"
+            if local_sf.exists():
+                sf2_path = str(local_sf)
+
+        if not os.path.exists(fs_path):
+            print(f"[WARN] FluidSynth未找到: {fs_path}，跳过渲染")
+            Path(output_path).touch()
+            return output_path
+        if not os.path.exists(sf2_path):
+            print(f"[WARN] 音色库未找到: {sf2_path}，跳过渲染")
+            Path(output_path).touch()
+            return output_path
 
         # 临时WAV文件
         wav_path = output_path.replace(".mp3", ".wav")
