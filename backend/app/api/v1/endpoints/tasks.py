@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime
 import uuid
+import json
 
 from app.db.session import get_db, SessionLocal
 from app.models import Task as TaskModel, TaskStatus, User, Feedback
@@ -58,13 +59,22 @@ async def create_task(
         # 生成任务ID
         task_id = str(uuid.uuid4())
 
+        # 铃声参数（存储在单独字段）
+        ringtone_params = {
+            "instrument": request.instrument,
+            "duration": request.duration,
+            "tempo": request.tempo,
+            "filename": request.filename,
+        }
+
         # 创建任务记录
         task = TaskModel(
             id=task_id,
             user_id=user_id,
             user_request=request.user_request,
             source_type=request.source_type,
-            source_value=request.source_value,
+            source_value=request.source_value,  # 文件ID或链接（字符串）
+            ringtone_params=ringtone_params,   # 铃声参数（JSON）
             status=TaskStatus.pending,
         )
         db.add(task)

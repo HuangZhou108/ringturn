@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
-from typing import Literal
+from typing import Literal, Optional
 from datetime import datetime
+import json
 
 # 子步骤定义
 SUBTASKS = [
@@ -18,6 +19,11 @@ class TaskCreate(BaseModel):
     user_request: str = Field(..., description="用户的自然语言描述")
     source_type: Literal["upload", "search"] = "upload"
     source_value: str | None = None
+    # 铃声参数
+    instrument: Optional[str] = "Acoustic Piano"
+    duration: Optional[int] = 30
+    tempo: Optional[int] = 120
+    filename: Optional[str] = "ringtone"
 
 class TaskCreateResponse(BaseModel):
     """创建任务响应"""

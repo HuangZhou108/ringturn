@@ -12,6 +12,7 @@ interface Message {
     fileName?: string
     fileInfo?: string
     userFile?: string
+    audioFileId?: string  // 上传文件后返回的 file_id
     taskId?: string  // 关联的任务ID
 }
 
@@ -81,7 +82,7 @@ function ChatFlow1() {
             }
         }
         fetchHistoryRef.current = fetchHistory
-        fetchHistory()
+        // 不再初始加载，等用户手动点击刷新
     }, [])
 
     const handleSend = async () => {
@@ -99,12 +100,12 @@ function ChatFlow1() {
         try {
             const res = await api.createTask({
                 user_request: inputValue.trim(),
-                source_value: audioFileId || JSON.stringify({
-                    instrument: instrument,
-                    duration: duration,
-                    tempo: tempo,
-                    filename: filename,
-                }),
+                source_type: 'upload',
+                source_value: audioFileId || undefined,
+                instrument,
+                duration: parseInt(duration) || 30,
+                tempo: parseInt(tempo) || 120,
+                filename,
             })
 
 
@@ -180,7 +181,7 @@ function ChatFlow1() {
             } catch {
                 // 忽略网络错误，继续轮询
             }
-        }, 2000)
+        }, 5000)
     }
 
     // 更新消息内容
@@ -198,7 +199,38 @@ function ChatFlow1() {
         }
         setMessages(prev => [...prev, newUserMessage])
 
-        // 调用后端接口 + 模拟 AI 回复...
+        try {
+            const res = await api.createTask({
+                user_request: text.trim(),
+                source_type: 'upload',
+                source_value: fileId.current || undefined,
+                instrument,
+                duration: parseInt(duration) || 30,
+                tempo: parseInt(tempo) || 120,
+                filename,
+            })
+
+            if (res.code === 200) {
+                setCurrentTaskId(res.data.task_id)
+
+                // 添加"处理中"消息
+                const processingMsg: Message = {
+                    id: nextId(),
+                    type: 'ai',
+                    taskId: res.data.task_id,
+                    deepThinking: t('chat.deepThinking'),
+                    content: t('chat.taskCreated'),
+                }
+                setMessages(prev => [...prev, processingMsg])
+
+                // 轮询任务状态直到完成
+                pollTaskStatus(res.data.task_id, processingMsg.id)
+            } else {
+                showError(res.message || t('chat.createFailed'))
+            }
+        } catch {
+            showError(t('chat.networkError'))
+        }
     }
 
     useEffect(() => {
@@ -237,13 +269,21 @@ function ChatFlow1() {
             const res = await api.uploadFile(file)
             if (res.code === 200) {
                 setAudioFileId(res.data.file_id)
-                // 显示上传成功消息
+                // 显示上传成功消息，包含文件名
                 const fileMsg: Message = {
                     id: nextId(),
                     type: 'user',
                     userFile: res.data.filename,
+                    audioFileId: res.data.file_id,
                 }
                 setMessages(prev => [...prev, fileMsg])
+                // 同时显示文件信息
+                const infoMsg: Message = {
+                    id: nextId(),
+                    type: 'ai',
+                    content: `文件已上传: ${res.data.filename} (${(res.data.file_size).toFixed(2)} MB)${res.data.duration ? `, 时长: ${Math.round(res.data.duration)}秒` : ''}`,
+                }
+                setMessages(prev => [...prev, infoMsg])
             } else {
                 showError(res.message || '文件上传失败')
             }
@@ -314,8 +354,17 @@ function ChatFlow1() {
 
                 {/* 静态主菜单 */}
                 <div className="flex-1">
-                    <h2 className="text-xs uppercase tracking-wider text-gray-500 mb-3">
+                    <h2 className="text-xs uppercase tracking-wider text-gray-500 mb-3 flex items-center justify-between">
                         {t('sidebar.mainMenu')}
+                        <button
+                            onClick={() => fetchHistoryRef.current?.()}
+                            className="p-1 hover:bg-gray-200 rounded transition"
+                            title={t('sidebar.refresh') || '刷新'}
+                        >
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M12.8 5.6C12.4167 3.76667 11.325 2.2 9.525 1H11.9V0H7.9V4H9.3V2.475C9.8835 2.79167 10.35 3.25417 10.7 3.8625C11.05 4.47083 11.1667 5.13333 11.05 5.85C10.7167 7.65 9.33333 9.075 7 9.125C6.03333 9.15833 5.13333 8.86667 4.3 8.25C3.46667 7.63333 2.9 6.8 2.6 5.75H4.65C4.83333 6.35 5.175 6.84167 5.675 7.225C6.175 7.60833 6.75 7.8 7.4 7.8C8.4 7.8 9.20833 7.46667 9.825 6.8C10.4417 6.13333 10.675 5.33333 10.525 4.4L12.8 5.6Z" fill="#475569"/>
+                            </svg>
+                        </button>
                     </h2>
                     <ul className="space-y-1">
                         <li className="px-4 py-2.5 rounded-lg bg-white text-[#0369a1] cursor-pointer flex items-center gap-3 shadow-[0px_1px_2px_0px_#0000000D]">

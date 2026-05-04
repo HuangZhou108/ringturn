@@ -75,3 +75,5 @@ htmlcov/
 *.bak
 *.tmp
 *.temp
+
+soundfonts/

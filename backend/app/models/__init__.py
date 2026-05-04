@@ -38,7 +38,8 @@ class Task(Base):
     # 用户输入
     user_request = Column(Text, nullable=False)
     source_type = Column(String(20), default="upload")  # 'upload', 'link', 'search'
-    source_value = Column(String(255))
+    source_value = Column(String(255))  # 文件ID或链接
+    ringtone_params = Column(JSON, nullable=True)  # 铃声参数（instrument, duration, tempo, filename）
 
     # 任务状态
     status = Column(Enum(TaskStatus), default=TaskStatus.pending, nullable=False)

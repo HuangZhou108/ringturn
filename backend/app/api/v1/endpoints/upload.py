@@ -7,7 +7,7 @@ from typing import Optional
 from datetime import datetime
 import json
 
-from app.schemas.upload import UploadResponse, UploadMetadata
+from app.schemas.upload import UploadMetadata
 from app.services.file_service import file_service
 from app.core.config import get_settings
 
@@ -17,7 +17,7 @@ settings = get_settings()
 ALLOWED_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".ogg"}
 
 
-@router.post("", response_model=UploadResponse)
+@router.post("")
 async def upload_audio(
     file: UploadFile = File(...),
     metadata: Optional[str] = Form(None),
@@ -74,11 +74,15 @@ async def upload_audio(
     except Exception:
         pass  # 获取时长失败不影响上传
 
-    return UploadResponse(
-        file_id=file_id,
-        filename=file.filename,
-        file_size=round(file_size / (1024 * 1024), 2),
-        format=ext.lstrip("."),
-        duration=duration,
-        created_at=datetime.utcnow(),
-    )
+    return {
+        "code": 200,
+        "data": {
+            "file_id": file_id,
+            "filename": file.filename,
+            "file_size": round(file_size / (1024 * 1024), 2),
+            "format": ext.lstrip("."),
+            "duration": duration,
+            "created_at": datetime.utcnow().isoformat(),
+        },
+        "message": "上传成功",
+    }

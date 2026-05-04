@@ -8,11 +8,18 @@ LLM服务模块
 """
 
 import os
+import asyncio
 from typing import Optional
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 from app.core.config import get_settings
 
 settings = get_settings()
+
+# 重试配置
+MAX_RETRIES = 5
+INITIAL_RETRY_DELAY = 2  # 初始重试延迟（秒）
+MAX_RETRY_DELAY = 60  # 最大重试延迟（秒）
+
 
 class LLMService:
     """LLM服务封装"""
@@ -42,7 +49,7 @@ class LLMService:
         max_tokens: int = 1000,
     ) -> str:
         """
-        调用LLM进行对话
+        调用LLM进行对话（带重试机制）
 
         Args:
             messages: 消息列表 [{"role": "user", "content": "..."}]
@@ -57,17 +64,43 @@ class LLMService:
             self._init_client()
 
         model = model or settings.OPENAI_MODEL
-        print(f"[LLM REQUEST] model={model}, base_url={self.client.base_url}")
-        print(f"[LLM REQUEST] messages={messages}")
+        last_error = None
 
-        response = await self.client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        print(f"[LLM RESPONSE] {response}")
-        return response.choices[0].message.content
+        for attempt in range(MAX_RETRIES):
+            try:
+                print(f"[LLM REQUEST] model={model}, base_url={self.client.base_url}")
+                print(f"[LLM REQUEST] messages={messages}")
+
+                response = await self.client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                print(f"[LLM RESPONSE] {response}")
+                return response.choices[0].message.content
+
+            except RateLimitError as e:
+                last_error = e
+                # 计算指数退避延迟
+                delay = min(INITIAL_RETRY_DELAY * (2 ** attempt), MAX_RETRY_DELAY)
+                print(f"[LLM RATE LIMIT] 触发限流，等待 {delay:.1f} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRIES})")
+                print(f"[LLM RATE LIMIT] 错误详情: {e}")
+                await asyncio.sleep(delay)
+
+            except Exception as e:
+                last_error = e
+                # 其他错误也尝试重试，但只重试3次
+                if attempt < 2:
+                    delay = INITIAL_RETRY_DELAY * (2 ** attempt)
+                    print(f"[LLM ERROR] 请求失败，等待 {delay:.1f} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRIES}): {e}")
+                    await asyncio.sleep(delay)
+                else:
+                    # 3次后放弃
+                    raise
+
+        # 所有重试都失败
+        raise Exception(f"LLM调用失败，已重试 {MAX_RETRIES} 次。最后错误: {last_error}")
 
     async def parse_user_request(self, user_request: str) -> dict:
         """

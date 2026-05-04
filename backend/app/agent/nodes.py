@@ -93,20 +93,22 @@ async def arrange_node(state: AgentState, db: Session, tools) -> None:
 
     根据用户需求更换乐器、调整风格
     """
-    # 解析用户需求（TODO: 使用LLM）
-    user_request = state.get("user_request", "")
-
-    # 简单的关键词解析（后续用LLM替代）
-    target_instruments = []
-    if "钢琴" in user_request or "piano" in user_request.lower():
-        target_instruments.append("piano")
-    if "吉他" in user_request or "guitar" in user_request.lower():
-        target_instruments.append("guitar")
-    if "弦乐" in user_request or "string" in user_request.lower():
-        target_instruments.append("strings")
-
-    if not target_instruments:
-        target_instruments = ["piano"]  # 默认钢琴
+    # 优先使用前端传入的乐器参数，否则从 user_request 解析
+    instrument = state.get("instrument", "Acoustic Piano")
+    
+    # 尝试将乐器名称转为目标格式
+    instrument_map = {
+        "acoustic piano": "piano",
+        "piano": "piano",
+        "electric piano": "electric_piano",
+        "guitar": "guitar",
+        "acoustic guitar": "guitar",
+        "strings": "strings",
+        "violin": "violin",
+        "cello": "cello",
+    }
+    target_instrument = instrument_map.get(instrument.lower(), "piano")
+    target_instruments = [target_instrument]
 
     midi_path = state.get("midi_path")
     if not midi_path:
@@ -118,13 +120,13 @@ async def arrange_node(state: AgentState, db: Session, tools) -> None:
     await tools.arrange_instrument(
         midi_path,
         target_instruments,
-        style=user_request,
+        style=state.get("user_request", ""),
         output_path=str(arranged_midi_path),
     )
     state["arranged_midi_path"] = str(arranged_midi_path)
     state["arrangement_params"] = {
         "instruments": target_instruments,
-        "style": user_request,
+        "style": state.get("user_request", ""),
     }
 
 async def render_node(state: AgentState, db: Session, tools) -> None:
@@ -137,8 +139,19 @@ async def render_node(state: AgentState, db: Session, tools) -> None:
     if not midi_path:
         raise ValueError("MIDI路径未设置")
 
+    # 调整 tempo（如果用户指定了）
+    tempo = state.get("tempo")
+    if tempo:
+        from app.services.midi_arranger import change_tempo
+        task_id = state["task_id"]
+        tempo_path = Path(settings.RINGTONES_DIR) / f"{task_id}_tempo.mid"
+        midi_path = await change_tempo(midi_path, tempo, str(tempo_path))
+
     task_id = state["task_id"]
     output_path = Path(settings.RINGTONES_DIR) / f"{task_id}.mp3"
+
+    # 使用前端传入的 duration 参数
+    target_duration = state.get("duration", settings.DEFAULT_RINGTONE_DURATION)
 
     # 乐器配置（使用配置文件中的音色库）
     instruments = {
@@ -149,13 +162,13 @@ async def render_node(state: AgentState, db: Session, tools) -> None:
         midi_path,
         instruments,
         str(output_path),
-        duration=settings.DEFAULT_RINGTONE_DURATION,
+        duration=target_duration,
     )
 
-    # 智能截取（可选）
+    # 智能截取
     final_path, duration = await tools.smart_clip(
         str(output_path),
-        target_duration=settings.DEFAULT_RINGTONE_DURATION,
+        target_duration=target_duration,
     )
 
     state["final_audio_path"] = final_path

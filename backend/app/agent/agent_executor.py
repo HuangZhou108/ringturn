@@ -14,6 +14,18 @@ from app.agent.nodes import NODE_HANDLERS
 from app.db.session import SessionLocal
 from app.models import Task as TaskModel, TaskStatus
 
+class RingtoneParams:
+    """铃声参数"""
+    def __init__(self, task: "Task"):
+        params = task.ringtone_params or {}
+        
+        self.instrument = params.get("instrument", "Acoustic Piano")
+        self.duration = params.get("duration", 30)
+        self.tempo = params.get("tempo", 120)
+        self.filename = params.get("filename", "ringtone")
+        # 文件ID（从 source_value 获取，当有上传文件时）
+        self.file_id = task.source_value
+
 class AgentExecutor:
     """Agent执行器"""
 
@@ -26,6 +38,9 @@ class AgentExecutor:
         if not self.task:
             raise ValueError(f"任务不存在: {task_id}")
 
+        # 解析铃声参数
+        self.ringtone_params = RingtoneParams(self.task)
+
         # 初始化状态
         self.state = self._init_state()
 
@@ -37,6 +52,14 @@ class AgentExecutor:
             "user_request": self.task.user_request,
             "source_type": self.task.source_type,
             "source_value": self.task.source_value,
+            # 铃声参数
+            "instrument": self.ringtone_params.instrument,
+            "duration": self.ringtone_params.duration,
+            "tempo": self.ringtone_params.tempo,
+            "filename": self.ringtone_params.filename,
+            # 文件ID（用于获取上传的音频文件）
+            "file_id": self.ringtone_params.file_id,
+            # 中间产物
             "audio_path": None,
             "analysis_result": None,
             "melody_data": None,

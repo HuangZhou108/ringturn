@@ -26,7 +26,14 @@ class AgentState(TypedDict, total=False):
     # 音频源
     source_type: str
     source_value: str
+    file_id: str | None  # 上传文件的ID
     audio_path: str | None
+
+    # 铃声参数
+    instrument: str
+    duration: int
+    tempo: int
+    filename: str
 
     # 分析结果
     analysis_result: dict | None

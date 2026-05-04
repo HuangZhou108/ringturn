@@ -1,6 +1,7 @@
 import {useRef, useState} from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
+import { api } from './api'
 
 function ChatFlow0() {
     const navigate = useNavigate()
@@ -10,6 +11,8 @@ function ChatFlow0() {
     const fileInputRef = useRef<HTMLInputElement>(null)
     const [audioFile, setAudioFile] = useState<File | null>(null)
     const [audioFileId, setAudioFileId] = useState<string | null>(null)
+    const [uploadError, setUploadError] = useState<string | null>(null)
+    const [uploadSuccess, setUploadSuccess] = useState<string | null>(null)
 
     const handleSend = () => {
         if (!inputValue.trim()) return
@@ -28,18 +31,32 @@ function ChatFlow0() {
         const validFormats = ['mp3', 'wav', 'flac', 'm4a', 'ogg']
         const ext = file.name.split('.').pop()?.toLowerCase()
         if (!ext || !validFormats.includes(ext)) {
+            setUploadError(`不支持的格式: .${ext}，支持: ${validFormats.join(', ')}`)
             return
         }
-        if (file.size > 50 * 1024 * 1024) return
+        if (file.size > 50 * 1024 * 1024) {
+            setUploadError('文件过大，最大支持 50MB')
+            return
+        }
 
         setAudioFile(file)
+        setUploadError(null)
         try {
+            console.log('开始上传文件:', file.name)
             const res = await api.uploadFile(file)
+            console.log('上传响应:', res)
             if (res.code === 200) {
                 setAudioFileId(res.data.file_id)
+                setUploadSuccess(`文件已上传: ${res.data.filename} (${(res.data.file_size).toFixed(2)} MB)`)
+                setUploadError(null)
+            } else {
+                setUploadError(res.message || '文件上传失败')
+                setUploadSuccess(null)
             }
-        } catch {
-            // 静默失败
+        } catch (err) {
+            console.error('上传失败:', err)
+            setUploadError(`上传失败: ${err instanceof Error ? err.message : '未知错误'}`)
+            setUploadSuccess(null)
         }
     }
 
@@ -145,6 +162,18 @@ function ChatFlow0() {
                             />
                         </div>
                     </div>
+
+                    {/* 上传状态显示 */}
+                    {uploadError && (
+                        <div className="w-[691px] h-[30px] mt-2 flex items-center px-4 bg-red-50 border border-red-200 rounded-lg self-center">
+                            <span className="text-sm text-red-600">{uploadError}</span>
+                        </div>
+                    )}
+                    {uploadSuccess && (
+                        <div className="w-[691px] h-[30px] mt-2 flex items-center px-4 bg-green-50 border border-green-200 rounded-lg self-center">
+                            <span className="text-sm text-green-600">{uploadSuccess}</span>
+                        </div>
+                    )}
 
                     {/* 按钮容器 */}
                     <div className="w-[691px] h-[41px] mt-[30px] mb-10 flex items-center justify-between bg-white/50 self-center rounded-lg px-4">
