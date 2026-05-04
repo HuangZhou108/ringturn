@@ -19,6 +19,7 @@ interface Message {
 function ChatFlow1() {
     const { t, i18n } = useTranslation()
     const [showLang, setShowLang] = useState(false)
+    const [sidebarOpen, setSidebarOpen] = useState(true)
     const [instrument, setInstrument] = useState('Acoustic Piano')
     const [showInstrument, setShowInstrument] = useState(false)
     const [duration, setDuration] = useState('180')
@@ -320,10 +321,25 @@ function ChatFlow1() {
     return (
         <div className="flex h-screen bg-white text-gray-800 font-sans">
             {/* ========== 左侧边栏 ========== */}
-            <aside className="w-64 border-r border-[#e0f2fe] p-4 flex flex-col bg-[#f0f9ff]">
+            <aside className={`border-r border-[#e0f2fe] flex flex-col bg-[#f0f9ff] transition-all duration-300 ${
+                sidebarOpen ? 'w-64 p-4' : 'w-0 p-0 overflow-hidden border-r-0'
+            }`}>
                 {/* Logo 区域 */}
                 <div className="w-full mb-6">
                     <div className="flex flex-row-reverse items-center justify-end gap-3">
+                        {/* 收缩按钮 */}
+                        <button
+                            onClick={() => setSidebarOpen(!sidebarOpen)}
+                            className="w-6 h-6 rounded hover:bg-gray-200 flex items-center justify-center flex-shrink-0 text-gray-400 hover:text-gray-600 transition"
+                        >
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                                {sidebarOpen ? (
+                                    <path d="M10 12L6 8L10 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                ) : (
+                                    <path d="M6 12L10 8L6 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                )}
+                            </svg>
+                        </button>
                         <div className="relative w-[132px] h-[38px]">
                             <div className="absolute left-0 -top-[1px]">
                                 <span className="text-lg font-semibold leading-tight text-[#0c4a6e] font-['Inter']">
@@ -501,9 +517,23 @@ function ChatFlow1() {
                     </div>
                 </header>
 
+
+                {/* 侧边栏收起时的 Logo 按钮 - absolute 悬浮 */}
+                {!sidebarOpen && (
+                    <button
+                        onClick={() => setSidebarOpen(true)}
+                        className="fixed left-6 top-20 w-10 h-10 bg-[#458ecb] rounded-full flex items-center justify-center border border-[#e0f2fe] hover:bg-[#3a7db5] transition z-10"
+                    >
+                        <svg width="12" height="18" viewBox="0 0 12 18" fill="none">
+                            <path d="M4 18C2.8999 18 1.9585 17.6083 1.17505 16.825C0.391602 16.0417 0 15.1 0 14C0 12.9 0.391602 11.9583 1.17505 11.175C1.9585 10.3917 2.8999 10 4 10C4.3833 10 4.73755 10.0458 5.0625 10.1375C5.38745 10.2292 5.69995 10.3667 6 10.55V0H12V4H8V14C8 15.1 7.6084 16.0417 6.82495 16.825C6.0415 17.6083 5.1001 18 4 18Z" fill="white"/>
+                        </svg>
+                    </button>
+                )}
+
                 {/* 聊天内容区域 - 可滚动 */}
-                <div className="flex-1 overflow-y-auto px-8 py-6">
-                    <div className="max-w-[768px] mx-auto space-y-6">
+                <div className="flex-1 overflow-y-auto px-8 py-6 relative">
+                    <div className="max-w-[768px] mx-auto space-y-6 relative">
+
                         {/* 欢迎区域 */}
                         <div className="w-[600px] py-5 flex flex-col gap-y-2 relative overflow-visible">
                             <div className="absolute -left-[18px] top-[15px] opacity-10 pointer-events-none">
