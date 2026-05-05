@@ -13,6 +13,15 @@ function ChatFlow0() {
     const [audioFileId, setAudioFileId] = useState<string | null>(null)
     const [uploadError, setUploadError] = useState<string | null>(null)
     const [uploadSuccess, setUploadSuccess] = useState<string | null>(null)
+    const [uploadProgress, setUploadProgress] = useState<number>(0)
+    const [isUploading, setIsUploading] = useState(false)
+
+    // 参数设置
+    const [instrument, setInstrument] = useState('Acoustic Piano')
+    const [tempo, setTempo] = useState('120')
+    const [duration, setDuration] = useState('180')
+    const [showInstrument, setShowInstrument] = useState(false)
+    const instruments = ['Acoustic Piano', 'Violin']
 
     const handleSend = () => {
         if (!inputValue.trim()) return
@@ -20,6 +29,9 @@ function ChatFlow0() {
             state: {
                 userMessage: inputValue.trim(),
                 audioFileId: audioFileId,
+                instrument,
+                tempo,
+                duration,
             }
         })
     }
@@ -41,9 +53,21 @@ function ChatFlow0() {
 
         setAudioFile(file)
         setUploadError(null)
+        setUploadSuccess(null)
+        setIsUploading(true)
+        setUploadProgress(0)
+
         try {
             console.log('开始上传文件:', file.name)
+            // 模拟进度（因为 fetch 不提供上传进度，需要 XMLHttpRequest）
+            const progressInterval = setInterval(() => {
+                setUploadProgress(prev => Math.min(prev + 10, 90))
+            }, 200)
+
             const res = await api.uploadFile(file)
+            clearInterval(progressInterval)
+            setUploadProgress(100)
+
             console.log('上传响应:', res)
             if (res.code === 200) {
                 setAudioFileId(res.data.file_id)
@@ -57,6 +81,9 @@ function ChatFlow0() {
             console.error('上传失败:', err)
             setUploadError(`上传失败: ${err instanceof Error ? err.message : '未知错误'}`)
             setUploadSuccess(null)
+        } finally {
+            setIsUploading(false)
+            setTimeout(() => setUploadProgress(0), 500)
         }
     }
 
@@ -164,6 +191,20 @@ function ChatFlow0() {
                     </div>
 
                     {/* 上传状态显示 */}
+                    {isUploading && (
+                        <div className="w-[691px] mt-2 self-center">
+                            <div className="flex items-center justify-between mb-1">
+                                <span className="text-sm text-blue-600">正在上传...</span>
+                                <span className="text-sm text-blue-600">{uploadProgress}%</span>
+                            </div>
+                            <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                                <div
+                                    className="h-full bg-blue-500 rounded-full transition-all duration-200"
+                                    style={{ width: `${uploadProgress}%` }}
+                                />
+                            </div>
+                        </div>
+                    )}
                     {uploadError && (
                         <div className="w-[691px] h-[30px] mt-2 flex items-center px-4 bg-red-50 border border-red-200 rounded-lg self-center">
                             <span className="text-sm text-red-600">{uploadError}</span>
@@ -179,6 +220,52 @@ function ChatFlow0() {
                     <div className="w-[691px] h-[41px] mt-[30px] mb-10 flex items-center justify-between bg-white/50 self-center rounded-lg px-4">
                         {/* 左侧按钮组 */}
                         <div className="flex flex-row-reverse items-center gap-1">
+                            {/* Instrument 下拉 */}
+                            <div className="relative mr-2">
+                                <button
+                                    onClick={() => setShowInstrument(!showInstrument)}
+                                    className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition"
+                                >
+                                    {instrument}
+                                </button>
+                                {showInstrument && (
+                                    <div className="absolute bottom-full left-0 mb-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
+                                        {instruments.map((inst) => (
+                                            <button
+                                                key={inst}
+                                                onClick={() => { setInstrument(inst); setShowInstrument(false) }}
+                                                className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${instrument === inst ? 'text-[#0284c7] font-medium' : 'text-gray-700'}`}
+                                            >
+                                                {inst}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                            {/* Tempo 输入 */}
+                            <div className="flex items-center gap-1 mr-2">
+                                <span className="text-xs text-gray-500">BPM:</span>
+                                <input
+                                    type="number"
+                                    value={tempo}
+                                    onChange={(e) => setTempo(e.target.value)}
+                                    className="w-14 px-2 py-1 bg-white border border-gray-200 rounded text-sm text-gray-700 outline-none"
+                                    min="40"
+                                    max="240"
+                                />
+                            </div>
+                            {/* Duration 输入 */}
+                            <div className="flex items-center gap-1 mr-3">
+                                <span className="text-xs text-gray-500">秒:</span>
+                                <input
+                                    type="number"
+                                    value={duration}
+                                    onChange={(e) => setDuration(e.target.value)}
+                                    className="w-14 px-2 py-1 bg-white border border-gray-200 rounded text-sm text-gray-700 outline-none"
+                                    min="10"
+                                    max="600"
+                                />
+                            </div>
                             {/* 语音按钮 */}
                             <button className="w-10 h-10 bg-[#f0f9ff]/65 rounded-2xl flex items-center justify-center shadow-[inset_0px_2px_4px_0px_#0000000D]">
                                 <svg width="13" height="20" viewBox="0 0 13 20" fill="none">

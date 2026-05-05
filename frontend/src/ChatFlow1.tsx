@@ -5,7 +5,7 @@ import { api } from './api'
 import type { TaskListItem } from './types'
 
 interface Message {
-    id: number
+    id: string
     type: 'ai' | 'user'
     content?: string
     deepThinking?: string
@@ -27,18 +27,21 @@ function ChatFlow1() {
     const [filename, setFilename] = useState('Untitled_Track')
     const [inputValue, setInputValue] = useState('')
     const instruments = ['Acoustic Piano', 'Violin']
-    const idCounter = useRef(0)
+    const idCounter = useRef(Date.now())  // 用时间戳初始化，避免重复
     const fetchHistoryRef = useRef<(() => Promise<void>) | null>(null)
     const location = useLocation()
     const sentRef = useRef(false)
     const [audioFile, setAudioFile] = useState<File | null>(null)
     const [audioFileId, setAudioFileId] = useState<string | null>(null)
+    const [uploadError, setUploadError] = useState<string | null>(null)
+    const [uploadSuccess, setUploadSuccess] = useState<string | null>(null)
+    const [uploadProgress, setUploadProgress] = useState<number>(0)
+    const [isUploading, setIsUploading] = useState(false)
     const fileInputRef = useRef<HTMLInputElement>(null)
-    const fileId = useRef<string | null>(null)
 
     const nextId = () => {
         idCounter.current += 1
-        return idCounter.current
+        return `${Date.now()}-${idCounter.current}`  // 时间戳+计数器组合
     }
 
     const [messages, setMessages] = useState<Message[]>([
@@ -135,7 +138,7 @@ function ChatFlow1() {
         }
     }
 
-    const pollTaskStatus = async (taskId: string, msgId: number) => {
+    const pollTaskStatus = async (taskId: string, msgId: string) => {
         let attempts = 0
         const maxAttempts = 30
 
@@ -186,7 +189,7 @@ function ChatFlow1() {
     }
 
     // 更新消息内容
-    const updateMessage = (msgId: number, updates: Partial<Message>) => {
+    const updateMessage = (msgId: string, updates: Partial<Message>) => {
         setMessages(prev => prev.map(msg =>
             msg.id === msgId ? { ...msg, ...updates } : msg
         ))
@@ -204,7 +207,7 @@ function ChatFlow1() {
             const res = await api.createTask({
                 user_request: text.trim(),
                 source_type: 'upload',
-                source_value: fileId.current || undefined,
+                source_value: audioFileId || undefined,
                 instrument,
                 duration: parseInt(duration) || 30,
                 tempo: parseInt(tempo) || 120,
@@ -237,8 +240,14 @@ function ChatFlow1() {
     useEffect(() => {
         const userMessage = location.state?.userMessage as string | undefined
         const userFileId = location.state?.audioFileId as string | undefined
+        const userInstrument = location.state?.instrument as string | undefined
+        const userTempo = location.state?.tempo as string | undefined
+        const userDuration = location.state?.duration as string | undefined
 
-        fileId.current = userFileId || null
+        setAudioFileId(userFileId || null)
+        if (userInstrument) setInstrument(userInstrument)
+        if (userTempo) setTempo(userTempo)
+        if (userDuration) setDuration(userDuration)
 
         if (userMessage && !sentRef.current) {
             sentRef.current = true
@@ -254,42 +263,51 @@ function ChatFlow1() {
         const validFormats = ['mp3', 'wav', 'flac', 'm4a', 'ogg']
         const ext = file.name.split('.').pop()?.toLowerCase()
         if (!ext || !validFormats.includes(ext)) {
-            showError(`不支持的格式: .${ext}，支持: ${validFormats.join(', ')}`)
+            setUploadError(`不支持的格式: .${ext}，支持: ${validFormats.join(', ')}`)
+            setUploadSuccess(null)
             return
         }
 
         // 验证大小 (50MB)
         if (file.size > 50 * 1024 * 1024) {
-            showError('文件过大，最大支持 50MB')
+            setUploadError('文件过大，最大支持 50MB')
+            setUploadSuccess(null)
             return
         }
 
         setAudioFile(file)
+        setUploadError(null)
+        setUploadSuccess(null)
+        setIsUploading(true)
+        setUploadProgress(0)
 
         try {
+            console.log('开始上传文件:', file.name)
+            // 模拟进度
+            const progressInterval = setInterval(() => {
+                setUploadProgress(prev => Math.min(prev + 10, 90))
+            }, 200)
+
             const res = await api.uploadFile(file)
+            clearInterval(progressInterval)
+            setUploadProgress(100)
+
+            console.log('上传响应:', res)
             if (res.code === 200) {
                 setAudioFileId(res.data.file_id)
-                // 显示上传成功消息，包含文件名
-                const fileMsg: Message = {
-                    id: nextId(),
-                    type: 'user',
-                    userFile: res.data.filename,
-                    audioFileId: res.data.file_id,
-                }
-                setMessages(prev => [...prev, fileMsg])
-                // 同时显示文件信息
-                const infoMsg: Message = {
-                    id: nextId(),
-                    type: 'ai',
-                    content: `文件已上传: ${res.data.filename} (${(res.data.file_size).toFixed(2)} MB)${res.data.duration ? `, 时长: ${Math.round(res.data.duration)}秒` : ''}`,
-                }
-                setMessages(prev => [...prev, infoMsg])
+                setUploadSuccess(`文件已上传: ${res.data.filename} (${(res.data.file_size).toFixed(2)} MB)${res.data.duration ? `, 时长: ${Math.round(res.data.duration)}秒` : ''}`)
+                setUploadError(null)
             } else {
-                showError(res.message || '文件上传失败')
+                setUploadError(res.message || '文件上传失败')
+                setUploadSuccess(null)
             }
-        } catch {
-            showError(t('chat.networkError'))
+        } catch (err) {
+            console.error('上传失败:', err)
+            setUploadError(`上传失败: ${err instanceof Error ? err.message : '未知错误'}`)
+            setUploadSuccess(null)
+        } finally {
+            setIsUploading(false)
+            setTimeout(() => setUploadProgress(0), 500)
         }
     }
 
@@ -361,7 +379,10 @@ function ChatFlow1() {
                 </div>
 
                 {/* 新建 Adaptation 按钮 */}
-                <button className="w-[227px] self-stretch mb-6 px-4 py-3 bg-[#00639d] text-[#f7f9ff] rounded-xl hover:bg-[#005288] transition flex flex-row-reverse items-center justify-center gap-2">
+                <button
+                    onClick={() => navigate('/')}
+                    className="w-[227px] self-stretch mb-6 px-4 py-3 bg-[#00639d] text-[#f7f9ff] rounded-xl hover:bg-[#005288] transition flex flex-row-reverse items-center justify-center gap-2"
+                >
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M6 7H0V5H6V0H8V5H14V7H8V14H6V7Z" fill="#f7f9ff"/>
                     </svg>
@@ -583,12 +604,18 @@ function ChatFlow1() {
                                                                 <path d="M0 14V0H11L0 7V14ZM2 7L7.25 3.65V10.35L2 7Z" fill="white"/>
                                                             </svg>
                                                         </div>
-                                                        <div>
+                                                        <div className="flex-1">
                                                             <p className="font-medium text-gray-800">{msg.fileName}</p>
                                                             {msg.fileInfo && (
                                                                 <p className="text-xs text-gray-500">{msg.fileInfo}</p>
                                                             )}
                                                         </div>
+                                                        <button
+                                                            onClick={() => api.downloadFile(msg.fileName!, msg.fileName!.split('/').pop() || 'audio')}
+                                                            className="px-3 py-1.5 bg-[#0284c7] text-white text-xs font-medium rounded-lg hover:bg-[#0369a1] transition"
+                                                        >
+                                                            下载
+                                                        </button>
                                                     </div>
                                                 </div>
                                             )}
@@ -711,14 +738,44 @@ function ChatFlow1() {
 
                 {/* 底部输入栏 */}
                 <div className="border-t border-gray-100 px-4 py-3">
-                    <div className="max-w-[768px] mx-auto px-2">
+                    <div className="max-w-[768px] mx-auto">
+                        {/* 上传状态显示 - 紧凑样式 */}
+                        {(isUploading || uploadError || uploadSuccess) && (
+                            <div className="mb-2 px-2 py-2 bg-[#f8fafc] rounded-xl border border-gray-100">
+                                {isUploading && (
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                        <span className="text-sm text-gray-600">正在上传... {uploadProgress}%</span>
+                                    </div>
+                                )}
+                                {uploadError && (
+                                    <div className="flex items-center gap-2 text-red-600">
+                                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                            <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4.75v4.5a.75.75 0 001.5 0v-4.5a.75.75 0 00-1.5 0zM8 10.5a.875.875 0 110-1.75.875.875 0 010 1.75z"/>
+                                        </svg>
+                                        <span className="text-sm">{uploadError}</span>
+                                    </div>
+                                )}
+                                {uploadSuccess && (
+                                    <div className="flex items-center gap-2 text-green-600">
+                                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                                            <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/>
+                                        </svg>
+                                        <span className="text-sm">{uploadSuccess}</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
                         <div className="relative flex flex-row-reverse items-center gap-2 bg-white border border-[#e0f2fe] rounded-3xl px-2.5 py-2.5">
-                            <button className="w-11 h-11 bg-[#00639d] rounded-2xl flex items-center justify-center flex-shrink-0 shadow-[0px_10px_15px_-3px_#00639d4D,0px_4px_6px_-4px_#00639d4D]">
+                            <button
+                                onClick={handleSend}
+                                className="w-11 h-11 bg-[#00639d] rounded-2xl flex items-center justify-center flex-shrink-0 shadow-[0px_10px_15px_-3px_#00639d4D,0px_4px_6px_-4px_#00639d4D] hover:bg-[#005288] transition"
+                            >
                                 <svg width="19" height="16" viewBox="0 0 19 16" fill="none">
                                     <path d="M0 16V0L19 8L0 16ZM2 13L13.85 8L2 3V6.5L8 8L2 9.5V13Z" fill="#f7f9ff"/>
                                 </svg>
                             </button>
-                            {/* 输入框 */}
                             {/* 输入框 */}
                             <div className="flex-1 px-3 py-2.5 min-h-[39px]">
                                 <textarea

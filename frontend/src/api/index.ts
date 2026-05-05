@@ -66,6 +66,27 @@ export const api = {
 
         return res.json() as Promise<ApiResponse<UploadResult>>
     },
+
+    // 下载音频文件
+    downloadFile: async (fileUrl: string, filename: string) => {
+        try {
+            const res = await fetch(fileUrl)
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            const blob = await res.blob()
+            const url = URL.createObjectURL(blob)
+            const link = document.createElement('a')
+            link.href = url
+            link.download = filename
+            document.body.appendChild(link)
+            link.click()
+            document.body.removeChild(link)
+            URL.revokeObjectURL(url)
+        } catch (err) {
+            console.error('下载失败:', err)
+            // 降级：直接打开链接
+            window.open(fileUrl, '_blank')
+        }
+    },
 }
 
 export type { ApiResponse }

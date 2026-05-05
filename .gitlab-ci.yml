@@ -1,5 +1,6 @@
 stages:
   - lint
+  - build
   - test
 
 # ============================================
@@ -10,8 +11,20 @@ lint-backend:
   script:
     - cd backend
     - pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -q black isort
-    - python3 -m black app/
-    - python3 -m isort app/
+    - python3 -m black app/ --check
+    - python3 -m isort app/ --check-only
+  tags:
+    - shell
+  rules:
+    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_COMMIT_BRANCH != "main"
+
+lint-frontend:
+  stage: lint
+  script:
+    - cd frontend
+    - npm ci
+    - npm run lint
   tags:
     - shell
   rules:
@@ -19,7 +32,22 @@ lint-backend:
     - if: $CI_COMMIT_BRANCH != "main"
 
 # ============================================
-# 阶段 2: 测试
+# 阶段 2: 构建
+# ============================================
+build-frontend:
+  stage: build
+  script:
+    - cd frontend
+    - npm ci
+    - npm run build
+  tags:
+    - shell
+  rules:
+    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_COMMIT_BRANCH != "main"
+
+# ============================================
+# 阶段 3: 测试
 # ============================================
 test-backend:
   stage: test
