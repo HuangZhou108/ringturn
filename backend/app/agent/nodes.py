@@ -53,8 +53,19 @@ async def analyze_structure_node(state: AgentState, db: Session, tools) -> None:
     if not audio_path:
         raise ValueError("音频路径未设置")
 
+    # 记录思考过程
+    thinking = "正在分析音频结构，包括BPM、调性、段落结构等..."
+    state["_thinking"] = thinking
+
     analysis = await tools.analyze_audio_structure(audio_path)
     state["analysis_result"] = analysis
+
+    # 记录分析结果：优先使用用户指定的tempo，否则使用分析结果
+    user_tempo = state.get("tempo")
+    bpm = user_tempo if user_tempo else analysis.get("tempo", "未知")
+    key = analysis.get("key", "未知")
+    sections = len(analysis.get("sections", []))
+    state["_thinking"] = f"分析完成：BPM={bpm}, 调性={key}, 段落数={sections}"
 
 async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
     """
@@ -66,8 +77,12 @@ async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
     if not audio_path:
         raise ValueError("音频路径未设置")
 
+    state["_thinking"] = "正在使用AI模型提取音频中的主旋律..."
     melody = await tools.extract_melody(audio_path)
     state["melody_data"] = melody
+
+    note_count = len(melody.get("melody_notes", []))
+    state["_thinking"] = f"旋律提取完成：共提取{note_count}个音符"
 
 async def generate_midi_node(state: AgentState, db: Session, tools) -> None:
     """
@@ -110,6 +125,8 @@ async def arrange_node(state: AgentState, db: Session, tools) -> None:
     target_instrument = instrument_map.get(instrument.lower(), "piano")
     target_instruments = [target_instrument]
 
+    state["_thinking"] = f"正在将乐器改编为{target_instrument}..."
+
     midi_path = state.get("midi_path")
     if not midi_path:
         raise ValueError("MIDI路径未设置")
@@ -128,6 +145,7 @@ async def arrange_node(state: AgentState, db: Session, tools) -> None:
         "instruments": target_instruments,
         "style": state.get("user_request", ""),
     }
+    state["_thinking"] = f"乐器改编完成：{target_instrument}"
 
 async def render_node(state: AgentState, db: Session, tools) -> None:
     """
@@ -145,6 +163,7 @@ async def render_node(state: AgentState, db: Session, tools) -> None:
         from app.services.midi_arranger import change_tempo
         task_id = state["task_id"]
         tempo_path = Path(settings.RINGTONES_DIR) / f"{task_id}_tempo.mid"
+        state["_thinking"] = f"正在调整BPM为{tempo}..."
         midi_path = await change_tempo(midi_path, tempo, str(tempo_path))
 
     task_id = state["task_id"]
@@ -156,6 +175,8 @@ async def render_node(state: AgentState, db: Session, tools) -> None:
 
     # 使用前端传入的 duration 参数
     target_duration = state.get("duration", settings.DEFAULT_RINGTONE_DURATION)
+
+    state["_thinking"] = f"正在渲染音频，时长限制为{target_duration}秒..."
 
     # 乐器配置（使用配置文件中的音色库）
     instruments = {
@@ -178,8 +199,10 @@ async def render_node(state: AgentState, db: Session, tools) -> None:
     state["final_audio_path"] = final_path
     state["audio_duration"] = duration
 
-    # 生成URL - 使用新文件名
-    state["final_audio_url"] = f"/static/ringtones/{output_filename}"
+    # 生成URL - 使用截取后的真实文件路径
+    final_filename = os.path.basename(final_path)
+    state["final_audio_url"] = f"/static/ringtones/{final_filename}"
+    state["_thinking"] = f"音频渲染完成，最终时长：{duration}秒"
 
 async def check_quality_node(state: AgentState, db: Session, tools) -> None:
     """
@@ -190,6 +213,10 @@ async def check_quality_node(state: AgentState, db: Session, tools) -> None:
     audio_path = state.get("final_audio_path")
     if not audio_path:
         raise ValueError("最终音频路径未设置")
+
+    # 转换为绝对路径（确保质量检查能找到文件）
+    if not os.path.isabs(audio_path):
+        audio_path = os.path.abspath(audio_path)
 
     quality = await tools.check_quality(audio_path)
 

@@ -57,6 +57,9 @@ class Task(Base):
     final_audio_url = Column(String(500))
     audio_duration = Column(Integer)
 
+    # 思考过程记录
+    thinking_process = Column(JSON, nullable=True)  # [{"step": "分析", "content": "...", "timestamp": "..."}]
+
     # 时间戳
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

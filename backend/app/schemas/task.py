@@ -51,6 +51,7 @@ class TaskStatusResponse(BaseModel):
     current_subtask: str | None = None
     subtask_progress: float = 0.0
     message: str | None = None
+    thinking_process: list[dict] | None = None  # 思考过程
 
 class TaskResultResponse(BaseModel):
     """任务结果响应"""

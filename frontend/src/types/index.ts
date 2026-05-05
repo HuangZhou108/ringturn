@@ -64,6 +64,7 @@ export interface TaskStatusInfo {
     current_subtask?: string
     subtask_progress: number
     message?: string
+    thinking_process?: { step: string; content: string; timestamp: string }[]
 }
 
 // 任务生成结果
@@ -71,6 +72,7 @@ export interface TaskResult {
     audio_url?: string
     duration?: number
     format?: string
+    thinking_process?: { step: string; content: string; timestamp: string }[]
 }
 
 // 反馈

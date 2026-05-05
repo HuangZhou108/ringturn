@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional
+import asyncio
+from functools import partial
 
 from app.db.session import get_db
 from app.models import Task, User
@@ -19,27 +21,43 @@ async def get_user_tasks(
     """
     获取用户历史任务列表
     """
-    # 查询用户是否存在
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
+
+    def _query_tasks_sync():
+        # 查询用户是否存在
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return None
+
+        # 构建查询
+        query = db.query(Task).filter(Task.user_id == user_id)
+
+        if status:
+            query = query.filter(Task.status == status)
+
+        # 分页
+        total = query.count()
+        tasks = query.order_by(Task.created_at.desc()) \
+            .offset((page - 1) * page_size) \
+            .limit(min(page_size, 50)) \
+            .all()
+
+        return {
+            "user": user,
+            "total": total,
+            "tasks": tasks,
+        }
+
+    # 在线程池中执行查询，避免阻塞事件循环
+    result = await asyncio.get_event_loop().run_in_executor(
+        None, _query_tasks_sync
+    )
+
+    if result is None:
         return {
             "code": 400,
             "data": None,
             "message": "用户不存在。"
         }
-
-    # 构建查询
-    query = db.query(Task).filter(Task.user_id == user_id)
-
-    if status:
-        query = query.filter(Task.status == status)
-
-    # 分页
-    total = query.count()
-    tasks = query.order_by(Task.created_at.desc()) \
-        .offset((page - 1) * page_size) \
-        .limit(min(page_size, 50)) \
-        .all()
 
     task_items = [
         {
@@ -50,13 +68,13 @@ async def get_user_tasks(
             "audio_duration": t.audio_duration,
             "created_at": t.created_at.isoformat() if t.created_at else None,
         }
-        for t in tasks
+        for t in result["tasks"]
     ]
 
     return {
         "code": 200,
         "data": {
-            "total": total,
+            "total": result["total"],
             "page": page,
             "page_size": page_size,
             "tasks": task_items,

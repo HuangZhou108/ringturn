@@ -136,6 +136,19 @@ async def get_task_status(
     if not task:
         raise TaskNotFoundException(task_id)
 
+    # 根据状态生成友好的消息
+    status_messages = {
+        "pending": "任务等待处理...",
+        "planning": "正在制定执行计划...",
+        "executing": f"正在执行: {task.current_subtask or '处理中'}",
+        "waiting_input": "等待用户输入...",
+        "completed": "任务已完成",
+        "failed": f"任务失败: {task.error_message or '未知错误'}",
+        "cancelled": "任务已取消",
+    }
+
+    message = status_messages.get(task.status.value, f"状态: {task.status.value}")
+
     return {
         "code": 200,
         "data": {
@@ -143,9 +156,10 @@ async def get_task_status(
             "status": task.status.value,
             "current_subtask": task.current_subtask,
             "subtask_progress": task.subtask_progress or 0.0,
-            "message": "获取任务状态成功。",
+            "message": message,
+            "thinking_process": task.thinking_process or [],
         },
-        "message": "获取任务状态成功。",
+        "message": message,
     }
 
 @router.get("/{task_id}/result")
@@ -171,6 +185,7 @@ async def get_task_result(
             "audio_url": task.final_audio_url,
             "duration": task.audio_duration,
             "format": "mp3",
+            "thinking_process": task.thinking_process or [],
         },
         "message": "获取任务结果成功。",
     }
@@ -250,48 +265,61 @@ async def cancel_task(
 
 async def run_agent_task(task_id: str):
     """
-    在后台运行Agent任务
+    在后台运行Agent任务（使用独立线程，避免阻塞）
 
     Args:
         task_id: 任务ID
-
-    注意：由于 BackgroundTasks 无法使用依赖注入的 db，
-    需要在函数内部创建数据库会话
     """
-    db = SessionLocal()
-    try:
-        # 更新状态为planning
-        task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
-        if not task:
-            print(f"[ERROR] Task {task_id} not found")
-            return
-        task.status = TaskStatus.planning
-        db.commit()
-
-        # 初始化Agent执行器
-        agent_executor = AgentExecutor(task_id=task_id, db=db)
-
-        # 执行任务
-        result = await agent_executor.execute()
-
-        # 更新任务状态为completed
-        task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
-        if task:
-            task.status = TaskStatus.completed
-            task.final_audio_url = result["audio_url"]
-            task.audio_duration = result["duration"]
-            task.current_subtask = None
-            task.subtask_progress = 1.0
+    import threading
+    
+    def run_in_thread():
+        db = SessionLocal(expire_on_commit=False)
+        try:
+            # 更新状态为planning
+            task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+            if not task:
+                print(f"[ERROR] Task {task_id} not found")
+                return
+            task.status = TaskStatus.planning
             db.commit()
-            print(f"[SUCCESS] Task {task_id} completed")
 
-    except Exception as e:
-        print(f"[ERROR] Task {task_id} failed: {e}")
-        # 更新任务状态为failed
-        task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
-        if task:
-            task.status = TaskStatus.failed
-            task.error_message = str(e)
-            db.commit()
-    finally:
-        db.close()
+            # 初始化Agent执行器
+            agent_executor = AgentExecutor(task_id=task_id, db=db)
+
+            # 创建新的事件循环给这个线程用
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                # 执行任务
+                result = loop.run_until_complete(agent_executor.execute())
+            finally:
+                loop.close()
+
+            # 更新任务状态为completed
+            task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+            if task:
+                task.status = TaskStatus.completed
+                task.final_audio_url = result["audio_url"]
+                task.audio_duration = result["duration"]
+                task.current_subtask = None
+                task.subtask_progress = 1.0
+                db.commit()
+                print(f"[SUCCESS] Task {task_id} completed")
+
+        except Exception as e:
+            print(f"[ERROR] Task {task_id} failed: {e}")
+            import traceback
+            traceback.print_exc()
+            # 更新任务状态为failed
+            task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+            if task:
+                task.status = TaskStatus.failed
+                task.error_message = str(e)
+                db.commit()
+        finally:
+            db.close()
+    
+    # 在独立线程中运行，完全不阻塞主应用
+    thread = threading.Thread(target=run_in_thread, daemon=True)
+    thread.start()

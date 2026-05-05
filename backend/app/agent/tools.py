@@ -411,9 +411,75 @@ class ToolGateway:
         Returns:
             tuple: (截取后的音频路径, 实际时长)
         """
-        # TODO: 实现智能截取逻辑
-        # 当前直接返回原文件
-        return audio_path, target_duration
+        print(f"[DEBUG] smart_clip called: path={audio_path}, target_duration={target_duration}")
+
+        if not os.path.exists(audio_path):
+            print(f"[WARN] Audio file not found: {audio_path}")
+            return audio_path, target_duration
+
+        try:
+            import librosa
+            import soundfile as sf
+
+            # 获取实际音频时长
+            y, sr = librosa.load(audio_path, sr=None, mono=False)
+            if y.ndim == 1:
+                actual_duration = len(y) / sr
+            else:
+                actual_duration = y.shape[1] / sr
+
+            print(f"[DEBUG] Actual audio duration: {actual_duration}s, target: {target_duration}s")
+
+            # 如果实际时长已经接近目标时长（或更短），直接返回
+            if actual_duration <= target_duration + 1:
+                print(f"[DEBUG] Audio is short enough, returning as-is")
+                return audio_path, round(actual_duration, 1)
+
+            # 计算需要截取的位置
+            if mode == "auto" or mode == "highlight":
+                # 找到能量最大的位置作为截取起点（通常是高潮部分）
+                y_mono = y if y.ndim == 1 else np.mean(y, axis=0)
+                hop_length = 512
+                rms = librosa.feature.rms(y=y_mono, hop_length=hop_length)[0]
+                frame_times = librosa.times_like(rms, sr=sr, hop_length=hop_length)
+
+                # 在中间区域找能量最大的点
+                mid_start = int(len(rms) * 0.25)
+                mid_end = int(len(rms) * 0.75)
+                mid_rms = rms[mid_start:mid_end]
+                peak_idx = np.argmax(mid_rms) + mid_start
+                peak_time = frame_times[peak_idx]
+
+                # 确保截取后不会超出音频长度
+                start_time = min(peak_time, max(0, actual_duration - target_duration))
+            elif mode == "fade_out":
+                # 从开头截取
+                start_time = 0
+            else:
+                start_time = 0
+
+            # 计算结束时间
+            end_time = min(start_time + target_duration, actual_duration)
+            actual_clip_duration = end_time - start_time
+
+            # 截取音频
+            start_sample = int(start_time * sr)
+            end_sample = int(end_time * sr)
+            y_clipped = y[:, start_sample:end_sample] if y.ndim > 1 else y[start_sample:end_sample]
+
+            # 直接覆盖原文件，使用用户指定的文件名
+            clipped_path = audio_path
+
+            # 保存截取后的音频（直接覆盖原文件）
+            sf.write(clipped_path, y_clipped.T if y.ndim > 1 else y_clipped, sr)
+            print(f"[DEBUG] Saved clipped audio to: {clipped_path}")
+
+            return clipped_path, round(actual_clip_duration, 1)
+
+        except Exception as e:
+            print(f"[ERROR] smart_clip failed: {e}")
+            # 出错时返回原始路径
+            return audio_path, target_duration
 
     async def parse_user_request(self, user_request: str) -> dict:
         """

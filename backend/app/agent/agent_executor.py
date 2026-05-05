@@ -31,7 +31,7 @@ class AgentExecutor:
 
     def __init__(self, task_id: str, db: Session = None):
         self.task_id = task_id
-        self.db = db or SessionLocal()
+        self.db = db or SessionLocal(expire_on_commit=False)
 
         # 获取任务
         self.task = self.db.query(TaskModel).filter(TaskModel.id == task_id).first()
@@ -124,6 +124,7 @@ class AgentExecutor:
             dict: 执行结果
         """
         # 添加反馈到历史
+        self._add_thinking_step("优化", f"收到用户反馈: {feedback[:50]}...")
         self.state["feedback_history"].append({
             "feedback": feedback,
             "timestamp": datetime.utcnow().isoformat(),
@@ -181,7 +182,9 @@ class AgentExecutor:
         user_request = self.state.get("user_request", "")
 
         # 调用LLM生成计划
+        self._add_thinking_step("规划", f"分析用户需求: {user_request[:50]}...")
         plan = await llm_service.generate_plan(user_request)
+        self._add_thinking_step("规划", f"生成执行计划: {' → '.join(plan)}")
 
         self.state["plan"] = plan
         self.task.plan = plan
@@ -242,7 +245,24 @@ class AgentExecutor:
         if not handler:
             raise ValueError(f"未知步骤: {step}")
 
-        await handler(self.state, self.db, tool_gateway)
+        try:
+            # 记录思考过程：开始执行
+            self._add_thinking_step(step, f"开始执行步骤：{step}")
+
+            await handler(self.state, self.db, tool_gateway)
+
+            # 记录节点内的思考过程（如果存在）
+            if self.state.get("_thinking"):
+                self._add_thinking_step(step, self.state["_thinking"])
+                del self.state["_thinking"]
+
+            # 记录思考过程：完成
+            self._add_thinking_step(step, f"步骤 {step} 执行完成")
+
+        except Exception as e:
+            # 即使失败也要记录思考过程
+            self._add_thinking_step(step, f"步骤 {step} 执行失败: {str(e)}")
+            raise
 
         self.db.commit()
 
@@ -250,6 +270,18 @@ class AgentExecutor:
         """更新任务状态"""
         self.task.status = status
         self.task.updated_at = datetime.utcnow()
+        self.db.commit()
+
+    def _add_thinking_step(self, step: str, content: str) -> None:
+        """添加思考步骤"""
+        # 创建新的列表对象，避免 SQLAlchemy 追踪问题
+        current_steps = list(self.task.thinking_process or [])
+        current_steps.append({
+            "step": step,
+            "content": content,
+            "timestamp": datetime.utcnow().isoformat(),
+        })
+        self.task.thinking_process = current_steps
         self.db.commit()
 
     def __del__(self):

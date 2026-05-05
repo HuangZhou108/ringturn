@@ -15,7 +15,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def get_db():
     """获取数据库会话（依赖注入）"""
-    db = SessionLocal()
+    db = SessionLocal(expire_on_commit=False)
     try:
         yield db
     finally:

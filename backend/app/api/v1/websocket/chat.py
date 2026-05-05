@@ -79,6 +79,7 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
         last_status = task.status
         last_subtask = task.current_subtask
         last_progress = task.subtask_progress
+        last_thinking_count = len(task.thinking_process) if task.thinking_process else 0
 
         while True:
             # 每2秒查询一次数据库状态
@@ -86,14 +87,20 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
 
             db.refresh(task)
 
-            # 检测状态变化
+            # 检测状态变化或思考过程更新
+            thinking_count = len(task.thinking_process) if task.thinking_process else 0
             if (task.status != last_status or
                 task.current_subtask != last_subtask or
-                task.subtask_progress != last_progress):
+                task.subtask_progress != last_progress or
+                thinking_count > last_thinking_count):
 
                 last_status = task.status
                 last_subtask = task.current_subtask
                 last_progress = task.subtask_progress
+                last_thinking_count = thinking_count
+
+                # 获取最新的思考过程
+                thinking_process = task.thinking_process[-3:] if task.thinking_process else []  # 最近3条
 
                 await manager.send_message(task_id, {
                     "type": "status_update",
@@ -102,6 +109,7 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
                     "current_subtask": task.current_subtask,
                     "subtask_progress": task.subtask_progress or 0.0,
                     "message": get_step_message(task.current_subtask),
+                    "thinking_process": thinking_process,
                     "timestamp": datetime.utcnow().isoformat(),
                 })
 

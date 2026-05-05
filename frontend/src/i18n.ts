@@ -41,6 +41,8 @@ i18n
                         taskCreated: 'Task created, processing...',
                         createFailed: 'Task creation failed, please retry.',
                         networkError: 'Network error, please check if the backend service is running.',
+                        completed: 'Task completed',
+                        failed: 'Task failed',
                     },
                     params: {
                         instrument: 'INSTRUMENT',
@@ -91,6 +93,8 @@ i18n
                         taskCreated: '任务已创建，正在处理中...',
                         createFailed: '任务创建失败，请重试。',
                         networkError: '网络错误，请检查后端服务是否启动。',
+                        completed: '任务已完成',
+                        failed: '任务失败',
                     },
                     params: {
                         instrument: '乐器',

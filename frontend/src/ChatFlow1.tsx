@@ -14,6 +14,8 @@ interface Message {
     userFile?: string
     audioFileId?: string  // 上传文件后返回的 file_id
     taskId?: string  // 关联的任务ID
+    thinkingProcess?: { step: string; content: string; timestamp: string }[]  // 真实思考过程
+    showThinking?: boolean  // 是否展开思考过程
 }
 
 function ChatFlow1() {
@@ -30,7 +32,6 @@ function ChatFlow1() {
     const idCounter = useRef(Date.now())  // 用时间戳初始化，避免重复
     const fetchHistoryRef = useRef<(() => Promise<void>) | null>(null)
     const location = useLocation()
-    const sentRef = useRef(false)
     const [audioFile, setAudioFile] = useState<File | null>(null)
     const [audioFileId, setAudioFileId] = useState<string | null>(null)
     const [uploadError, setUploadError] = useState<string | null>(null)
@@ -154,26 +155,78 @@ function ChatFlow1() {
                 const res = await api.getTaskStatus(taskId)
                 if (res.code !== 200) return
 
-                const { status, current_subtask, subtask_progress, message } = res.data
+                const { status, current_subtask, subtask_progress, message, thinking_process } = res.data
 
-                // 更新进度提示
-                if (current_subtask) {
-                    updateMessage(msgId, {
-                        content: `${message || current_subtask} (${Math.round(subtask_progress * 100)}%)`
-                    })
-                }
+                console.log('[DEBUG] getTaskStatus:', { status, current_subtask, thinking_process })
+
+                // 合并思考过程（追加新条目，避免覆盖）
+                setMessages(prev => {
+                    const msgIndex = prev.findIndex(m => m.id === msgId)
+                    if (msgIndex === -1) return prev
+
+                    const existingMsg = prev[msgIndex]
+                    const existingSteps = existingMsg.thinkingProcess || []
+                    const newSteps = thinking_process || []
+
+                    // 合并：保留旧条目，追加新条目
+                    const mergedSteps = [...existingSteps]
+                    for (const step of newSteps) {
+                        const exists = mergedSteps.some(
+                            s => s.step === step.step && s.timestamp === step.timestamp
+                        )
+                        if (!exists) {
+                            mergedSteps.push(step)
+                        }
+                    }
+
+                    return prev.map(msg =>
+                        msg.id === msgId ? {
+                            ...msg,
+                            content: message || current_subtask || msg.content,
+                            thinkingProcess: mergedSteps,
+                        } : msg
+                    )
+                })
 
                 if (status === 'completed') {
                     clearInterval(poll)
+                    console.log('[DEBUG] Task completed, fetching result...')
                     // 获取最终结果
                     const resultRes = await api.getTaskResult(taskId)
-                    if (resultRes.code === 200 && resultRes.data) {
-                        updateMessage(msgId, {
-                            content: t('chat.completed'),
-                            fileName: resultRes.data.audio_url,
-                            fileInfo: `${resultRes.data.duration}s • ${resultRes.data.format}`,
-                        })
+                    console.log('[DEBUG] getTaskResult result:', resultRes)
+
+                    // 合并思考过程
+                    const finalThinking = resultRes?.data?.thinking_process || []
+                    console.log('[DEBUG] finalThinking:', finalThinking)
+
+                    setMessages(prev => {
+                        const msgIndex = prev.findIndex(m => m.id === msgId)
+                        if (msgIndex === -1) return prev
+                        const existingMsg = prev[msgIndex]
+                        const existingSteps = existingMsg.thinkingProcess || []
+                        const mergedSteps = [...existingSteps]
+                        for (const step of finalThinking) {
+                            const exists = mergedSteps.some(
+                                s => s.step === step.step && s.timestamp === step.timestamp
+                            )
+                            if (!exists) {
+                                mergedSteps.push(step)
+                            }
+                        }
+                        console.log('[DEBUG] mergedSteps:', mergedSteps)
+
+                        const updates: Partial<Message> = {
+                        content: t('chat.completed'),
+                        fileName: resultRes?.data?.audio_url,
+                        fileInfo: resultRes?.data?.duration ? `${resultRes.data.duration}s` : undefined,
+                        thinkingProcess: mergedSteps,
                     }
+                        console.log('[DEBUG] Updating message with:', updates)
+
+                        return prev.map(msg =>
+                            msg.id === msgId ? { ...msg, ...updates } : msg
+                        )
+                    })
                     fetchHistoryRef.current?.()
                 }
 
@@ -249,8 +302,10 @@ function ChatFlow1() {
         if (userTempo) setTempo(userTempo)
         if (userDuration) setDuration(userDuration)
 
-        if (userMessage && !sentRef.current) {
-            sentRef.current = true
+        // 使用 sessionStorage 防止页面刷新后重复发送
+        const hasSent = sessionStorage.getItem('chat_auto_sent')
+        if (userMessage && !hasSent) {
+            sessionStorage.setItem('chat_auto_sent', 'true')
             handleAutoSend(userMessage)
         }
     }, [location.state])
@@ -585,9 +640,23 @@ function ChatFlow1() {
                                         </div>
                                         {/* 灰色背景容器 */}
                                         <div className="flex-1 bg-[#f3f4f4] rounded-tr-2xl rounded-bl-2xl rounded-br-2xl pt-[14.75px] px-6 pb-4 flex flex-col gap-y-4 max-w-[508.8px]">
-                                            {/* 深度思考标题 */}
-                                            {msg.deepThinking && (
-                                                <p className="text-sm font-medium text-[#00639d]">{msg.deepThinking}</p>
+                                            {/* 思考过程展示 */}
+                                            {msg.thinkingProcess && msg.thinkingProcess.length > 0 && (
+                                                <div className="bg-white rounded-xl border border-gray-200 p-3 -mx-2">
+                                                    <p className="text-xs font-medium text-[#00639d] mb-2">
+                                                        深度思考过程 ({msg.thinkingProcess.length}步)
+                                                    </p>
+                                                    <div className="space-y-1.5">
+                                                        {msg.thinkingProcess.map((thought, idx) => (
+                                                            <div key={idx} className="flex items-start gap-2">
+                                                                <span className="inline-block px-1.5 py-0.5 bg-[#00639d]/10 text-[#00639d] rounded text-[10px] font-medium flex-shrink-0">
+                                                                    {thought.step}
+                                                                </span>
+                                                                <span className="text-xs text-gray-600 leading-relaxed">{thought.content}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
                                             )}
 
                                             {/* AI 回复文字 */}
