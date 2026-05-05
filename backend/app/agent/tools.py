@@ -14,6 +14,7 @@ import json
 import asyncio
 import subprocess
 import shutil
+import httpx
 import numpy as np
 from pathlib import Path
 
@@ -356,11 +357,13 @@ class ToolGateway:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
         # FluidSynth 渲染到 WAV
+        # 使用 -d 参数限制渲染时长（秒）
         cmd = [
             fs_path,
             "-ni",
             "-F", wav_path,
             "-r", "44100",
+            "-d", str(int(duration)),
             sf2_path,
             midi_path,
         ]

@@ -148,7 +148,11 @@ async def render_node(state: AgentState, db: Session, tools) -> None:
         midi_path = await change_tempo(midi_path, tempo, str(tempo_path))
 
     task_id = state["task_id"]
-    output_path = Path(settings.RINGTONES_DIR) / f"{task_id}.mp3"
+    # 使用用户指定的文件名（如果提供），否则使用 task_id
+    user_filename = state.get("filename", "")
+    safe_filename = "".join(c for c in user_filename if c.isalnum() or c in "._- ") or task_id
+    output_filename = f"{safe_filename}.mp3"
+    output_path = Path(settings.RINGTONES_DIR) / output_filename
 
     # 使用前端传入的 duration 参数
     target_duration = state.get("duration", settings.DEFAULT_RINGTONE_DURATION)
@@ -174,8 +178,8 @@ async def render_node(state: AgentState, db: Session, tools) -> None:
     state["final_audio_path"] = final_path
     state["audio_duration"] = duration
 
-    # 生成URL
-    state["final_audio_url"] = f"/static/ringtones/{task_id}.mp3"
+    # 生成URL - 使用新文件名
+    state["final_audio_url"] = f"/static/ringtones/{output_filename}"
 
 async def check_quality_node(state: AgentState, db: Session, tools) -> None:
     """

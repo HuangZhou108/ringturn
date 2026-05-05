@@ -16,7 +16,7 @@ from app.models import Task as TaskModel, TaskStatus
 
 class RingtoneParams:
     """铃声参数"""
-    def __init__(self, task: "Task"):
+    def __init__(self, task: TaskModel):
         params = task.ringtone_params or {}
         
         self.instrument = params.get("instrument", "Acoustic Piano")

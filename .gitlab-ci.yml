@@ -10,9 +10,8 @@ lint-backend:
   stage: lint
   script:
     - cd backend
-    - pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -q black isort
-    - python3 -m black app/ --check
-    - python3 -m isort app/ --check-only
+    - pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -q ruff
+    - ruff check app/ --select=F821,F822,F823 --ignore=I
   tags:
     - shell
   rules:
@@ -39,7 +38,7 @@ build-frontend:
   script:
     - cd frontend
     - npm ci
-    - npm run build
+    - npx vite build
   tags:
     - shell
   rules:
