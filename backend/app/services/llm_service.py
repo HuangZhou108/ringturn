@@ -84,7 +84,7 @@ class LLMService:
                 last_error = e
                 # 计算指数退避延迟
                 delay = min(INITIAL_RETRY_DELAY * (2 ** attempt), MAX_RETRY_DELAY)
-                print(f"[LLM RATE LIMIT] 触发限流，等待 {delay:.1f} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRIES})")
+                print(f"[LLM RATE LIMIT] 触发限流，等待 {delay:.2f} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRIES})")
                 print(f"[LLM RATE LIMIT] 错误详情: {e}")
                 await asyncio.sleep(delay)
 

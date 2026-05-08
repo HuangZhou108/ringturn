@@ -25,6 +25,7 @@ i18n
                         archive: 'Archive',
                         settings: 'Settings',
                         support: 'Support',
+                        notAvailable: 'Sidebar is temporarily unavailable',
                     },
                     welcome: {
                         titleBefore: 'Adapt your track, ',
@@ -77,6 +78,7 @@ i18n
                         archive: '归档',
                         settings: '设置',
                         support: '支持',
+                        notAvailable: '侧边栏暂不开放',
                     },
                     welcome: {
                         titleBefore: '为您提供，',

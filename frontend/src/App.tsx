@@ -1,12 +1,12 @@
 import { Routes, Route } from 'react-router-dom'
-import ChatFlow0 from './ChatFlow0'
-import ChatFlow1 from './ChatFlow1'
+import Home from './pages/home.tsx'
+import ChatFlow from './pages/ChatFlow.tsx'
 
 function App() {
   return (
       <Routes>
-        <Route path="/" element={<ChatFlow0 />} />
-        <Route path="/chat" element={<ChatFlow1 />} />
+        <Route path="/" element={<Home />} />
+        <Route path="/chat" element={<ChatFlow />} />
       </Routes>
   )
 }

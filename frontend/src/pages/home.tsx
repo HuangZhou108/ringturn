@@ -1,9 +1,11 @@
+// src/pages/home.tsx
 import {useRef, useState} from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
-import { api } from './api'
+import { api } from '../api'
+import TopBar from '../components/TopBar';
 
-function ChatFlow0() {
+function Home() {
     const navigate = useNavigate()
     const { t, i18n } = useTranslation()
     const [showLang, setShowLang] = useState(false)
@@ -88,56 +90,9 @@ function ChatFlow0() {
     }
 
     return (
-        <div className="flex flex-col h-screen bg-[#cfe9ff] font-['Inter']">
-            {/* ========== 顶部导航栏 ========== */}
-            <header className="flex flex-row-reverse items-center justify-between h-16 px-6 bg-white/80 border border-[#e2e8f0]/60 flex-shrink-0">
-                {/* 右侧图标组 */}
-                <div className="flex flex-row-reverse items-center gap-4">
-                    {/* 用户头像 */}
-                    <div className="w-8 h-8 bg-[#e6e9e9] rounded-full flex items-center justify-center">
-                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M3.8501 15.1001C4.7002 14.45 5.6499 13.9375 6.7002 13.5625C7.75 13.1875 8.8501 13 10 13C11.1499 13 12.25 13.1875 13.2998 13.5625C14.3501 13.9375 15.2998 14.45 16.1499 15.1001C16.7334 14.4167 17.1875 13.6418 17.5127 12.7751C17.8374 11.9084 18 10.9834 18 10C18 7.78345 17.2207 5.896 15.6626 4.33765C14.1045 2.7793 12.2168 2 10 2C7.7832 2 5.896 2.7793 4.3374 4.33765C2.7793 5.896 2 7.78345 2 10C2 10.9834 2.1626 11.9084 2.4873 12.7751C2.8125 13.6418 3.2666 14.4167 3.8501 15.1001ZM10 11C9.0166 11 8.1875 10.6626 7.5127 9.98755C6.8374 9.3125 6.5 8.4834 6.5 7.5C6.5 6.51685 6.8374 5.6875 7.5127 5.01245C8.1875 4.33765 9.0166 4 10 4C10.9834 4 11.8125 4.33765 12.4873 5.01245C13.1626 5.6875 13.5 6.51685 13.5 7.5C13.5 8.4834 13.1626 9.3125 12.4873 9.98755C11.8125 10.6626 10.9834 11 10 11ZM10 20C8.6167 20 7.3164 19.7375 6.1001 19.2126C4.8833 18.6875 3.8252 17.9751 2.9248 17.075C2.0249 16.175 1.3125 15.1167 0.7876 13.9001C0.2627 12.6833 0 11.3833 0 10C0 8.6167 0.2627 7.31665 0.7876 6.1001C1.3125 4.8833 2.0249 3.82495 2.9248 2.92505C3.8252 2.02515 4.8833 1.3125 6.1001 0.787598C7.3164 0.262451 8.6167 0 10 0C11.3833 0 12.6836 0.262451 13.8999 0.787598C15.1167 1.3125 16.1748 2.02515 17.0752 2.92505C17.9751 3.82495 18.6875 4.8833 19.2124 6.1001C19.7373 7.31665 20 8.6167 20 10C20 11.3833 19.7373 12.6833 19.2124 13.9001C18.6875 15.1167 17.9751 16.175 17.0752 17.075C16.1748 17.9751 15.1167 18.6875 13.8999 19.2126C12.6836 19.7375 11.3833 20 10 20ZM10 18C10.8833 18 11.7168 17.8708 12.5 17.6125C13.2832 17.3542 14 16.9834 14.6499 16.5C14 16.0168 13.2832 15.6458 12.5 15.3875C11.7168 15.1292 10.8833 15 10 15C9.1167 15 8.2832 15.1292 7.5 15.3875C6.7168 15.6458 6 16.0168 5.3501 16.5C6 16.9834 6.7168 17.3542 7.5 17.6125C8.2832 17.8708 9.1167 18 10 18ZM10 9C10.4336 9 10.792 8.8584 11.0752 8.57495C11.3584 8.29175 11.5 7.93335 11.5 7.5C11.5 7.06665 11.3584 6.7085 11.0752 6.42505C10.792 6.14185 10.4336 6 10 6C9.5664 6 9.2085 6.14185 8.9248 6.42505C8.6416 6.7085 8.5 7.06665 8.5 7.5C8.5 7.93335 8.6416 8.29175 8.9248 8.57495C9.2085 8.8584 9.5664 9 10 9Z" fill="#475569"/>
-                        </svg>
-                    </div>
-                    {/* Language 下拉 */}
-                    <div className="relative">
-                        <button
-                            onClick={() => setShowLang(!showLang)}
-                            className="text-sm font-medium text-[#64748b] hover:text-[#0284c7] transition font-['Inter']"
-                        >
-                            {t('header.language')}
-                        </button>
-                        {showLang && (
-                            <div className="absolute right-0 top-8 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50 min-w-[100px]">
-                                <button
-                                    onClick={() => { i18n.changeLanguage('en'); setShowLang(false) }}
-                                    className={`block w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${i18n.language === 'en' ? 'text-[#0284c7] font-medium' : 'text-gray-700'}`}
-                                >
-                                    English
-                                </button>
-                                <button
-                                    onClick={() => { i18n.changeLanguage('zh'); setShowLang(false) }}
-                                    className={`block w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${i18n.language === 'zh' ? 'text-[#0284c7] font-medium' : 'text-gray-700'}`}
-                                >
-                                    中文
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* 左侧标题组 */}
-                <div className="flex flex-row-reverse items-center gap-6">
-                    {/* New Chat 按钮 */}
-                    <button className="text-sm font-semibold text-[#0284c7] font-['Inter']">
-                        {t('header.newChat')}
-                    </button>
-                    {/* Chat Flow 标题 */}
-                    <h2 className="text-xl font-semibold text-[#0f172a] tracking-[-0.5px] font-['Inter']">
-                        {t('header.chatFlow')}
-                    </h2>
-                </div>
-            </header>
+        <div className="flex flex-col h-screen bg-[#cfe9ff] font-['Inter'] page-enter">
+            {/*  顶部导航栏： 使用统一组件 */}
+            <TopBar />
 
             {/* ========== 聊天区域 ========== */}
             <main className="flex-1 flex items-center justify-center overflow-hidden bg-[#cfe9ff] min-w-[984px]">
@@ -152,14 +107,14 @@ function ChatFlow0() {
                         </div>
 
                         {/* 标题 */}
-                        <h3 className="text-3xl font-extrabold leading-tight font-['Manrope']">
+                        <h3 className="text-3xl font-extrabold leading-tight font-['Manrope']  welcome-text">
                             <span className="text-[#2f3334]">{t('welcome.titleBefore')}</span>
                             <span className="text-[#00639d]">{t('welcome.titleHighlight')}</span>
                             {t('welcome.titleAfter') && <span className="text-[#2f3334]">{t('welcome.titleAfter')}</span>}
                         </h3>
 
                         {/* 副标题 */}
-                        <div className="max-w-[512px]">
+                        <div className="max-w-[512px]  welcome-subtitle">
                             <p className="text-base text-[#5b6061] leading-relaxed font-['Inter']">
                                 {t('welcome.subtitle')}
                             </p>
@@ -299,4 +254,4 @@ function ChatFlow0() {
     )
 }
 
-export default ChatFlow0
+export default Home
