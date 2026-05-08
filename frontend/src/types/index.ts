@@ -123,3 +123,18 @@ export interface UploadResult {
     duration: number
     created_at: string
 }
+
+// 聊天消息类型
+export interface Message {
+    id: string;
+    type: 'ai' | 'user';
+    content?: string;
+    deepThinking?: string;
+    fileName?: string;
+    fileInfo?: string;
+    userFile?: string;
+    audioFileId?: string;
+    taskId?: string;
+    thinkingProcess?: { step: string; content: string; timestamp: string }[];
+    showThinking?: boolean;
+}
