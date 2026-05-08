@@ -6,6 +6,7 @@ import { api } from '../api';
 import TopBar from '../components/TopBar';
 import WelcomeMessage from '../components/chat/WelcomeMessage';
 import ChatInputArea from '../components/chat/ChatInputArea';
+import Toast from '../components/notifications/Toast';
 
 function Home() {
     const navigate = useNavigate();
@@ -18,24 +19,51 @@ function Home() {
     const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
     const [uploadProgress, setUploadProgress] = useState<number>(0);
     const [isUploading, setIsUploading] = useState(false);
+    const [toastMessage, setToastMessage] = useState<string | null>(null);
 
     // 参数设置（与 TrackParams 共享）
     const [instrument, setInstrument] = useState('Acoustic Piano');
     const [tempo, setTempo] = useState('120');
     const [duration, setDuration] = useState('180');
 
-    const handleSend = () => {
+    const handleSend = async () => {
         if (!inputValue.trim()) return;
-        navigate('/chat', {
-            state: {
-                userMessage: inputValue.trim(),
-                filename,
-                audioFileId: audioFileId,
+        // 检查是否已上传音频
+        if (!audioFileId) {
+            setToastMessage(t('toast.uploadRequired'));
+            return;
+        }
+
+        try {
+            const res = await api.createTask({
+                user_request: inputValue.trim(),
+                source_type: 'upload',
+                source_value: audioFileId || undefined,
                 instrument,
-                tempo,
-                duration,
-            },
-        });
+                duration: parseInt(duration) || 30,
+                tempo: parseInt(tempo) || 120,
+                filename,
+            });
+
+            if (res.code === 200) {
+                navigate('/chat', {
+                    state: {
+                        taskId: res.data.task_id,
+                        userMessage: inputValue.trim(),
+                        filename,
+                        audioFileId: audioFileId,
+                        instrument,
+                        tempo,
+                        duration,
+                    },
+                });
+            } else {
+                // 可选：使用 alert 或显示错误提示，为了简单先 console
+                console.error(res.message || '创建任务失败');
+            }
+        } catch (err) {
+            console.error('创建任务失败:', err);
+        }
     };
 
     const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -84,7 +112,10 @@ function Home() {
 
     return (
         <div className="flex flex-col h-screen bg-[#cfe9ff] font-['Inter'] page-enter">
-            <TopBar />
+            <TopBar
+                newChatLabel={t('header.viewHistory')}
+                onNewChat={() => navigate('/chat', { state: { newChat: true } })}
+            />
             <main className="flex-1 flex flex-col items-center justify-center overflow-hidden bg-[#cfe9ff]">
                 <div className="flex-1 flex items-center justify-center">
                     <WelcomeMessage />
@@ -111,6 +142,9 @@ function Home() {
                     uploadSuccess={uploadSuccess}
                 />
             </main>
+            {toastMessage && (
+                <Toast message={toastMessage} onClose={() => setToastMessage(null)} />
+            )}
         </div>
     );
 }

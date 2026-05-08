@@ -13,6 +13,7 @@ i18n
                         chatFlow: 'Chat Flow',
                         newChat: 'New Chat',
                         language: 'Language',
+                        viewHistory: 'View History',
                     },
                     sidebar: {
                         ringTurn: 'RingTurn',
@@ -47,7 +48,11 @@ i18n
                     },
                     params: {
                         instrument: 'INSTRUMENT',
-                        acousticPiano: 'Acoustic Piano',
+                        acousticPiano: 'Acoustic Piano', // 保留备用
+                        instruments: {
+                            acousticPiano: 'Acoustic Piano',
+                            violin: 'Violin',
+                        },
                         duration: 'DURATION',
                         sec: 'SEC',
                         tempo: 'TEMPO (BPM)',
@@ -58,6 +63,9 @@ i18n
                     input: {
                         placeholder: 'Upload an audio file and type in your request.',
                     },
+                    toast: {
+                        uploadRequired: "Please upload an audio file first~",
+                    },
                 },
             },
             zh: {
@@ -66,6 +74,7 @@ i18n
                         chatFlow: '聊天流',
                         newChat: '开始新对话',
                         language: '语言选项',
+                        viewHistory: '查看历史',
                     },
                     sidebar: {
                         ringTurn: 'RingTurn',
@@ -100,7 +109,11 @@ i18n
                     },
                     params: {
                         instrument: '乐器',
-                        acousticPiano: '古典钢琴',
+                        acousticPiano: '古典钢琴', // 保留备用
+                        instruments: {
+                            acousticPiano: '古典钢琴',
+                            violin: '小提琴',
+                        },
                         duration: '音频长度',
                         sec: 'SEC',
                         tempo: '速度 (BPM)',
@@ -110,6 +123,9 @@ i18n
                     },
                     input: {
                         placeholder: '上传音频文件，输入你的需求~',
+                    },
+                    toast: {
+                        uploadRequired: "请上传音频~",
                     },
                 },
             },

@@ -44,6 +44,51 @@ function ChatFlow() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+    // 处理侧边栏开关拖拽
+    const [position, setPosition] = useState({ x: 24, y: 80 }); // left: 1.5rem=24px, top: 5rem=80px
+    const [isDragging, setIsDragging] = useState(false);
+    const dragRef = useRef<{ startX: number; startY: number; initialLeft: number; initialTop: number } | null>(null);
+    const handleMouseDown = (e: React.MouseEvent) => {
+        e.preventDefault();
+        setIsDragging(true);
+        dragRef.current = {
+            startX: e.clientX,
+            startY: e.clientY,
+            initialLeft: position.x,
+            initialTop: position.y,
+        };
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+        if (!isDragging || !dragRef.current) return;
+        const dx = e.clientX - dragRef.current.startX;
+        const dy = e.clientY - dragRef.current.startY;
+        setPosition({
+            x: dragRef.current.initialLeft + dx,
+            y: dragRef.current.initialTop + dy,
+        });
+    };
+
+    const handleMouseUp = () => {
+        setIsDragging(false);
+        dragRef.current = null;
+    };
+
+    useEffect(() => {
+        if (isDragging) {
+            window.addEventListener('mousemove', handleMouseMove);
+            window.addEventListener('mouseup', handleMouseUp);
+        } else {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        }
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isDragging]);
+
+    // 基础方法：
     const nextId = () => {
         idCounter.current += 1;
         return `${Date.now()}-${idCounter.current}`;
@@ -94,6 +139,11 @@ function ChatFlow() {
 
     const handleSend = async () => {
         if (!inputValue.trim()) return;
+        // 检查是否已上传音频
+        if (!audioFileId) {
+            showToast(t('toast.uploadRequired'));
+            return;
+        }
 
         const newUserMessage: Message = {
             id: nextId(),
@@ -254,6 +304,8 @@ function ChatFlow() {
     };
 
     useEffect(() => {
+        const newChat = location.state?.newChat as boolean | undefined;
+        const taskId = location.state?.taskId as string | undefined;
         const userMessage = location.state?.userMessage as string | undefined;
         const userFileId = location.state?.audioFileId as string | undefined;
         const userInstrument = location.state?.instrument as string | undefined;
@@ -267,10 +319,49 @@ function ChatFlow() {
         if (userDuration) setDuration(userDuration);
         if (userFilename) setFilename(userFilename);
 
-        const hasSent = sessionStorage.getItem('chat_auto_sent');
-        if (userMessage && !hasSent) {
-            sessionStorage.setItem('chat_auto_sent', 'true');
-            handleAutoSend(userMessage);
+        // 如果是新建空对话（从“开始新对话”按钮进入）
+        if (newChat) {
+            // 重置消息列表为空（清空示例消息）
+            setMessages([]);
+            setCurrentTaskId(null);
+            // 清除 sessionStorage 标记，避免自动发送残留
+            sessionStorage.removeItem('chat_auto_sent');
+            // 可选：清空其他相关状态（如 audioFileId 等）
+            setAudioFileId(null);
+            return;  // 不再继续处理其他 state
+        }
+
+        // 优先处理从 Home 传入的 taskId（任务已创建）
+        if (taskId && userMessage) {
+            setMessages([]);  // 清空示例消息
+            setCurrentTaskId(taskId);
+            // 添加用户消息
+            const userMsg: Message = {
+                id: nextId(),
+                type: 'user',
+                content: userMessage,
+            };
+            setMessages(prev => [...prev, userMsg]);
+            // 添加处理中消息
+            const processingMsg: Message = {
+                id: nextId(),
+                type: 'ai',
+                taskId: taskId,
+                deepThinking: t('chat.deepThinking'),
+                content: t('chat.taskCreated'),
+            };
+            setMessages(prev => [...prev, processingMsg]);
+            // 开始轮询任务状态
+            pollTaskStatus(taskId, processingMsg.id);
+            // 清除 sessionStorage 标记（若有）
+            sessionStorage.removeItem('chat_auto_sent');
+        } else if (userMessage && !taskId) {
+            // 兼容旧逻辑：没有 taskId 时由 handleAutoSend 创建任务
+            const hasSent = sessionStorage.getItem('chat_auto_sent');
+            if (userMessage && !hasSent) {
+                sessionStorage.setItem('chat_auto_sent', 'true');
+                handleAutoSend(userMessage);
+            }
         }
     }, [location.state]);
 
@@ -333,7 +424,9 @@ function ChatFlow() {
 
     return (
         <div className="flex flex-col h-screen bg-white text-gray-800 font-sans page-enter">
-            <TopBar />
+            <TopBar
+                onNewChat={() => navigate('/chat', { state: { newChat: true } })}
+            />
             <div className="flex flex-1 overflow-hidden">
                 <Sidebar
                     sidebarOpen={sidebarOpen}
@@ -349,8 +442,18 @@ function ChatFlow() {
                     {/* 侧边栏悬浮按钮（暂不允许打开） */}
                     {!sidebarOpen && (
                         <button
-                            onClick={() => showToast(t('sidebar.notAvailable') || '侧边栏暂不开放')}
-                            className="fixed left-6 top-20 w-10 h-10 bg-[#458ecb] rounded-full flex items-center justify-center border border-[#e0f2fe] hover:bg-[#3a7db5] transition z-10"
+                            onClick={(e) => {
+                                // 防止拖拽结束误触发点击（可选：增加位移阈值判断）
+                                if (!dragRef.current) showToast(t('sidebar.notAvailable') || '侧边栏暂不开放');
+                            }}
+                            onMouseDown={handleMouseDown}
+                            className="w-10 h-10 bg-[#458ecb] rounded-full flex items-center justify-center border border-[#e0f2fe] hover:bg-[#3a7db5] transition z-10"
+                            style={{
+                                position: 'fixed',
+                                left: position.x,
+                                top: position.y,
+                                cursor: isDragging ? 'grabbing' : 'grab',
+                            }}
                         >
                             <svg width="12" height="18" viewBox="0 0 12 18" fill="none">
                                 <path

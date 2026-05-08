@@ -7,12 +7,14 @@ interface TopBarProps {
     title?: string;               // 左侧标题，默认使用 t('header.chatFlow')
     showNewChat?: boolean;        // 是否显示“新建”按钮，默认 true
     onNewChat?: () => void;       // 新建按钮点击回调，若不传则内部 navigate('/')
+    newChatLabel?: string;        // 自定义新建按钮文本
 }
 
 export default function TopBar({
                                    title,
                                    showNewChat = true,
-                                   onNewChat
+                                   onNewChat,
+                                   newChatLabel,
                                }: TopBarProps) {
     const { t, i18n } = useTranslation();
     const navigate = useNavigate();
@@ -38,7 +40,7 @@ export default function TopBar({
                         onClick={handleNewChat}
                         className="text-sm font-semibold text-[#0284c7] hover:text-[#00639d] transition font-['Inter']"
                     >
-                        {t('header.newChat')}
+                        {newChatLabel || t('header.newChat')}
                     </button>
                 )}
             </div>
