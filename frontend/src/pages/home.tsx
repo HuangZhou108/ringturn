@@ -22,9 +22,9 @@ function Home() {
     const [toastMessage, setToastMessage] = useState<string | null>(null);
 
     // 参数设置（与 TrackParams 共享）
-    const [instrument, setInstrument] = useState('Acoustic Piano');
-    const [tempo, setTempo] = useState('120');
-    const [duration, setDuration] = useState('180');
+    const [instrument, setInstrument] = useState('');
+    const [tempo, setTempo] = useState('');
+    const [duration, setDuration] = useState('');
 
     const handleSend = async () => {
         if (!inputValue.trim()) return;
@@ -34,15 +34,20 @@ function Home() {
             return;
         }
 
+        // 构建动态参数对象
+        const params: Record<string, any> = {};
+        if (instrument.trim()) params.instrument = instrument;
+        if (tempo.trim()) params.tempo = parseInt(tempo, 10);
+        if (duration.trim()) params.duration = parseInt(duration, 10);
+        if (filename && filename.trim() !== '') params.filename = filename;
+        // 其他参数后续在此添加
+
         try {
             const res = await api.createTask({
                 user_request: inputValue.trim(),
                 source_type: 'upload',
                 source_value: audioFileId || undefined,
-                instrument,
-                duration: parseInt(duration) || 30,
-                tempo: parseInt(tempo) || 120,
-                filename,
+                params,
             });
 
             if (res.code === 200) {
@@ -50,15 +55,11 @@ function Home() {
                     state: {
                         taskId: res.data.task_id,
                         userMessage: inputValue.trim(),
-                        filename,
                         audioFileId: audioFileId,
-                        instrument,
-                        tempo,
-                        duration,
+                        params,
                     },
                 });
             } else {
-                // 可选：使用 alert 或显示错误提示，为了简单先 console
                 console.error(res.message || '创建任务失败');
             }
         } catch (err) {

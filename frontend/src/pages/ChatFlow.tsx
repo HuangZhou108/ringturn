@@ -28,9 +28,9 @@ interface Message {
 function ChatFlow() {
     const { t } = useTranslation();
     const [sidebarOpen, setSidebarOpen] = useState(false);
-    const [instrument, setInstrument] = useState('Acoustic Piano');
-    const [duration, setDuration] = useState('180');
-    const [tempo, setTempo] = useState('120');
+    const [instrument, setInstrument] = useState('');
+    const [duration, setDuration] = useState('');
+    const [tempo, setTempo] = useState('');
     const [filename, setFilename] = useState('Untitled_Track');
     const [inputValue, setInputValue] = useState('');
     const idCounter = useRef(Date.now());
@@ -146,6 +146,12 @@ function ChatFlow() {
             return;
         }
 
+        const params: Record<string, any> = {};
+        if (instrument.trim()) params.instrument = instrument;
+        if (tempo.trim()) params.tempo = parseInt(tempo, 10);
+        if (duration.trim()) params.duration = parseInt(duration, 10);
+        if (filename && filename.trim() !== '') params.filename = filename;
+
         const newUserMessage: Message = {
             id: nextId(),
             type: 'user',
@@ -160,10 +166,7 @@ function ChatFlow() {
                 user_request: inputValue.trim(),
                 source_type: 'upload',
                 source_value: audioFileId || undefined,
-                instrument,
-                duration: parseInt(duration) || 30,
-                tempo: parseInt(tempo) || 120,
-                filename,
+                params,
             });
 
             if (res.code === 200) {
@@ -311,16 +314,16 @@ function ChatFlow() {
         const taskId = location.state?.taskId as string | undefined;
         const userMessage = location.state?.userMessage as string | undefined;
         const userFileId = location.state?.audioFileId as string | undefined;
-        const userInstrument = location.state?.instrument as string | undefined;
-        const userTempo = location.state?.tempo as string | undefined;
-        const userDuration = location.state?.duration as string | undefined;
+        const params = location.state?.params || {};   // 获取动态参数
         const userFilename = location.state?.filename as string | undefined;
 
         setAudioFileId(userFileId || null);
-        if (userInstrument) setInstrument(userInstrument);
-        if (userTempo) setTempo(userTempo);
-        if (userDuration) setDuration(userDuration);
         if (userFilename) setFilename(userFilename);
+        // 回填到各个状态变量（用于参数输入框显示）
+        if (params.instrument) setInstrument(params.instrument);
+        if (params.tempo) setTempo(String(params.tempo));
+        if (params.duration) setDuration(String(params.duration));
+        if (params.filename) setFilename(params.filename);
 
         // 如果是新建空对话（从“开始新对话”按钮进入）
         if (newChat) {

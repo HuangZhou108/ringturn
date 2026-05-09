@@ -25,6 +25,8 @@ class RingtoneParams:
         self.filename = params.get("filename", "ringtone")
         # 文件ID（从 source_value 获取，当有上传文件时）
         self.file_id = task.source_value
+        # 额外保存所有原始参数，供语义解析使用
+        self.raw_params = params
 
 class AgentExecutor:
     """Agent执行器"""
@@ -180,10 +182,20 @@ class AgentExecutor:
         from app.services.llm_service import llm_service
 
         user_request = self.state.get("user_request", "")
+        ringtone_params = self.ringtone_params.raw_params
+
+        # 构造参数提示块
+        param_desc = ""
+        if ringtone_params:
+            param_desc = "\n用户指定了以下参数：\n"
+            for k, v in ringtone_params.items():
+                param_desc += f"- {k}: {v}\n"
+
+        full_prompt = f"{user_request}\n{param_desc}\n请根据用户需求和参数约束生成执行计划。用户输入文字内容需求优先级高于参数。"
 
         # 调用LLM生成计划
         self._add_thinking_step("规划", f"分析用户需求: {user_request[:50]}...")
-        plan = await llm_service.generate_plan(user_request)
+        plan = await llm_service.generate_plan(full_prompt)
         self._add_thinking_step("规划", f"生成执行计划: {' → '.join(plan)}")
 
         self.state["plan"] = plan

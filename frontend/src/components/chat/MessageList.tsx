@@ -7,6 +7,21 @@ interface MessageListProps {
     t: (key: string) => string;
 }
 
+// 截断文件名，保留完整扩展名
+const truncateFilename = (filename: string, maxBaseLen: number = 20): string => {
+    if (!filename) return '';
+    const lastDot = filename.lastIndexOf('.');
+    if (lastDot === -1) {
+        // 无扩展名，直接截断基名
+        return filename.length > maxBaseLen ? filename.slice(0, maxBaseLen - 3) + '...' : filename;
+    }
+    const baseName = filename.slice(0, lastDot);
+    const ext = filename.slice(lastDot); // 包含点
+    if (baseName.length <= maxBaseLen) return filename;
+    const trimmedBase = baseName.slice(0, maxBaseLen - 3) + '...';
+    return trimmedBase + ext;
+};
+
 export default function MessageList({ messages, t }: MessageListProps) {
     return (
         <div className="space-y-6">
@@ -93,13 +108,13 @@ export default function MessageList({ messages, t }: MessageListProps) {
                             <div className="max-w-[555px] flex flex-col items-end gap-1">
                                 {/* 用户文件附件 */}
                                 {msg.userFile && (
-                                    <div className="flex items-center gap-4 bg-white border border-[#afb3b3]/60 rounded-t-[15px] rounded-bl-[2px] rounded-br-[10px] px-4 py-[13px] w-fit ml-auto">
+                                    <div className="flex items-center gap-4 bg-white border border-[#afb3b3]/60 rounded-t-[15px] rounded-bl-[2px] rounded-br-[10px] px-4 py-[13px] w-44 ml-auto">
                                         <div className="w-[29px] h-[31px] bg-[#e0f2fe] rounded-lg flex items-center justify-center flex-shrink-0">
                                             <svg width="17" height="21" viewBox="0 0 17 21" fill="none">
                                                 <path d="M0 21V0H17L3.09 7H0V21ZM2 7L10.2 4.65V9.35L2 7Z" fill="#0284c7"/>
                                             </svg>
                                         </div>
-                                        <span className="text-xs font-semibold text-[#2f3334]">{msg.userFile}</span>
+                                        <span className="text-xs font-semibold text-[#2f3334] truncate flex-1">{truncateFilename(msg.userFile, 20)}</span>
                                     </div>
                                 )}
                                 {/* 用户消息气泡 */}
