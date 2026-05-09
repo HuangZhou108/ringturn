@@ -58,24 +58,25 @@ class ToolGateway:
         try:
             return await self._analyze_with_librosa(audio_path)
         except Exception as e:
-            print(f"[WARN] librosa分析失败: {e}")
+            # print(f"[WARN] librosa分析失败: {e}")
+            raise RuntimeError(f"音频结构分析失败（librosa 不可用或处理出错）: {e}")
 
         # 3. 降级到 Mock
-        return {
-            "bpm": 120,
-            "key": "C",
-            "time_signature": "4/4",
-            "sections": [
-                {"start": 0.0, "end": 10.0, "type": "intro"},
-                {"start": 10.0, "end": 30.0, "type": "verse"},
-                {"start": 30.0, "end": 50.0, "type": "chorus"},
-            ],
-            "chords": [
-                {"start": 0.0, "end": 4.0, "chord": "C"},
-                {"start": 4.0, "end": 8.0, "chord": "G"},
-            ],
-            "instruments": ["vocals", "guitar", "bass", "drums"],
-        }
+        # return {
+        #     "bpm": 120,
+        #     "key": "C",
+        #     "time_signature": "4/4",
+        #     "sections": [
+        #         {"start": 0.0, "end": 10.0, "type": "intro"},
+        #         {"start": 10.0, "end": 30.0, "type": "verse"},
+        #         {"start": 30.0, "end": 50.0, "type": "chorus"},
+        #     ],
+        #     "chords": [
+        #         {"start": 0.0, "end": 4.0, "chord": "C"},
+        #         {"start": 4.0, "end": 8.0, "chord": "G"},
+        #     ],
+        #     "instruments": ["vocals", "guitar", "bass", "drums"],
+        # }
 
     async def _analyze_with_librosa(self, audio_path: str) -> dict:
         """使用 librosa 本地分析音频结构"""
@@ -233,11 +234,13 @@ class ToolGateway:
                 "midi_path": midi_output_path,
             }
         except ImportError as e:
-            print(f"[WARN] Basic Pitch未安装: {e}")
-            return self._mock_melody()
+            # print(f"[WARN] Basic Pitch未安装: {e}")
+            # return self._mock_melody()
+            raise RuntimeError(f"Basic Pitch 未安装，无法提取旋律: {e}")
         except Exception as e:
-            print(f"[WARN] Basic Pitch调用失败: {e}")
-            return self._mock_melody()
+            # print(f"[WARN] Basic Pitch调用失败: {e}")
+            # return self._mock_melody()
+            raise RuntimeError(f"Basic Pitch 调用失败: {e}")
 
     def _mock_melody(self) -> dict:
         """返回模拟旋律数据"""
@@ -493,6 +496,33 @@ class ToolGateway:
         """
         # 调用LLM服务解析
         return await llm_service.parse_user_request(user_request)
+    
+    # 在开始执行前确定Agent规划的工具可用。
+    async def ensure_tool_available(self, tool_name: str) -> None:
+        """
+        确保指定工具可用，不可用时抛出异常
+        支持的 tool_name: 'librosa', 'basic_pitch', 'fluidsynth', 'soundfont', 'chordmini'
+        """
+        if tool_name == 'librosa':
+            try:
+                import librosa
+            except ImportError:
+                raise RuntimeError("librosa 未安装，无法进行音频结构分析")
+        elif tool_name == 'basic_pitch':
+            try:
+                from basic_pitch.inference import predict
+            except ImportError:
+                raise RuntimeError("basic_pitch 未安装，无法提取旋律")
+        elif tool_name == 'fluidsynth':
+            import shutil
+            if not shutil.which('fluidsynth') and not self.fluidsynth_path:
+                raise RuntimeError("fluidsynth 未找到，无法渲染音频")
+        elif tool_name == 'soundfont':
+            if not self.soundfont_path or not os.path.exists(self.soundfont_path):
+                raise RuntimeError(f"音色库文件不存在: {self.soundfont_path}")
+        elif tool_name == 'chordmini':
+            if not self.chordmini_url or self.chordmini_url == "http://localhost:8001":
+                raise RuntimeError("ChordMini API 未配置或不可用")
 
 # 全局工具网关实例
 tool_gateway = ToolGateway()

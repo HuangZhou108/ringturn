@@ -227,10 +227,21 @@ class AgentExecutor:
 
                 # 检查反思结果
                 if step_name == TaskStep.CHECK_QUALITY.value:
-                    if self.state.get("needs_revision"):
-                        # 质量不达标，尝试优化
-                        # 这里可以添加自动优化逻辑
-                        pass
+                    max_retries = 2
+                    retry_count = 0
+                    while self.state.get("needs_revision") and retry_count < max_retries:
+                        retry_count += 1
+                        self._add_thinking_step("retry", f"质量不达标，第{retry_count}次重试")
+                        # 根据反思建议调整参数（从 reflection 中提取）
+                        reflection = self.state.get("reflection", {})
+                        adjustments = reflection.get("adjustments", {})
+                        if adjustments.get("tempo_delta"):
+                            new_tempo = self.state["tempo"] + adjustments["tempo_delta"]
+                            self.state["tempo"] = max(60, min(200, new_tempo))
+                        # 重新执行 arrange 和 render
+                        await self._execute_step(TaskStep.ARRANGE.value)
+                        await self._execute_step(TaskStep.RENDER.value)
+                        await self._execute_step(TaskStep.CHECK_QUALITY.value)
 
             except Exception as e:
                 # 记录错误
@@ -253,6 +264,19 @@ class AgentExecutor:
         Args:
             step: 步骤名称
         """
+        # 新增：步骤前工具可用性检查
+        from app.agent.tools import tool_gateway
+        step_tool_map = {
+            "analyze_structure": "librosa",   # 或 chordmini
+            "extract_melody": "basic_pitch",
+            "render": "fluidsynth",
+        }
+        if step in step_tool_map:
+            try:
+                await tool_gateway.ensure_tool_available(step_tool_map[step])
+            except RuntimeError as e:
+                raise RuntimeError(f"步骤 {step} 所需工具不可用: {e}")
+
         handler = NODE_HANDLERS.get(step)
         if not handler:
             raise ValueError(f"未知步骤: {step}")

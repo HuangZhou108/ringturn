@@ -33,6 +33,16 @@ async def fetch_source_node(state: AgentState, db: Session, tools) -> None:
         file_path = file_service.get_upload_path(source_value)
         if not file_path:
             raise ValueError(f"文件不存在: {source_value}")
+        
+        # 尝试加载音频文件，验证是否可读
+        try:
+            import librosa
+            # 仅加载前 1 秒进行快速验证
+            y, sr = librosa.load(str(file_path), duration=1, sr=22050)
+            if y is None or len(y) == 0:
+                raise RuntimeError("音频文件内容为空")
+        except Exception as e:
+            raise RuntimeError(f"无法打开或解析上传的音频文件: {e}")
 
         state["audio_path"] = str(file_path)
 
@@ -79,6 +89,12 @@ async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
 
     state["_thinking"] = "正在使用AI模型提取音频中的主旋律..."
     melody = await tools.extract_melody(audio_path)
+
+    # 音符数量检测，若提取的音符数量过少需报错
+    note_count = len(melody.get("melody_notes", []))
+    if note_count < 5:
+        raise RuntimeError(f"提取到的音符数量过少（{note_count} < 5），可能音频无有效旋律或提取失败")
+
     state["melody_data"] = melody
 
     note_count = len(melody.get("melody_notes", []))
@@ -100,6 +116,17 @@ async def generate_midi_node(state: AgentState, db: Session, tools) -> None:
     midi_path = Path(settings.RINGTONES_DIR) / f"{task_id}_original.mid"
 
     await tools.generate_midi(melody, analysis, str(midi_path))
+
+    # 检查 MIDI 文件是否为空
+    if not midi_path.exists() or midi_path.stat().st_size == 0:
+        raise RuntimeError(f"生成的 MIDI 文件为空: {midi_path}")
+    # 检查文件是否可读（mido 读取验证）
+    try:
+        import mido
+        mido.MidiFile(midi_path)
+    except Exception as e:
+        raise RuntimeError(f"生成的 MIDI 文件损坏或无法读取: {e}")
+
     state["midi_path"] = str(midi_path)
 
 async def arrange_node(state: AgentState, db: Session, tools) -> None:
@@ -221,8 +248,13 @@ async def check_quality_node(state: AgentState, db: Session, tools) -> None:
     quality = await tools.check_quality(audio_path)
 
     if not quality.get("passed", False):
-        # TODO: 触发反思和重试机制
-        state["reflection"] = "质量不达标，需要优化"
+        # 设置结构调整建议（可基于质量报告的细节）
+        state["reflection"] = {
+            "message": "质量不达标，需要优化",
+            "adjustments": {
+                # TODO：按照实际情况处理
+            }
+        }
         state["needs_revision"] = True
 
     state["step_results"]["quality_check"] = quality
