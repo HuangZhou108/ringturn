@@ -43,6 +43,7 @@ function ChatFlow() {
     const [isUploading, setIsUploading] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [toastMessage, setToastMessage] = useState<string | null>(null);
+    const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
 
     // 处理侧边栏开关拖拽
     const [position, setPosition] = useState({ x: 24, y: 80 }); // left: 1.5rem=24px, top: 5rem=80px
@@ -149,6 +150,7 @@ function ChatFlow() {
             id: nextId(),
             type: 'user',
             content: inputValue.trim(),
+            userFile: uploadedFileName || undefined,
         };
         setMessages((prev) => [...prev, newUserMessage]);
         setInputValue('');
@@ -270,6 +272,7 @@ function ChatFlow() {
             id: nextId(),
             type: 'user',
             content: text,
+            userFile: uploadedFileName || undefined,
         };
         setMessages((prev) => [...prev, newUserMessage]);
 
@@ -328,6 +331,7 @@ function ChatFlow() {
             sessionStorage.removeItem('chat_auto_sent');
             // 可选：清空其他相关状态（如 audioFileId 等）
             setAudioFileId(null);
+            setUploadedFileName(null);
             return;  // 不再继续处理其他 state
         }
 
@@ -335,11 +339,14 @@ function ChatFlow() {
         if (taskId && userMessage) {
             setMessages([]);  // 清空示例消息
             setCurrentTaskId(taskId);
+            // 同步更新文件名状态，以便显示文件附件
+            if (userFilename) setUploadedFileName(userFilename);
             // 添加用户消息
             const userMsg: Message = {
                 id: nextId(),
                 type: 'user',
                 content: userMessage,
+                userFile: userFilename || undefined,
             };
             setMessages(prev => [...prev, userMsg]);
             // 添加处理中消息
@@ -398,6 +405,7 @@ function ChatFlow() {
 
             if (res.code === 200) {
                 setAudioFileId(res.data.file_id);
+                setUploadedFileName(res.data.filename);
                 setUploadSuccess(
                     `文件已上传: ${res.data.filename} (${res.data.file_size.toFixed(2)} MB)${
                         res.data.duration ? `, 时长: ${Math.round(res.data.duration)}秒` : ''

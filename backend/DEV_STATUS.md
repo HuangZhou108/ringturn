@@ -75,8 +75,8 @@
 ### 7. 配置管理 ✅
 环境变量支持：
 ```env
-OPENAI_API_KEY=xxx
-OPENAI_MODEL=gpt-4
+LLM_API_KEY=xxx
+LLM_MODEL=gpt-4
 CHORDMINI_URL=http://localhost:8001
 BASIC_PITCH_MODEL_PATH=./models/basic-pitch
 FLUIDSYNTH_PATH=fluidsynth
@@ -120,7 +120,7 @@ pip install -r requirements.txt
 
 # 2. 配置环境变量
 cp .env.example .env  # 如没有则手动创建
-# 编辑.env，填写OPENAI_API_KEY等
+# 编辑.env，填写LLM_API_KEY等
 
 # 3. 启动服务
 uvicorn app.main:app --reload

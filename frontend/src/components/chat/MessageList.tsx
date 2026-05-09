@@ -22,24 +22,45 @@ export default function MessageList({ messages, t }: MessageListProps) {
                             </div>
                             {/* AI 消息气泡 */}
                             <div className="flex-1 bg-[#f3f4f4] rounded-tr-2xl rounded-bl-2xl rounded-br-2xl pt-[14.75px] px-6 pb-4 flex flex-col gap-y-4 max-w-[508.8px]">
-                                {/* 思考过程 */}
-                                {msg.thinkingProcess && msg.thinkingProcess.length > 0 && (
-                                    <div className="bg-white rounded-xl border border-gray-200 p-3 -mx-2">
-                                        <p className="text-xs font-medium text-[#00639d] mb-2">
-                                            深度思考过程 ({msg.thinkingProcess.length}步)
-                                        </p>
-                                        <div className="space-y-1.5">
-                                            {msg.thinkingProcess.map((thought, idx) => (
-                                                <div key={idx} className="flex items-start gap-2">
-                          <span className="inline-block px-1.5 py-0.5 bg-[#00639d]/10 text-[#00639d] rounded text-[10px] font-medium flex-shrink-0">
-                            {thought.step}
-                          </span>
-                                                    <span className="text-xs text-gray-600 leading-relaxed">{thought.content}</span>
-                                                </div>
-                                            ))}
+                                {/* 思考过程 - 合并相同 step */}
+                                {msg.thinkingProcess && msg.thinkingProcess.length > 0 && (() => {
+                                    // 合并相邻相同 step 的条目
+                                    const merged: { step: string; contents: string[] }[] = [];
+                                    for (let i = 0; i < msg.thinkingProcess.length; i++) {
+                                        const current = msg.thinkingProcess[i];
+                                        if (i === 0 || current.step !== msg.thinkingProcess[i - 1].step) {
+                                            merged.push({ step: current.step, contents: [current.content] });
+                                        } else {
+                                            merged[merged.length - 1].contents.push(current.content);
+                                        }
+                                    }
+
+                                    return (
+                                        <div className="bg-white rounded-xl border border-gray-200 p-3 -mx-2">
+                                            <p className="text-xs font-medium text-[#00639d] mb-2">
+                                                深度思考过程 ({msg.thinkingProcess.length}步)
+                                            </p>
+                                            <div className="space-y-3">
+                                                {merged.map((group, groupIdx) => (
+                                                    <div key={groupIdx} className="space-y-1.5">
+                                                        {/* 只显示第一个 step 标签 */}
+                                                        <span className="inline-block px-1.5 py-0.5 bg-[#00639d]/10 text-[#00639d] rounded text-[10px] font-medium">
+              {group.step}
+            </span>
+                                                        {/* 对应的所有 content，保持原样式且无标签 */}
+                                                        <div className="space-y-1.5 pl-2">
+                                                            {group.contents.map((content, contentIdx) => (
+                                                                <div key={contentIdx} className="text-xs text-gray-600 leading-relaxed">
+                                                                    {content}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
-                                )}
+                                    );
+                                })()}
                                 {/* AI 回复文字 */}
                                 {msg.content && <p className="text-gray-700 text-sm leading-relaxed">{msg.content}</p>}
                                 {/* 音频卡片 */}
@@ -69,7 +90,7 @@ export default function MessageList({ messages, t }: MessageListProps) {
                     )}
                     {msg.type === 'user' && (
                         <div className="flex justify-end">
-                            <div className="max-w-[555px] space-y-[0.5px]">
+                            <div className="max-w-[555px] flex flex-col items-end gap-1">
                                 {/* 用户文件附件 */}
                                 {msg.userFile && (
                                     <div className="flex items-center gap-4 bg-white border border-[#afb3b3]/60 rounded-t-[15px] rounded-bl-[2px] rounded-br-[10px] px-4 py-[13px] w-fit ml-auto">
@@ -83,7 +104,7 @@ export default function MessageList({ messages, t }: MessageListProps) {
                                 )}
                                 {/* 用户消息气泡 */}
                                 {msg.content && (
-                                    <div className="bg-[#cfe6f0] rounded-2xl rounded-tr-none shadow-[0px_1px_2px_0px_#0000000D] px-6 py-[14.88px] max-w-[508.8px]">
+                                    <div className="bg-[#cfe6f0] rounded-2xl rounded-tr-none shadow-[0px_1px_2px_0px_#0000000D] px-6 py-[14.88px] w-fit max-w-[508.8px]">
                                         <p className="text-sm text-[#40555d] leading-relaxed">{msg.content}</p>
                                     </div>
                                 )}

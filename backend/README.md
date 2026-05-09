@@ -30,8 +30,9 @@ pip install -r requirements.txt
 创建 `.env` 文件：
 
 ```env
-OPENAI_API_KEY=your-api-key-here
-OPENAI_MODEL=gpt-4
+LLM_API_KEY=your-api-key-here
+LLM_MODEL=gpt-4
+LLM_BASE_URL=https://your-api-endpoint
 DATABASE_URL=sqlite:///./ringturn.db
 ```
 

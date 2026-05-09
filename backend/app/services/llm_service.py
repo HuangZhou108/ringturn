@@ -29,12 +29,12 @@ class LLMService:
         self._init_client()
 
     def _init_client(self):
-        """初始化OpenAI客户端"""
-        api_key = settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")
-        base_url = settings.OPENAI_BASE_URL or os.getenv("OPENAI_BASE_URL")
+        """初始化LLM配置"""
+        api_key = settings.LLM_API_KEY or os.getenv("LLM_API_KEY")
+        base_url = settings.LLM_BASE_URL or os.getenv("LLM_BASE_URL")
 
         if not api_key:
-            raise ValueError("OPENAI_API_KEY未配置")
+            raise ValueError("LLM_API_KEY未配置")
 
         self.client = AsyncOpenAI(
             api_key=api_key,
@@ -63,7 +63,7 @@ class LLMService:
         if not self.client:
             self._init_client()
 
-        model = model or settings.OPENAI_MODEL
+        model = model or settings.LLM_MODEL
         last_error = None
 
         for attempt in range(MAX_RETRIES):
