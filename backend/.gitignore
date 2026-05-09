@@ -60,7 +60,7 @@ checkpoints.db
 
 # Model files (large, download separately)
 # models/
-# soundfonts/*.sf2
+soundfonts/*.sf2
 
 # OS
 .DS_Store

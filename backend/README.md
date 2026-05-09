@@ -19,11 +19,46 @@ RingTurn是一个基于AI Agent的智能音乐改编系统。用户上传音频�
 ## 快速开始
 
 ### 1. 安装依赖
-
+推荐创建虚拟环境：
+```bash
+conda create -n ringturn python=3.10
+```
+安装依赖：
 ```bash
 cd backend
 pip install -r requirements.txt
 ```
+#### 其他
+**FFmpeg：**  
+在没有FFmpeg的情况下，依然可以处理WAV音频。
+> 本项目使用 `FFmpeg` 进行音频格式转换、时长获取等操作。虽然代码在缺少 FFmpeg 时会降级运行（仅支持 WAV 复制），但完整功能（如 MP3 与 WAV 互转、任意格式转换）需要依赖 FFmpeg。
+检验是否已安装工具：
+```bash
+ffmpeg -version # 应输出版本信息
+```
+（虚拟环境）conda安装：
+```bash
+conda install -c conda-forge ffmpeg
+```
+Windows安装：
+1. 访问 [FFmpeg 官网](https://ffmpeg.org/download.html) → Windows 图标 → Windows builds from gyan.dev。
+2. 下载 ffmpeg-release-full.7z 或 ffmpeg-release-full.zip。
+3. 解压到本地，如`C:\ffmpeg`
+4. 将路径添加到系统环境变量PATH
+Linux安装：
+```bash
+sudo apt update
+sudo apt install ffmpeg
+```
+
+**FluidSynth：**  
+Windows下载：
+访问github仓库[分发界面](https://github.com/FluidSynth/fluidsynth/releases)，下载最新版本，例如`fluidsynth-v2.5.4-win10-x64-cpp11.zip`。
+由于`pyFluidSynth`的局限性，暂时必须把FluidSynth下载解压到`C:\tools\fluidsynth`路径，请确保`C:\tools\fluidsynth\bin`存在。
+> 之后我们会尝试通过替换工具等方法解决这个问题，使得项目的部署更加简单。
+
+**下载音色库**：  
+为了保证项目正常运行，你至少需要在`backend/soundfonts`文件下下载一个音色库，具体可查看SOUNDFONTS.md。
 
 ### 2. 配置环境变量（可选）
 
