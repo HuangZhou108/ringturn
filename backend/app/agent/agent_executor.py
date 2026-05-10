@@ -341,6 +341,8 @@ class AgentExecutor:
     def _add_thinking_step(self, step: str, content: str) -> None:
         """添加思考步骤"""
         # 创建新的列表对象，避免 SQLAlchemy 追踪问题
+        # 从数据库重新加载最新数据，避免覆盖回调写入的内容
+        self.db.refresh(self.task)
         current_steps = list(self.task.thinking_process or [])
         current_steps.append({
             "step": step,

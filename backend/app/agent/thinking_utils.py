@@ -24,6 +24,7 @@ def record_thought(task_id: str, step: str, content: str) -> None:
             })
             task.thinking_process = steps
             db.commit()
+            db.refresh(task)
     except Exception as e:
         print(f"[ERROR] record_thought: {e}")
     finally:

@@ -22,7 +22,7 @@ from app.agent.atomic_tools.analysis import (
     detect_instruments_tool
 )
 from app.agent.atomic_tools.melody import (
-    extract_melody_librosa_tool, filter_short_notes_tool, quantize_notes_tool
+    extract_melody_basic_pitch_tool, extract_melody_librosa_tool, filter_short_notes_tool, quantize_notes_tool
 )
 from app.agent.atomic_tools.midi import (
     create_midi_from_notes_tool, validate_midi_file_tool
@@ -110,7 +110,20 @@ async def analyze_structure_node(state: AgentState, db: Session, tools) -> None:
     "chords": list[dict],  # 每个元素 {{"start": float, "end": float, "chord": str}}
     "instruments": list[str]
 }}
-输出只有 JSON，不要有其他内容。"""
+**你必须严格遵守以下交互格式：**
+在每次调用任何工具之前，先输出一句中文说明，格式为：“[思考] 我接下来将使用 <工具名>，因为 <原因>。”
+然后调用工具。
+完成所有工具调用后，再单独输出最终的 JSON 结果。
+**绝对不要省略 `[思考]` 行！**
+
+示例：
+[思考] 我接下来将使用 get_bpm，因为需要知道歌曲速度。
+（随后调用 get_bpm 工具）
+[思考] 我接下来将使用 get_key，因为需要确定调性以便后续改编。
+（随后调用 get_key 工具）
+最终 JSON 结果：
+{{"bpm": 120, "key": "C Major", ...}}
+"""
 
     llm = get_llm()
     callback = ThinkingCallbackHandler(task_id, "analyze_structure")
@@ -121,6 +134,11 @@ async def analyze_structure_node(state: AgentState, db: Session, tools) -> None:
             {"messages": [SystemMessage(content=system_prompt), HumanMessage(content="请开始分析。")]},
             config={"callbacks": [callback]}
         )
+        # 调试输出
+        print(f"[NODE DEBUG] final_response type: {type(final_response)}")
+        print(f"[NODE DEBUG] messages count: {len(final_response.get('messages', []))}")
+        for i, msg in enumerate(final_response.get('messages', [])):
+            print(f"[NODE DEBUG] msg[{i}] type={type(msg).__name__}, content={str(msg.content)[:100]}")
         last_msg = final_response["messages"][-1].content
         analysis_result = json.loads(last_msg)
     except Exception as e:
@@ -151,13 +169,15 @@ async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
     audio_path = state["audio_path"]
     task_id = state["task_id"]
     step_tools = [
-        extract_melody_librosa_tool,
+        extract_melody_basic_pitch_tool,   # 优先使用 Basic Pitch
+        extract_melody_librosa_tool,       # 备选
         filter_short_notes_tool,
         quantize_notes_tool,
     ]
     system_prompt = f"""你是一个旋律提取专家。请从音频文件 `{audio_path}` 中提取主旋律。
 你可以使用工具：
-- extract_melody_librosa: 提取音符列表并生成 MIDI
+- extract_melody_basic_pitch: 使用深度学习模型提取旋律（推荐，精度更高）
+- extract_melody_librosa: 提取音符列表并生成 MIDI（作为basic_pitch的降级方案）
 - filter_short_notes: 过滤短音符（需提供音符列表和最小时长）
 - quantize_notes: 量化音符（需提供音符列表、网格大小、BPM）
 
@@ -169,7 +189,22 @@ async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
     "confidence": float,
     "midi_path": str   # 提取的 MIDI 文件路径
 }}
-输出只有 JSON，不要其他内容。"""
+**你必须严格遵守以下交互格式：**
+在每次调用任何工具之前，先输出一句中文说明，格式为：“[思考] 我接下来将使用 <工具名>，因为 <原因>。”
+然后调用工具。
+完成所有工具调用后，再单独输出最终的 JSON 结果。
+**绝对不要省略 `[思考]` 行！**
+
+示例：
+[思考] 我接下来将使用 extract_melody_basic_pitch，因为它是精度最高的深度学习模型。
+（随后调用 extract_melody_basic_pitch 工具）
+[思考] 我接下来将使用 filter_short_notes，因为需要去除过短的杂音音符。
+（随后调用 filter_short_notes 工具，并传入上一步得到的音符列表）
+[思考] 我接下来将使用 quantize_notes，因为需要将音符对齐到节拍网格。
+（随后调用 quantize_notes 工具）
+最终 JSON 结果：
+{{"melody_notes": [...], "confidence": 0.8, "midi_path": "/path/to/output.mid"}}
+"""
 
     llm = get_llm()
     callback = ThinkingCallbackHandler(task_id, "extract_melody")
@@ -197,7 +232,10 @@ async def generate_midi_node(state: AgentState, db: Session, tools) -> None:
     melody_data = state["melody_data"]
     analysis_result = state["analysis_result"]
     task_id = state["task_id"]
-    output_path = str(Path(settings.RINGTONES_DIR) / f"{task_id}_original.mid")
+    # 创建任务专属目录
+    task_dir = Path(settings.RINGTONES_DIR) / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+    output_path = str(task_dir / "generate_midi_original.mid")
 
     # 直接调用工具函数，避免LLM token限制导致失败
     from app.agent.atomic_tools.midi.create_from_notes import create_midi_from_notes
@@ -223,7 +261,8 @@ async def arrange_node(state: AgentState, db: Session, tools) -> None:
     target_instrument = state.get("instrument", "piano")
     user_tempo = state.get("tempo")
     task_id = state["task_id"]
-    output_path = str(Path(settings.RINGTONES_DIR) / f"{task_id}_arranged.mid")
+    task_dir = Path(settings.RINGTONES_DIR) / task_id
+    output_path = str(task_dir / "arrange_arranged.mid")
 
     step_tools = [change_instrument_tool, change_tempo_tool, quantize_midi_tool]
     system_prompt = f"""将 MIDI 文件 {midi_path} 进行改编：
@@ -236,7 +275,19 @@ async def arrange_node(state: AgentState, db: Session, tools) -> None:
 2. 如果需要调整速度，调用 change_tempo
 3. 可选: quantize_midi 量化
 
-最后输出 JSON: {{"arranged_midi_path": "{output_path}"}}
+**你必须严格遵守以下交互格式：**
+在每次调用任何工具之前，先输出一句中文说明，格式为：“[思考] 我接下来将使用 <工具名>，因为 <原因>。”
+然后调用工具。
+完成所有工具调用后，再单独输出最终的 JSON 结果。
+**绝对不要省略 `[思考]` 行！**
+
+示例：
+[思考] 我接下来将使用 change_instrument，因为用户要求将乐器更换为 {target_instrument}。
+（随后调用 change_instrument 工具）
+[思考] 我接下来将使用 change_tempo，因为用户指定速度为 {user_tempo} BPM。
+（随后调用 change_tempo 工具）
+最终 JSON 结果：
+{{"arranged_midi_path": "{output_path}"}}
 """
     llm = get_llm()
     callback = ThinkingCallbackHandler(task_id, "arrange")
@@ -256,10 +307,12 @@ async def render_node(state: AgentState, db: Session, tools) -> None:
     midi_path = state.get("arranged_midi_path") or state.get("midi_path")
     target_duration = state.get("duration", settings.DEFAULT_RINGTONE_DURATION)
     task_id = state["task_id"]
+    task_dir = Path(settings.RINGTONES_DIR) / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
     user_filename = state.get("filename", "ringtone")
-    safe_filename = "".join(c for c in user_filename if c.isalnum() or c in "._- ") or task_id
-    mp3_path = str(Path(settings.RINGTONES_DIR) / f"{safe_filename}.mp3")
-    wav_path = mp3_path.replace(".mp3", ".wav")
+    # safe_filename = "".join(c for c in user_filename if c.isalnum() or c in "._- ") or task_id
+    mp3_path = str(task_dir / f"{user_filename}.mp3")
+    wav_path = str(task_dir / "render_temp.wav")
     soundfont = settings.SOUNDFONT_PATH
 
     step_tools = [render_midi_with_fluidsynth_tool, convert_wav_to_mp3_tool, smart_clip_audio_tool]
@@ -273,7 +326,22 @@ MIDI 路径: {midi_path}
 1. 调用 render_midi_with_fluidsynth 生成临时 WAV（路径 {wav_path}，duration_limit={target_duration}）
 2. 调用 convert_wav_to_mp3 将 WAV 转为 MP3
 3. 调用 smart_clip_audio 截取到目标时长（如果生成长度超过目标）
-最终输出 JSON: {{"final_audio_path": "{mp3_path}", "audio_duration": <实际时长>}}
+
+**你必须严格遵守以下交互格式：**
+在每次调用任何工具之前，先输出一句中文说明，格式为：“[思考] 我接下来将使用 <工具名>，因为 <原因>。”
+然后调用工具。
+完成所有工具调用后，再单独输出最终的 JSON 结果。
+**绝对不要省略 `[思考]` 行！**
+
+示例：
+[思考] 我接下来将使用 render_midi_with_fluidsynth，因为需要将 MIDI 渲染为音频。
+（随后调用 render_midi_with_fluidsynth 工具）
+[思考] 我接下来将使用 convert_wav_to_mp3，因为需要转换为 MP3 格式。
+（随后调用 convert_wav_to_mp3 工具）
+[思考] 我接下来将使用 smart_clip_audio，因为需要截取到目标时长 {target_duration} 秒。
+（随后调用 smart_clip_audio 工具）
+最终 JSON 结果：
+{{"final_audio_path": "{mp3_path}", "audio_duration": 30.0}}
 """
     llm = get_llm()
     callback = ThinkingCallbackHandler(task_id, "render")
@@ -289,9 +357,9 @@ MIDI 路径: {midi_path}
     except:
         final_path = mp3_path
         duration = target_duration
-    state["final_audio_path"] = final_path
+    state["final_audio_path"] = mp3_path
     state["audio_duration"] = duration
-    state["final_audio_url"] = f"/static/ringtones/{Path(final_path).name}"
+    state["final_audio_url"] = f"/static/ringtones/{task_id}/{Path(mp3_path).name}"
 
 async def check_quality_node(state: AgentState, db: Session, tools) -> None:
     """
@@ -304,7 +372,18 @@ async def check_quality_node(state: AgentState, db: Session, tools) -> None:
     step_tools = [evaluate_overall_quality_tool]  # 也可以包含单个指标工具，但综合工具更高效
     system_prompt = f"""评估音频质量：{audio_path}
 调用 evaluate_overall_quality_tool 获得质量报告。
-输出 JSON 格式：{{"overall_score": float, "quality_issues": list, "passed": bool, ...}}
+
+**你必须严格遵守以下交互格式：**
+在调用工具之前，先输出一句中文说明，格式为：“[思考] 我接下来将使用 <工具名>，因为 <原因>。”
+然后调用工具。
+完成工具调用后，再单独输出最终的 JSON 结果。
+**绝对不要省略 `[思考]` 行！**
+
+示例：
+[思考] 我接下来将使用 evaluate_overall_quality_tool，因为需要综合评估音频的响度、频谱平衡、动态范围等指标。
+（随后调用 evaluate_overall_quality_tool 工具）
+最终 JSON 结果：
+{{"overall_score": 4.2, "quality_issues": [], "passed": true, ...}}
 """
     llm = get_llm()
     callback = ThinkingCallbackHandler(task_id, "check_quality")

@@ -44,6 +44,7 @@ function ChatFlow() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [toastMessage, setToastMessage] = useState<string | null>(null);
     const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+    const messagesEndRef = useRef<HTMLDivElement>(null); // 处理页面自动滚动
 
     // 处理侧边栏开关拖拽
     const [position, setPosition] = useState({ x: 24, y: 80 }); // left: 1.5rem=24px, top: 5rem=80px
@@ -138,6 +139,13 @@ function ChatFlow() {
         fetchHistoryRef.current = fetchHistory;
     }, []);
 
+    // 页面自动滚动
+    useEffect(() => {
+        if (messagesEndRef.current) {
+            messagesEndRef.current.scrollTop = messagesEndRef.current.scrollHeight;
+        }
+    }, [messages]);
+
     const handleSend = async () => {
         if (!inputValue.trim()) return;
         // 检查是否已上传音频
@@ -191,23 +199,14 @@ function ChatFlow() {
     };
 
     const pollTaskStatus = async (taskId: string, msgId: string) => {
-        let attempts = 0;
-        const maxAttempts = 30;
-
         const poll = setInterval(async () => {
-            attempts++;
-            if (attempts > maxAttempts) {
-                clearInterval(poll);
-                updateMessage(msgId, { content: t('chat.timeout') || '任务超时，请重试。' });
-                return;
-            }
-
             try {
                 const res = await api.getTaskStatus(taskId);
                 if (res.code !== 200) return;
 
                 const { status, current_subtask, message, thinking_process } = res.data;
 
+                // 更新思考过程（与原逻辑完全一致，此处保留原样）
                 setMessages((prev) => {
                     const msgIndex = prev.findIndex((m) => m.id === msgId);
                     if (msgIndex === -1) return prev;
@@ -476,7 +475,7 @@ function ChatFlow() {
                     )}
 
                     {/* 聊天内容区域 */}
-                    <div className="flex-1 overflow-y-auto px-8 py-6 relative">
+                    <div className="flex-1 overflow-y-auto px-8 py-6 relative" ref={messagesEndRef}>
                         <div className="max-w-[768px] mx-auto space-y-6 relative">
                             <WelcomeMessage />
                             {/* 始终显示消息列表（即使为空） */}

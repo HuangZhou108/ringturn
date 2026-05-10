@@ -1,6 +1,8 @@
 # app/agent/atomic_tools/melody/extract_with_basic_pitch.py
 from pathlib import Path
 import mido
+from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, Field
 
 async def extract_melody_basic_pitch(audio_path: str, output_midi_path: str | None = None) -> dict:
     """
@@ -42,3 +44,14 @@ async def extract_melody_basic_pitch(audio_path: str, output_midi_path: str | No
         "confidence": float(model_output.get("average_note_confidence", 0.8)) if model_output else 0.8,
         "midi_path": output_midi_path,
     }
+
+class ExtractMelodyBasicPitchInput(BaseModel):
+    audio_path: str = Field(description="音频文件的绝对路径")
+    output_midi_path: str | None = Field(default=None, description="可选的输出 MIDI 路径")
+
+extract_melody_basic_pitch_tool = StructuredTool.from_function(
+    coroutine=extract_melody_basic_pitch,
+    name="extract_melody_basic_pitch",
+    description="使用 Spotify Basic Pitch 从音频中提取主旋律，返回音符列表和生成的 MIDI 文件路径。精度优于 librosa 方法。",
+    args_schema=ExtractMelodyBasicPitchInput,
+)

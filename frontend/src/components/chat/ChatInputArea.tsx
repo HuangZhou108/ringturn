@@ -1,6 +1,6 @@
 // src/components/chat/ChatInputArea.tsx
 import { useTranslation } from 'react-i18next';
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import TrackParams from './TrackParams';
 
 interface ChatInputAreaProps {
@@ -63,6 +63,15 @@ export default function ChatInputArea({
             <path d="M12.5 13.75C12.5 15.48315 11.8916 16.95801 10.67505 18.1748C9.4585 19.39136 7.9834 20 6.25 20C4.5166 20 3.0415 19.39136 1.82495 18.1748C0.608398 16.95801 0 15.48315 0 13.75V4.5C0 3.25 0.4375 2.1875 1.3125 1.3125C2.1875 0.4375 3.25 0 4.5 0C5.75 0 6.8125 0.4375 7.6875 1.3125C8.5625 2.1875 9 3.25 9 4.5V13.25C9 14.0166 8.7334 14.6665 8.19995 15.19995C7.6665 15.7334 7.0166 16 6.25 16C5.4834 16 4.8335 15.7334 4.30005 15.19995C3.7666 14.6665 3.5 14.0166 3.5 13.25V4H5.5V13.25C5.5 13.4668 5.5708 13.6455 5.7124 13.78735C5.854 13.92896 6.0332 14 6.25 14C6.4668 14 6.646 13.92896 6.7876 13.78735C6.9292 13.6455 7 13.4668 7 13.25V4.5C6.9834 3.8 6.73755 3.20825 6.26245 2.72485C5.7876 2.24145 5.19995 2 4.5 2C3.80005 2 3.2085 2.24145 2.7251 2.72485C2.2417 3.20825 2 3.8 2 4.5V13.75C1.9834 14.93335 2.3916 15.9375 3.2251 16.7622C4.05835 17.5872 5.06665 18 6.25 18C7.4165 18 8.4082 17.5872 9.2251 16.7622C10.0417 15.9375 10.4668 14.93335 10.5 13.75V4H12.5V13.75H12.5V20H10.5V20H6.25H12.5Z" fill="#94a3b8"/>
         </svg>
     );
+
+    // 用于参数框自动关闭
+    const wrappedHandleSend = () => {
+        handleSend();
+        if (mode === 'chat') {
+            setShowParams(false);
+        }
+    };
+
     // ==================== Home 模式 ====================
     if (mode === 'home') {
         // ==================== Home 模式（完全复刻原 Home 页面输入区域） ====================
@@ -224,7 +233,7 @@ export default function ChatInputArea({
                 {/* 输入栏主体 */}
                 <div className="relative flex flex-row-reverse items-center gap-2 bg-white border border-[#e0f2fe] rounded-3xl px-2.5 py-2.5">
                     <button
-                        onClick={handleSend}
+                        onClick={wrappedHandleSend}
                         className="w-11 h-11 bg-[#00639d] rounded-2xl flex items-center justify-center flex-shrink-0 shadow-[0px_10px_15px_-3px_#00639d4D,0px_4px_6px_-4px_#00639d4D] hover:bg-[#005288] transition"
                     >
                         <svg width="19" height="16" viewBox="0 0 19 16" fill="none">
@@ -241,7 +250,7 @@ export default function ChatInputArea({
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter' && !e.shiftKey) {
                                     e.preventDefault();
-                                    handleSend();
+                                    wrappedHandleSend();
                                 }
                             }}
                             className="w-full bg-transparent outline-none resize-none text-[15px] text-gray-700 placeholder-[#94a3b8] leading-tight"
