@@ -138,13 +138,6 @@ export default function ChatInputArea({
                         {/* 左侧按钮组 */}
                         <div className="flex items-center gap-1">
                             <input ref={fileInputRef} type="file" accept=".mp3,.wav,.flac,.m4a,.ogg" onChange={handleFileSelect} className="hidden" />
-                            {/* 附件按钮 */}
-                            <button
-                                onClick={() => fileInputRef.current?.click()}
-                                className="flex items-center justify-center w-11 h-11"
-                            >
-                                {AttachmentIcon}
-                            </button>
                             {/* 参数开关按钮 */}
                             <button
                                 onClick={() => setShowParams(!showParams)}
@@ -152,6 +145,13 @@ export default function ChatInputArea({
                                 title={t('chat.showParams') || '参数设置'}
                             >
                                 {OpenParaIcon}
+                            </button>
+                            {/* 附件按钮 */}
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                className="flex items-center justify-center w-11 h-11"
+                            >
+                                {AttachmentIcon}
                             </button>
                         </div>
                         {/* 右侧发送按钮 */}

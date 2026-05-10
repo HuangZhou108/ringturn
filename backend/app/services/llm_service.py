@@ -259,3 +259,14 @@ class LLMService:
 
 # 全局LLM服务实例
 llm_service = LLMService()
+
+def get_llm():
+    """返回一个 LangChain 兼容的 ChatOpenAI 实例"""
+    from langchain_openai import ChatOpenAI
+    settings = get_settings()
+    return ChatOpenAI(
+        api_key=settings.LLM_API_KEY,
+        base_url=settings.LLM_BASE_URL or None,
+        model=settings.LLM_MODEL,
+        temperature=0.7,
+    )

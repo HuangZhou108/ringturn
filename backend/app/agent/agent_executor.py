@@ -7,6 +7,7 @@ Agent执行器
 import asyncio
 from datetime import datetime
 from sqlalchemy.orm import Session
+from app.db.session import SessionLocal
 
 from app.agent.state import AgentState, TaskStep
 from app.agent.tools import tool_gateway
@@ -257,6 +258,52 @@ class AgentExecutor:
         self.task.audio_duration = self.state.get("audio_duration")
         self.db.commit()
 
+    # async def _execute_step(self, step: str) -> None:
+    #     """
+    #     执行单个步骤
+
+    #     Args:
+    #         step: 步骤名称
+    #     """
+    #     # 新增：步骤前工具可用性检查
+    #     from app.agent.tools import tool_gateway
+    #     step_tool_map = {
+    #         "analyze_structure": "librosa",   # 或 chordmini
+    #         "extract_melody": "basic_pitch",
+    #         "render": "fluidsynth",
+    #     }
+    #     if step in step_tool_map:
+    #         try:
+    #             await tool_gateway.ensure_tool_available(step_tool_map[step])
+    #         except RuntimeError as e:
+    #             raise RuntimeError(f"步骤 {step} 所需工具不可用: {e}")
+
+    #     handler = NODE_HANDLERS.get(step)
+    #     if not handler:
+    #         raise ValueError(f"未知步骤: {step}")
+
+    #     try:
+    #         # 记录思考过程：开始执行
+    #         self._add_thinking_step(step, f"开始执行步骤：{step}")
+
+    #         await handler(self.state, self.db, tool_gateway)
+
+    #         # 记录节点内的思考过程（如果存在）
+    #         if self.state.get("_thinking"):
+    #             self._add_thinking_step(step, self.state["_thinking"])
+    #             del self.state["_thinking"]
+
+    #         # 记录思考过程：完成
+    #         self._add_thinking_step(step, f"步骤 {step} 执行完成")
+
+    #     except Exception as e:
+    #         # 即使失败也要记录思考过程
+    #         self._add_thinking_step(step, f"步骤 {step} 执行失败: {str(e)}")
+    #         raise
+
+    #     self.db.commit()
+
+    # 使用简化的_execute_step
     async def _execute_step(self, step: str) -> None:
         """
         执行单个步骤
@@ -264,43 +311,16 @@ class AgentExecutor:
         Args:
             step: 步骤名称
         """
-        # 新增：步骤前工具可用性检查
-        from app.agent.tools import tool_gateway
-        step_tool_map = {
-            "analyze_structure": "librosa",   # 或 chordmini
-            "extract_melody": "basic_pitch",
-            "render": "fluidsynth",
-        }
-        if step in step_tool_map:
-            try:
-                await tool_gateway.ensure_tool_available(step_tool_map[step])
-            except RuntimeError as e:
-                raise RuntimeError(f"步骤 {step} 所需工具不可用: {e}")
-
         handler = NODE_HANDLERS.get(step)
         if not handler:
             raise ValueError(f"未知步骤: {step}")
-
         try:
-            # 记录思考过程：开始执行
             self._add_thinking_step(step, f"开始执行步骤：{step}")
-
-            await handler(self.state, self.db, tool_gateway)
-
-            # 记录节点内的思考过程（如果存在）
-            if self.state.get("_thinking"):
-                self._add_thinking_step(step, self.state["_thinking"])
-                del self.state["_thinking"]
-
-            # 记录思考过程：完成
+            await handler(self.state, self.db, None)  # 第三个参数 tools 已不再使用
             self._add_thinking_step(step, f"步骤 {step} 执行完成")
-
         except Exception as e:
-            # 即使失败也要记录思考过程
             self._add_thinking_step(step, f"步骤 {step} 执行失败: {str(e)}")
             raise
-
-        self.db.commit()
 
     async def _update_task_status(self, status: TaskStatus) -> None:
         """更新任务状态"""
@@ -340,3 +360,22 @@ async def run_agent_task(task_id: str) -> None:
     except Exception as e:
         print(f"[ERROR] Task {task_id} failed: {e}")
         raise
+
+def record_thought(task_id: str, step: str, content: str) -> None:
+    """线程安全的思考过程记录，可在任何异步上下文中调用"""
+    db = SessionLocal()
+    try:
+        task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+        if task:
+            steps = list(task.thinking_process or [])
+            steps.append({
+                "step": step,
+                "content": content,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+            task.thinking_process = steps
+            db.commit()
+    except Exception as e:
+        print(f"[ERROR] record_thought: {e}")
+    finally:
+        db.close()

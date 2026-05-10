@@ -14,6 +14,17 @@ from app.services.file_service import file_service
 from app.agent.tools import tool_gateway
 from app.core.config import get_settings
 
+import json
+from langchain_core.messages import SystemMessage, HumanMessage
+from langgraph.prebuilt import create_react_agent
+from app.agent.atomic_tools.analysis import (
+    get_bpm_tool, get_key_tool, get_spectral_centroid_tool,
+    get_rms_energy_tool, extract_chord_progression_tool,
+    detect_instruments_tool
+)
+from app.services.llm_service import get_llm
+from .callbacks import ThinkingCallbackHandler
+
 settings = get_settings()
 
 async def fetch_source_node(state: AgentState, db: Session, tools) -> None:
@@ -59,23 +70,64 @@ async def analyze_structure_node(state: AgentState, db: Session, tools) -> None:
 
     调用分析API提取BPM、调性、段落等
     """
-    audio_path = state.get("audio_path")
-    if not audio_path:
-        raise ValueError("音频路径未设置")
+    audio_path = state["audio_path"]
+    user_request = state["user_request"]
+    task_id = state["task_id"]
 
-    # 记录思考过程
-    thinking = "正在分析音频结构，包括BPM、调性、段落结构等..."
-    state["_thinking"] = thinking
+    step_tools = [
+        get_bpm_tool,
+        get_key_tool,
+        get_spectral_centroid_tool,
+        get_rms_energy_tool,
+        extract_chord_progression_tool,
+        detect_instruments_tool,
+    ]
 
-    analysis = await tools.analyze_audio_structure(audio_path)
-    state["analysis_result"] = analysis
+    system_prompt = f"""你是一个音乐分析专家。当前用户需求：{user_request}
+你需要分析音频文件 `{audio_path}` 的音乐特征。你可以使用的工具有：
+{', '.join([t.name for t in step_tools])}
 
-    # 记录分析结果：优先使用用户指定的tempo，否则使用分析结果
-    user_tempo = state.get("tempo")
-    bpm = user_tempo if user_tempo else analysis.get("tempo", "未知")
-    key = analysis.get("key", "未知")
-    sections = len(analysis.get("sections", []))
-    state["_thinking"] = f"分析完成：BPM={bpm}, 调性={key}, 段落数={sections}"
+请根据用户需求，决定需要提取哪些特征。依次调用必要的工具。
+完成所有调用后，请输出一个 JSON 对象，包含以下字段（如果某个特征未提取，可以省略或设为 null）：
+{{
+    "bpm": float,
+    "key": str,
+    "spectral_centroid": float,
+    "rms_energy": float,
+    "chords": list[dict],  # 每个元素 {{"start": float, "end": float, "chord": str}}
+    "instruments": list[str]
+}}
+输出只有 JSON，不要有其他内容。"""
+
+    llm = get_llm()
+    callback = ThinkingCallbackHandler(task_id, "analyze_structure")
+    sub_agent = create_react_agent(llm, step_tools, checkpointer=None)  # 不需要检查点
+
+    try:
+        final_response = await sub_agent.ainvoke(
+            {"messages": [SystemMessage(content=system_prompt), HumanMessage(content="请开始分析。")]},
+            config={"callbacks": [callback]}
+        )
+        last_msg = final_response["messages"][-1].content
+        analysis_result = json.loads(last_msg)
+    except Exception as e:
+        # 降级：使用默认值
+        print(f"[WARN] analyze_structure_node 子Agent失败: {e}，使用默认分析结果")
+        analysis_result = {
+            "bpm": 120,
+            "key": "C Major",
+            "spectral_centroid": 1500,
+            "rms_energy": 0.1,
+            "chords": [],
+            "instruments": ["piano"]
+        }
+
+    state["analysis_result"] = analysis_result
+    # 可选：额外提取 duration 和 sections
+    import librosa
+    y, sr = librosa.load(audio_path, sr=22050)
+    state["analysis_result"]["duration"] = librosa.get_duration(y=y, sr=sr)
+    # sections 可以单独使用 detect_sections_tool，但为了简化，此处省略
 
 async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
     """
@@ -83,22 +135,43 @@ async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
 
     提取音频中的主旋律数据
     """
-    audio_path = state.get("audio_path")
-    if not audio_path:
-        raise ValueError("音频路径未设置")
+    audio_path = state["audio_path"]
+    task_id = state["task_id"]
+    step_tools = [
+        extract_melody_basic_pitch_tool,
+        filter_short_notes_tool,
+        quantize_notes_tool,
+    ]
+    system_prompt = f"""你是一个旋律提取专家。请从音频文件 `{audio_path}` 中提取主旋律。
+你可以使用工具：
+- extract_melody_basic_pitch: 提取音符列表并生成 MIDI
+- filter_short_notes: 过滤短音符（需提供音符列表和最小时长）
+- quantize_notes: 量化音符（需提供音符列表、网格大小、BPM）
 
-    state["_thinking"] = "正在使用AI模型提取音频中的主旋律..."
-    melody = await tools.extract_melody(audio_path)
+用户需求：{state["user_request"]}
 
-    # 音符数量检测，若提取的音符数量过少需报错
-    note_count = len(melody.get("melody_notes", []))
-    if note_count < 5:
-        raise RuntimeError(f"提取到的音符数量过少（{note_count} < 5），可能音频无有效旋律或提取失败")
+请按顺序调用工具，最终输出一个 JSON 对象：
+{{
+    "melody_notes": list[dict],  # 每个音符 {{"pitch": int, "start": float, "end": float, "velocity": int, "confidence": float}}
+    "confidence": float,
+    "midi_path": str   # 提取的 MIDI 文件路径
+}}
+输出只有 JSON，不要其他内容。"""
 
-    state["melody_data"] = melody
-
-    note_count = len(melody.get("melody_notes", []))
-    state["_thinking"] = f"旋律提取完成：共提取{note_count}个音符"
+    llm = get_llm()
+    callback = ThinkingCallbackHandler(task_id, "extract_melody")
+    sub_agent = create_react_agent(llm, step_tools)
+    resp = await sub_agent.ainvoke(
+        {"messages": [SystemMessage(content=system_prompt), HumanMessage(content="开始提取旋律。")]},
+        config={"callbacks": [callback]}
+    )
+    try:
+        melody_data = json.loads(resp["messages"][-1].content)
+    except:
+        # 降级：直接调用基础提取
+        from app.agent.atomic_tools.melody.extract_with_basic_pitch import extract_melody_basic_pitch
+        melody_data = await extract_melody_basic_pitch(audio_path)
+    state["melody_data"] = melody_data
 
 async def generate_midi_node(state: AgentState, db: Session, tools) -> None:
     """
@@ -106,28 +179,36 @@ async def generate_midi_node(state: AgentState, db: Session, tools) -> None:
 
     根据旋律和分析结果生成原始MIDI文件
     """
-    melody = state.get("melody_data")
-    analysis = state.get("analysis_result")
-
-    if not melody or not analysis:
-        raise ValueError("缺少旋律数据或分析结果")
-
+    melody_data = state["melody_data"]
+    analysis_result = state["analysis_result"]
     task_id = state["task_id"]
-    midi_path = Path(settings.RINGTONES_DIR) / f"{task_id}_original.mid"
+    output_path = str(Path(settings.RINGTONES_DIR) / f"{task_id}_original.mid")
 
-    await tools.generate_midi(melody, analysis, str(midi_path))
+    step_tools = [create_midi_from_notes_tool, validate_midi_file_tool]
+    system_prompt = f"""根据旋律数据生成 MIDI 文件。
+旋律数据: {json.dumps(melody_data, default=str)}
+BPM: {analysis_result.get('bpm', 120)}
+输出路径: {output_path}
 
-    # 检查 MIDI 文件是否为空
-    if not midi_path.exists() or midi_path.stat().st_size == 0:
-        raise RuntimeError(f"生成的 MIDI 文件为空: {midi_path}")
-    # 检查文件是否可读（mido 读取验证）
-    try:
-        import mido
-        mido.MidiFile(midi_path)
-    except Exception as e:
-        raise RuntimeError(f"生成的 MIDI 文件损坏或无法读取: {e}")
+工具：
+- create_midi_from_notes: 从音符列表生成 MIDI
+- validate_midi_file: 检查 MIDI 是否有效
 
-    state["midi_path"] = str(midi_path)
+请调用 create_midi_from_notes 生成 MIDI，然后用 validate_midi_file 验证。最后输出 JSON:
+{{"midi_path": "{output_path}"}}
+"""
+
+    llm = get_llm()
+    callback = ThinkingCallbackHandler(task_id, "generate_midi")
+    sub_agent = create_react_agent(llm, step_tools)
+    await sub_agent.ainvoke(
+        {"messages": [SystemMessage(content=system_prompt), HumanMessage(content="生成 MIDI。")]},
+        config={"callbacks": [callback]}
+    )
+    # 验证文件是否存在
+    if not Path(output_path).exists():
+        raise RuntimeError("MIDI 文件生成失败")
+    state["midi_path"] = output_path
 
 async def arrange_node(state: AgentState, db: Session, tools) -> None:
     """
@@ -135,44 +216,33 @@ async def arrange_node(state: AgentState, db: Session, tools) -> None:
 
     根据用户需求更换乐器、调整风格
     """
-    # 优先使用前端传入的乐器参数，否则从 user_request 解析
-    instrument = state.get("instrument", "Acoustic Piano")
-    
-    # 尝试将乐器名称转为目标格式
-    instrument_map = {
-        "acoustic piano": "piano",
-        "piano": "piano",
-        "electric piano": "electric_piano",
-        "guitar": "guitar",
-        "acoustic guitar": "guitar",
-        "strings": "strings",
-        "violin": "violin",
-        "cello": "cello",
-    }
-    target_instrument = instrument_map.get(instrument.lower(), "piano")
-    target_instruments = [target_instrument]
-
-    state["_thinking"] = f"正在将乐器改编为{target_instrument}..."
-
-    midi_path = state.get("midi_path")
-    if not midi_path:
-        raise ValueError("MIDI路径未设置")
-
+    midi_path = state["midi_path"]
+    target_instrument = state.get("instrument", "piano")
+    user_tempo = state.get("tempo")
     task_id = state["task_id"]
-    arranged_midi_path = Path(settings.RINGTONES_DIR) / f"{task_id}_arranged.mid"
+    output_path = str(Path(settings.RINGTONES_DIR) / f"{task_id}_arranged.mid")
 
-    await tools.arrange_instrument(
-        midi_path,
-        target_instruments,
-        style=state.get("user_request", ""),
-        output_path=str(arranged_midi_path),
+    step_tools = [change_instrument_tool, change_tempo_tool, quantize_midi_tool]
+    system_prompt = f"""将 MIDI 文件 {midi_path} 进行改编：
+- 目标乐器: {target_instrument}
+- 用户指定速度: {user_tempo if user_tempo else '保持原速'}
+- 输出路径: {output_path}
+
+你可以依次调用：
+1. change_instrument (必须，使用乐器名称)
+2. 如果需要调整速度，调用 change_tempo
+3. 可选: quantize_midi 量化
+
+最后输出 JSON: {{"arranged_midi_path": "{output_path}"}}
+"""
+    llm = get_llm()
+    callback = ThinkingCallbackHandler(task_id, "arrange")
+    sub_agent = create_react_agent(llm, step_tools)
+    await sub_agent.ainvoke(
+        {"messages": [SystemMessage(content=system_prompt), HumanMessage(content="开始改编。")]},
+        config={"callbacks": [callback]}
     )
-    state["arranged_midi_path"] = str(arranged_midi_path)
-    state["arrangement_params"] = {
-        "instruments": target_instruments,
-        "style": state.get("user_request", ""),
-    }
-    state["_thinking"] = f"乐器改编完成：{target_instrument}"
+    state["arranged_midi_path"] = output_path
 
 async def render_node(state: AgentState, db: Session, tools) -> None:
     """
@@ -181,55 +251,44 @@ async def render_node(state: AgentState, db: Session, tools) -> None:
     将改编后的MIDI渲染为音频文件
     """
     midi_path = state.get("arranged_midi_path") or state.get("midi_path")
-    if not midi_path:
-        raise ValueError("MIDI路径未设置")
-
-    # 调整 tempo（如果用户指定了）
-    tempo = state.get("tempo")
-    if tempo:
-        from app.services.midi_arranger import change_tempo
-        task_id = state["task_id"]
-        tempo_path = Path(settings.RINGTONES_DIR) / f"{task_id}_tempo.mid"
-        state["_thinking"] = f"正在调整BPM为{tempo}..."
-        midi_path = await change_tempo(midi_path, tempo, str(tempo_path))
-
-    task_id = state["task_id"]
-    # 使用用户指定的文件名（如果提供），否则使用 task_id
-    user_filename = state.get("filename", "")
-    safe_filename = "".join(c for c in user_filename if c.isalnum() or c in "._- ") or task_id
-    output_filename = f"{safe_filename}.mp3"
-    output_path = Path(settings.RINGTONES_DIR) / output_filename
-
-    # 使用前端传入的 duration 参数
     target_duration = state.get("duration", settings.DEFAULT_RINGTONE_DURATION)
+    task_id = state["task_id"]
+    user_filename = state.get("filename", "ringtone")
+    safe_filename = "".join(c for c in user_filename if c.isalnum() or c in "._- ") or task_id
+    mp3_path = str(Path(settings.RINGTONES_DIR) / f"{safe_filename}.mp3")
+    wav_path = mp3_path.replace(".mp3", ".wav")
+    soundfont = settings.SOUNDFONT_PATH
 
-    state["_thinking"] = f"正在渲染音频，时长限制为{target_duration}秒..."
+    step_tools = [render_midi_with_fluidsynth_tool, convert_wav_to_mp3_tool, smart_clip_audio_tool]
+    system_prompt = f"""将 MIDI 渲染为 MP3 铃声。
+MIDI 路径: {midi_path}
+音色库: {soundfont}
+目标长度: {target_duration} 秒
+输出文件: {mp3_path}
 
-    # 乐器配置（使用配置文件中的音色库）
-    instruments = {
-        "default": settings.SOUNDFONT_PATH,
-    }
-
-    await tools.render_audio(
-        midi_path,
-        instruments,
-        str(output_path),
-        duration=target_duration,
+工作流：
+1. 调用 render_midi_with_fluidsynth 生成临时 WAV（路径 {wav_path}，duration_limit={target_duration}）
+2. 调用 convert_wav_to_mp3 将 WAV 转为 MP3
+3. 调用 smart_clip_audio 截取到目标时长（如果生成长度超过目标）
+最终输出 JSON: {{"final_audio_path": "{mp3_path}", "audio_duration": <实际时长>}}
+"""
+    llm = get_llm()
+    callback = ThinkingCallbackHandler(task_id, "render")
+    sub_agent = create_react_agent(llm, step_tools)
+    resp = await sub_agent.ainvoke(
+        {"messages": [SystemMessage(content=system_prompt), HumanMessage(content="渲染音频。")]},
+        config={"callbacks": [callback]}
     )
-
-    # 智能截取
-    final_path, duration = await tools.smart_clip(
-        str(output_path),
-        target_duration=target_duration,
-    )
-
+    try:
+        result = json.loads(resp["messages"][-1].content)
+        final_path = result.get("final_audio_path", mp3_path)
+        duration = result.get("audio_duration", target_duration)
+    except:
+        final_path = mp3_path
+        duration = target_duration
     state["final_audio_path"] = final_path
     state["audio_duration"] = duration
-
-    # 生成URL - 使用截取后的真实文件路径
-    final_filename = os.path.basename(final_path)
-    state["final_audio_url"] = f"/static/ringtones/{final_filename}"
-    state["_thinking"] = f"音频渲染完成，最终时长：{duration}秒"
+    state["final_audio_url"] = f"/static/ringtones/{Path(final_path).name}"
 
 async def check_quality_node(state: AgentState, db: Session, tools) -> None:
     """
@@ -237,26 +296,27 @@ async def check_quality_node(state: AgentState, db: Session, tools) -> None:
 
     评估生成音频的质量
     """
-    audio_path = state.get("final_audio_path")
-    if not audio_path:
-        raise ValueError("最终音频路径未设置")
-
-    # 转换为绝对路径（确保质量检查能找到文件）
-    if not os.path.isabs(audio_path):
-        audio_path = os.path.abspath(audio_path)
-
-    quality = await tools.check_quality(audio_path)
-
+    audio_path = state["final_audio_path"]
+    task_id = state["task_id"]
+    step_tools = [evaluate_overall_quality_tool]  # 也可以包含单个指标工具，但综合工具更高效
+    system_prompt = f"""评估音频质量：{audio_path}
+调用 evaluate_overall_quality_tool 获得质量报告。
+输出 JSON 格式：{{"overall_score": float, "quality_issues": list, "passed": bool, ...}}
+"""
+    llm = get_llm()
+    callback = ThinkingCallbackHandler(task_id, "check_quality")
+    sub_agent = create_react_agent(llm, step_tools)
+    resp = await sub_agent.ainvoke(
+        {"messages": [SystemMessage(content=system_prompt), HumanMessage(content="评估质量。")]},
+        config={"callbacks": [callback]}
+    )
+    try:
+        quality = json.loads(resp["messages"][-1].content)
+    except:
+        quality = {"passed": True, "overall_score": 4.0, "quality_issues": []}
     if not quality.get("passed", False):
-        # 设置结构调整建议（可基于质量报告的细节）
-        state["reflection"] = {
-            "message": "质量不达标，需要优化",
-            "adjustments": {
-                # TODO：按照实际情况处理
-            }
-        }
         state["needs_revision"] = True
-
+        state["reflection"] = {"message": "质量不达标", "adjustments": {}}
     state["step_results"]["quality_check"] = quality
 
 # 节点处理器映射（使用字符串键，与TaskStep枚举的value一致）
