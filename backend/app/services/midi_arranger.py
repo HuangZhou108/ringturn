@@ -96,10 +96,12 @@ async def arrange_midi(
         return output_path
 
     except Exception as e:
-        print(f"[WARN] MIDI改编失败: {e}，使用原文件")
-        import shutil
-        shutil.copy(midi_path, output_path)
-        return output_path
+        # print(f"[WARN] MIDI改编失败: {e}，使用原文件")
+        # import shutil
+        # shutil.copy(midi_path, output_path)
+        # return output_path
+        print(f"[WARN] MIDI改编失败: {e}，无法继续")
+        raise RuntimeError(f"change_instrument 失败: {e}")
 
 
 async def change_tempo(midi_path: str, bpm: float, output_path: str | None = None) -> str:
@@ -146,9 +148,10 @@ async def change_tempo(midi_path: str, bpm: float, output_path: str | None = Non
 
     except Exception as e:
         print(f"[WARN] 速度调整失败: {e}")
-        import shutil
-        shutil.copy(midi_path, output_path)
-        return output_path
+        # import shutil
+        # shutil.copy(midi_path, output_path)
+        # return output_path
+        raise RuntimeError(f"change_tempo 失败: {e}")
 
 
 async def quantize_notes(midi_path: str, grid: float = 0.25, output_path: str | None = None) -> str:
@@ -236,6 +239,7 @@ async def quantize_notes(midi_path: str, grid: float = 0.25, output_path: str | 
 
     except Exception as e:
         print(f"[WARN] 量化失败: {e}")
-        import shutil
-        shutil.copy(midi_path, output_path)
-        return output_path
+        # import shutil
+        # shutil.copy(midi_path, output_path)
+        # return output_path
+        raise RuntimeError(f"quantize_midi 失败: {e}")

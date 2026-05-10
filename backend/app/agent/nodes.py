@@ -7,13 +7,14 @@ Agent节点处理逻辑
 import json
 from pathlib import Path
 from sqlalchemy.orm import Session
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
 from app.services.llm_service import get_llm
 from .callbacks import ThinkingCallbackHandler
 from app.core.config import get_settings
 from app.services.file_service import file_service
 from app.agent.state import AgentState, TaskStep
+import mido
 
 # 导入所有原子工具
 from app.agent.atomic_tools.analysis import (
@@ -246,8 +247,15 @@ async def generate_midi_node(state: AgentState, db: Session, tools) -> None:
     )
     
     # 验证文件是否生成成功
-    if not Path(output_path).exists():
-        raise RuntimeError("MIDI 文件生成失败（直接调用）")
+    output_path_obj = Path(output_path)
+    if not output_path_obj.exists():
+        raise RuntimeError("MIDI 文件生成失败：文件不存在")
+    if output_path_obj.stat().st_size == 0:
+        raise RuntimeError("MIDI 文件生成失败：文件为空")
+    try:
+        mido.MidiFile(output_path)
+    except Exception as e:
+        raise RuntimeError(f"MIDI 文件无效: {e}")
     
     state["midi_path"] = output_path
 
@@ -296,6 +304,14 @@ async def arrange_node(state: AgentState, db: Session, tools) -> None:
         {"messages": [SystemMessage(content=system_prompt), HumanMessage(content="开始改编。")]},
         config={"callbacks": [callback]}
     )
+
+    # 验证改编后的 MIDI 文件
+    if not Path(output_path).exists():
+        raise RuntimeError(f"改编失败：输出文件不存在 {output_path}")
+    try:
+        mido.MidiFile(output_path)
+    except Exception as e:
+        raise RuntimeError(f"改编后的 MIDI 无效: {e}")
     state["arranged_midi_path"] = output_path
 
 async def render_node(state: AgentState, db: Session, tools) -> None:
@@ -305,6 +321,8 @@ async def render_node(state: AgentState, db: Session, tools) -> None:
     将改编后的MIDI渲染为音频文件
     """
     midi_path = state.get("arranged_midi_path") or state.get("midi_path")
+    if not Path(midi_path).exists():
+        raise FileNotFoundError(f"渲染输入 MIDI 不存在: {midi_path}")
     target_duration = state.get("duration", settings.DEFAULT_RINGTONE_DURATION)
     task_id = state["task_id"]
     task_dir = Path(settings.RINGTONES_DIR) / task_id
@@ -357,6 +375,11 @@ MIDI 路径: {midi_path}
     except:
         final_path = mp3_path
         duration = target_duration
+    # 验证最终音频文件是否存在
+    if not Path(mp3_path).exists():
+        raise RuntimeError(f"渲染失败：最终音频文件不存在 {mp3_path}")
+    if Path(mp3_path).stat().st_size == 0:
+        raise RuntimeError(f"渲染失败：最终音频文件为空 {mp3_path}")
     state["final_audio_path"] = mp3_path
     state["audio_duration"] = duration
     state["final_audio_url"] = f"/static/ringtones/{task_id}/{Path(mp3_path).name}"
@@ -392,10 +415,20 @@ async def check_quality_node(state: AgentState, db: Session, tools) -> None:
         {"messages": [SystemMessage(content=system_prompt), HumanMessage(content="评估质量。")]},
         config={"callbacks": [callback]}
     )
+    # 强制检查是否调用了工具
+    messages = resp.get("messages", [])
+    tool_called = any(isinstance(m, ToolMessage) for m in messages)
+    if not tool_called:
+        raise RuntimeError("质量检查失败：未调用评估工具，LLM 可能直接编造了结果")
+    
     try:
         quality = json.loads(resp["messages"][-1].content)
     except:
-        quality = {"passed": True, "overall_score": 4.0, "quality_issues": []}
+        raise RuntimeError("质量检查结果解析失败")
+    
+    # 验证必要字段
+    if "overall_score" not in quality:
+        raise RuntimeError("质量检查结果缺少 overall_score")
     if not quality.get("passed", False):
         state["needs_revision"] = True
         state["reflection"] = {"message": "质量不达标", "adjustments": {}}

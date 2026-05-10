@@ -315,22 +315,22 @@ class AgentExecutor:
 
     # 使用简化的_execute_step
     async def _execute_step(self, step: str) -> None:
-        """
-        执行单个步骤
-
-        Args:
-            step: 步骤名称
-        """
         handler = NODE_HANDLERS.get(step)
         if not handler:
             raise ValueError(f"未知步骤: {step}")
-        try:
-            self._add_thinking_step(step, f"开始执行步骤：{step}")
-            await handler(self.state, self.db, None)  # 第三个参数 tools 已不再使用
-            self._add_thinking_step(step, f"步骤 {step} 执行完成")
-        except Exception as e:
-            self._add_thinking_step(step, f"步骤 {step} 执行失败: {str(e)}")
-            raise
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            try:
+                self._add_thinking_step(step, f"开始执行步骤：{step} (第{attempt+1}次尝试)")
+                await handler(self.state, self.db, None)
+                self._add_thinking_step(step, f"步骤 {step} 执行完成")
+                return
+            except Exception as e:
+                if attempt < max_attempts - 1 and step in ("generate_midi", "arrange", "render"):
+                    self._add_thinking_step(step, f"步骤 {step} 失败，准备重试: {str(e)}")
+                    continue
+                self._add_thinking_step(step, f"步骤 {step} 执行失败: {str(e)}")
+                raise
 
     async def _update_task_status(self, status: TaskStatus) -> None:
         """更新任务状态"""
