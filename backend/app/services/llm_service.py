@@ -269,4 +269,7 @@ def get_llm():
         base_url=settings.LLM_BASE_URL or None,
         model=settings.LLM_MODEL,
         temperature=0.7,
+        max_retries=5,                # 增加重试次数
+        # retry_on=[RateLimitError],    # 仅对限流错误重试
+        # retry_delay=2,                # 初始延迟 2 秒（指数退避）
     )

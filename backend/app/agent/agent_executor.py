@@ -14,6 +14,7 @@ from app.agent.tools import tool_gateway
 from app.agent.nodes import NODE_HANDLERS
 from app.db.session import SessionLocal
 from app.models import Task as TaskModel, TaskStatus
+from .thinking_utils import record_thought
 
 class RingtoneParams:
     """铃声参数"""
@@ -203,6 +204,15 @@ class AgentExecutor:
         self.task.plan = plan
         self.db.commit()
 
+        normalized_plan = []
+        for item in plan:
+            if isinstance(item, dict) and "step" in item:
+                normalized_plan.append(item["step"])
+            else:
+                normalized_plan.append(item)
+        self.state["plan"] = normalized_plan
+        self.task.plan = normalized_plan
+
     async def _execute_steps(self) -> None:
         """
         执行所有步骤
@@ -360,22 +370,3 @@ async def run_agent_task(task_id: str) -> None:
     except Exception as e:
         print(f"[ERROR] Task {task_id} failed: {e}")
         raise
-
-def record_thought(task_id: str, step: str, content: str) -> None:
-    """线程安全的思考过程记录，可在任何异步上下文中调用"""
-    db = SessionLocal()
-    try:
-        task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
-        if task:
-            steps = list(task.thinking_process or [])
-            steps.append({
-                "step": step,
-                "content": content,
-                "timestamp": datetime.utcnow().isoformat()
-            })
-            task.thinking_process = steps
-            db.commit()
-    except Exception as e:
-        print(f"[ERROR] record_thought: {e}")
-    finally:
-        db.close()

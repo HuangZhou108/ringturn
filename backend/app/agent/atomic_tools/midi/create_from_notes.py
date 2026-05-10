@@ -39,8 +39,13 @@ async def create_midi_from_notes(
         track.append(mido.Message('note_off', channel=0, note=note["pitch"], velocity=0, time=dur_ticks))
         last_ticks = start_ticks + dur_ticks
     
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    mid.save(output_path)
+    try:
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        mid.save(output_path)
+        print(f"[MIDI] 文件已成功保存至 {output_path}")
+    except Exception as e:
+        print(f"[ERROR] MIDI 文件保存失败: {e}")
+        raise
     return output_path
 
 class CreateMidiFromNotesInput(BaseModel):

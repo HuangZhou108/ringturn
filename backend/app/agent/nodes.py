@@ -4,26 +4,39 @@ Agent节点处理逻辑
 每个节点负责一个执行步骤的具体实现
 """
 
-import os
-from pathlib import Path
-from datetime import datetime
-from sqlalchemy.orm import Session
-
-from app.agent.state import AgentState, TaskStep
-from app.services.file_service import file_service
-from app.agent.tools import tool_gateway
-from app.core.config import get_settings
-
 import json
+from pathlib import Path
+from sqlalchemy.orm import Session
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.prebuilt import create_react_agent
+from app.services.llm_service import get_llm
+from .callbacks import ThinkingCallbackHandler
+from app.core.config import get_settings
+from app.services.file_service import file_service
+from app.agent.state import AgentState, TaskStep
+
+# 导入所有原子工具
 from app.agent.atomic_tools.analysis import (
     get_bpm_tool, get_key_tool, get_spectral_centroid_tool,
     get_rms_energy_tool, extract_chord_progression_tool,
     detect_instruments_tool
 )
-from app.services.llm_service import get_llm
-from .callbacks import ThinkingCallbackHandler
+from app.agent.atomic_tools.melody import (
+    extract_melody_librosa_tool, filter_short_notes_tool, quantize_notes_tool
+)
+from app.agent.atomic_tools.midi import (
+    create_midi_from_notes_tool, validate_midi_file_tool
+)
+from app.agent.atomic_tools.arrangement import (
+    change_instrument_tool, change_tempo_tool, quantize_midi_tool
+)
+from app.agent.atomic_tools.rendering import (
+    render_midi_with_fluidsynth_tool, convert_wav_to_mp3_tool, smart_clip_audio_tool
+)
+from app.agent.atomic_tools.quality import (
+    evaluate_overall_quality_tool
+)
+
 
 settings = get_settings()
 
@@ -138,13 +151,13 @@ async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
     audio_path = state["audio_path"]
     task_id = state["task_id"]
     step_tools = [
-        extract_melody_basic_pitch_tool,
+        extract_melody_librosa_tool,
         filter_short_notes_tool,
         quantize_notes_tool,
     ]
     system_prompt = f"""你是一个旋律提取专家。请从音频文件 `{audio_path}` 中提取主旋律。
 你可以使用工具：
-- extract_melody_basic_pitch: 提取音符列表并生成 MIDI
+- extract_melody_librosa: 提取音符列表并生成 MIDI
 - filter_short_notes: 过滤短音符（需提供音符列表和最小时长）
 - quantize_notes: 量化音符（需提供音符列表、网格大小、BPM）
 
@@ -169,8 +182,8 @@ async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
         melody_data = json.loads(resp["messages"][-1].content)
     except:
         # 降级：直接调用基础提取
-        from app.agent.atomic_tools.melody.extract_with_basic_pitch import extract_melody_basic_pitch
-        melody_data = await extract_melody_basic_pitch(audio_path)
+        from app.agent.atomic_tools.melody.extract_with_librosa import extract_melody_librosa
+        melody_data = await extract_melody_librosa(audio_path)
     state["melody_data"] = melody_data
 
 async def generate_midi_node(state: AgentState, db: Session, tools) -> None:
@@ -178,36 +191,26 @@ async def generate_midi_node(state: AgentState, db: Session, tools) -> None:
     节点4: 生成MIDI
 
     根据旋律和分析结果生成原始MIDI文件
+
+    由于步骤固定，不再调用大模型。
     """
     melody_data = state["melody_data"]
     analysis_result = state["analysis_result"]
     task_id = state["task_id"]
     output_path = str(Path(settings.RINGTONES_DIR) / f"{task_id}_original.mid")
 
-    step_tools = [create_midi_from_notes_tool, validate_midi_file_tool]
-    system_prompt = f"""根据旋律数据生成 MIDI 文件。
-旋律数据: {json.dumps(melody_data, default=str)}
-BPM: {analysis_result.get('bpm', 120)}
-输出路径: {output_path}
-
-工具：
-- create_midi_from_notes: 从音符列表生成 MIDI
-- validate_midi_file: 检查 MIDI 是否有效
-
-请调用 create_midi_from_notes 生成 MIDI，然后用 validate_midi_file 验证。最后输出 JSON:
-{{"midi_path": "{output_path}"}}
-"""
-
-    llm = get_llm()
-    callback = ThinkingCallbackHandler(task_id, "generate_midi")
-    sub_agent = create_react_agent(llm, step_tools)
-    await sub_agent.ainvoke(
-        {"messages": [SystemMessage(content=system_prompt), HumanMessage(content="生成 MIDI。")]},
-        config={"callbacks": [callback]}
+    # 直接调用工具函数，避免LLM token限制导致失败
+    from app.agent.atomic_tools.midi.create_from_notes import create_midi_from_notes
+    await create_midi_from_notes(
+        notes=melody_data.get("melody_notes", []),
+        bpm=analysis_result.get("bpm", 120),
+        output_path=output_path
     )
-    # 验证文件是否存在
+    
+    # 验证文件是否生成成功
     if not Path(output_path).exists():
-        raise RuntimeError("MIDI 文件生成失败")
+        raise RuntimeError("MIDI 文件生成失败（直接调用）")
+    
     state["midi_path"] = output_path
 
 async def arrange_node(state: AgentState, db: Session, tools) -> None:

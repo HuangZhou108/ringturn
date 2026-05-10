@@ -16,7 +16,8 @@ __all__ = (
     "detect_sections_tool",
     "get_spectral_centroid_tool",
     # melody
-    "extract_melody_basic_pitch_tool",
+    "extract_melody_librosa_tool",
+    # "extract_melody_basic_pitch_tool",
     "filter_short_notes_tool",
     "quantize_notes_tool",
     # midi

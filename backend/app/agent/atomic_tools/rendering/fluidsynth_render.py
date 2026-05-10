@@ -30,12 +30,21 @@ async def render_midi_with_fluidsynth(
         raise RuntimeError("fluidsynth not found in PATH")
     if not Path(soundfont_path).exists():
         raise FileNotFoundError(f"Soundfont not found: {soundfont_path}")
+    if not Path(midi_path).exists():
+        raise FileNotFoundError(f"MIDI file not found: {midi_path}")
     
-    cmd = [fluidsynth_path, "-ni", "-F", output_wav_path, "-r", str(sample_rate)]
+    # 修复后的命令构建
+    cmd = [
+        fluidsynth_path,
+        "-F", output_wav_path,
+        "-r", str(sample_rate),
+        "--no-shell"          # 或使用 -n -i 但推荐长格式
+    ]
     if duration_limit:
         cmd.extend(["-d", str(int(duration_limit))])
+    # 最后添加音色库和 MIDI 文件
     cmd.extend([soundfont_path, midi_path])
-    
+
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"FluidSynth error: {result.stderr}")
