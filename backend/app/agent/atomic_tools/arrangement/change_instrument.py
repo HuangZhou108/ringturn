@@ -1,4 +1,5 @@
 # app/agent/atomic_tools/arrangement/change_instrument.py
+import os
 import mido
 from pathlib import Path
 from langchain_core.tools import StructuredTool
@@ -41,6 +42,8 @@ async def change_instrument(midi_path: str, target_instrument: str, output_path:
     Returns:
         str: 输出路径
     """
+    if not os.path.isfile(midi_path):
+        raise ValueError(f"输入 MIDI 文件不存在: {midi_path}")
     if output_path is None:
         output_path = midi_path.replace(".mid", "_instr.mid")
     mid = mido.MidiFile(midi_path)
@@ -65,16 +68,21 @@ async def change_instrument(midi_path: str, target_instrument: str, output_path:
             new_track.insert(0, mido.Message('program_change', program=program, time=0))
         mid.tracks[0] = new_track
     mid.save(output_path)
+    if not os.path.isfile(output_path):
+        raise RuntimeError(f"改编后的 MIDI 未成功保存至 {output_path}")
     return output_path
 
 class ChangeInstrumentInput(BaseModel):
-    midi_path: str = Field(description="输入 MIDI 文件路径")
+    midi_path: str = Field(..., description="输入 MIDI 文件的完整绝对路径，必须是可读文件")
     target_instrument: str = Field(description="目标乐器名称，如 piano, violin, guitar 等")
-    output_path: str | None = Field(default=None, description="输出路径（可选）")
+    output_path: str = Field(..., description="输出 MIDI 文件的完整路径，必须由系统指定，不得编造")
 
 change_instrument_tool = StructuredTool.from_function(
     coroutine=change_instrument,
     name="change_instrument",
-    description="更换 MIDI 文件的乐器（使用 General MIDI 音色号）。",
+    description=(
+        "将 MIDI 文件中所有音轨的乐器更换为目标 GM 乐器。"
+        "必须提供 output_path，且必须使用系统给定的输出路径。"
+    ),
     args_schema=ChangeInstrumentInput,
 )
