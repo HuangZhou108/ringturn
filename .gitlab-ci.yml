@@ -3,6 +3,12 @@ stages:
   - build
   - test
 
+# 全局缓存：让各个 job 共享 node_modules，避免每次从零下载
+cache:
+  paths:
+    - frontend/node_modules/
+
+
 # ============================================
 # 阶段 1: 代码检查
 # ============================================
@@ -20,6 +26,7 @@ lint-backend:
 
 lint-frontend:
   stage: lint
+  timeout: 20m 
   script:
     - cd frontend
     - npm ci
