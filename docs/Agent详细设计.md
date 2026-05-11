@@ -78,43 +78,20 @@ backend/app/agent/
 ├── __init__.py              # 模块导出
 ├── state.py                 # AgentState 定义、TaskStep 枚举
 ├── graph.py                 # LangGraph 工作流定义（节点编排）
-├── nodes.py                 # 各节点处理逻辑 + NODE_HANDLERS 映射
-├── agent_executor.py       # Agent 执行器入口
+├── agent_executor.py        # Agent 执行器入口
 ├── callbacks.py             # LangChain 回调处理器（思考记录）
 ├── thinking_utils.py        # 思考记录工具
+├── nodes/                   # 节点处理器模块
+│   ├── __init__.py         # 导出节点 + NODE_HANDLERS
+│   ├── _helpers.py         # 辅助函数
+│   ├── fetch_source.py
+│   ├── analyze_structure.py
+│   ├── extract_melody.py
+│   ├── generate_midi.py
+│   ├── arrange.py
+│   ├── render.py
+│   └── check_quality.py
 └── atomic_tools/           # 原子工具集
-    ├── __init__.py
-    ├── analysis/           # 音频分析工具
-    │   ├── bpm.py          # BPM 检测
-    │   ├── key.py          # 调性检测
-    │   ├── chords.py       # 和弦检测
-    │   ├── energy.py       # 能量分析
-    │   ├── spectral_centroid.py
-    │   ├── sections.py     # 段落检测
-    │   └── instrument_detection.py
-    ├── melody/             # 旋律提取工具
-    │   ├── extract_with_basic_pitch.py
-    │   ├── extract_with_librosa.py
-    │   ├── filter_short_notes.py
-    │   └── quantize_notes.py
-    ├── midi/               # MIDI 处理工具
-    │   ├── create_from_notes.py
-    │   ├── validate_midi.py
-    │   └── set_tempo.py
-    ├── arrangement/         # 改编工具
-    │   ├── change_instrument.py
-    │   ├── change_tempo.py
-    │   └── quantize_midi.py
-    ├── rendering/           # 渲染工具
-    │   ├── fluidsynth_render.py
-    │   ├── convert_to_mp3.py
-    │   └── smart_clip.py
-    └── quality/            # 质量评估工具
-        ├── overall_quality.py
-        ├── loudness_check.py
-        ├── dynamic_range.py
-        ├── spectral_balance.py
-        └── zero_crossing_rate.py
 ```
 
 ---
@@ -316,6 +293,15 @@ RingTurn 使用 LangGraph 定义状态机工作流，支持：
 ### 5.1 节点处理器映射
 
 ```python
+# app/agent/nodes/__init__.py
+from .fetch_source import fetch_source_node
+from .analyze_structure import analyze_structure_node
+from .extract_melody import extract_melody_node
+from .generate_midi import generate_midi_node
+from .arrange import arrange_node
+from .render import render_node
+from .check_quality import check_quality_node
+
 NODE_HANDLERS = {
     TaskStep.FETCH_SOURCE.value: fetch_source_node,
     TaskStep.ANALYZE_STRUCTURE.value: analyze_structure_node,
@@ -329,15 +315,15 @@ NODE_HANDLERS = {
 
 ### 5.2 各节点职责
 
-| 节点 | 子 Agent 工具 | 说明 |
-|------|--------------|------|
-| `fetch_source_node` | - | 验证上传文件，初始化 audio_path |
-| `analyze_structure_node` | get_bpm, get_key, get_spectral_centroid, get_rms_energy, extract_chord_progression, detect_instruments | 提取 BPM、调性、和弦、乐器等 |
-| `extract_melody_node` | extract_melody_basic_pitch, extract_melody_librosa, filter_short_notes, quantize_notes | 提取主旋律音符 |
-| `generate_midi_node` | create_midi_from_notes | 从音符生成 MIDI |
-| `arrange_node` | change_instrument, change_tempo, quantize_midi | 更换乐器、调整速度 |
-| `render_node` | render_midi_with_fluidsynth, convert_wav_to_mp3, smart_clip_audio | 渲染并截取 |
-| `check_quality_node` | evaluate_overall_quality | 综合质量评估 |
+| 节点 | 文件 | 子 Agent 工具 | 说明 |
+|------|------|--------------|------|
+| `fetch_source_node` | `fetch_source.py` | - | 验证上传文件，初始化 audio_path |
+| `analyze_structure_node` | `analyze_structure.py` | get_bpm, get_key, get_spectral_centroid, get_rms_energy, extract_chord_progression, detect_instruments | 提取 BPM、调性、和弦、乐器等 |
+| `extract_melody_node` | `extract_melody.py` | extract_melody_basic_pitch, extract_melody_librosa, filter_short_notes, quantize_notes | 提取主旋律音符 |
+| `generate_midi_node` | `generate_midi.py` | create_midi_from_notes | 从音符生成 MIDI |
+| `arrange_node` | `arrange.py` | change_instrument, change_tempo, quantize_midi | 更换乐器、调整速度 |
+| `render_node` | `render.py` | render_midi_with_fluidsynth, convert_wav_to_mp3, smart_clip_audio | 渲染并截取 |
+| `check_quality_node` | `check_quality.py` | evaluate_overall_quality | 综合质量评估 |
 
 ### 5.3 子 Agent Prompt 设计
 

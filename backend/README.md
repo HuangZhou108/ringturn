@@ -111,18 +111,20 @@ backend/
 │   ├── agent/               # Agent核心模块
 │   │   ├── state.py         # Agent状态定义
 │   │   ├── graph.py         # LangGraph工作流
-│   │   ├── nodes.py         # 各节点处理逻辑 + 处理器映射
 │   │   ├── agent_executor.py # Agent执行器
 │   │   ├── callbacks.py     # LangChain回调处理器
 │   │   ├── thinking_utils.py # 思考记录工具
-│   │   ├── tools.py         # 工具网关（parse_user_request）
-│   │   └── atomic_tools/    # 原子工具集
-│   │       ├── analysis/    # 音频分析工具（BPM、调性、和弦等）
-│   │       ├── melody/     # 旋律提取工具
-│   │       ├── midi/       # MIDI处理工具
-│   │       ├── arrangement/ # 改编工具
-│   │       ├── rendering/   # 渲染工具
-│   │       └── quality/    # 质量评估工具
+│   │   └── nodes/           # 节点处理器（拆分后的模块）
+│   │       ├── __init__.py  # 导出节点 + NODE_HANDLERS
+│   │       ├── _helpers.py  # 辅助函数
+│   │       ├── fetch_source.py
+│   │       ├── analyze_structure.py
+│   │       ├── extract_melody.py
+│   │       ├── generate_midi.py
+│   │       ├── arrange.py
+│   │       ├── render.py
+│   │       └── check_quality.py
+│   └── atomic_tools/    # 原子工具集
 │   ├── services/            # 业务服务
 │   │   └── file_service.py  # 文件上传/下载
 │   └── db/                   # 数据库相关
