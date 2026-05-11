@@ -165,10 +165,10 @@ pip install utmos
 
 ```env
 # ============ LLM配置 ============
-OPENAI_API_KEY=sk-xxx
-OPENAI_MODEL=gpt-4
+LLM_API_KEY=sk-xxx
+LLM_MODEL=gpt-4
 # 可选：自定义API端点
-# OPENAI_BASE_URL=https://your-api-endpoint
+# LLM_BASE_URL=https://your-api-endpoint
 
 # ============ 音频分析 ============
 # ChordMini服务地址（如自托管）
@@ -255,8 +255,8 @@ A: 修改 `app/agent/tools.py` 中的 `ToolGateway` 类方法，将Mock逻辑替
 **Q: 音色库文件在哪里下载？**
 A: 见 `SOUNDFONTS.md` 文档。
 
-**Q: 如何配置OpenAI兼容的第三方API？**
-A: 在 `.env` 中设置 `OPENAI_BASE_URL` 为API地址，`OPENAI_API_KEY` 为密钥。
+**Q: 如何配置LLM API？**
+A: 在 `.env` 中设置 `LLM_BASE_URL` 为API地址，`LLM_API_KEY` 为密钥。
 
 **Q: 用户系统如何扩展？**
 A: 参考 `app/services/user_service.py`，添加登录认证模块。

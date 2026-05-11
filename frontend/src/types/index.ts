@@ -22,11 +22,8 @@ export interface CreateTaskRequest {
     user_request: string
     source_type?: SourceType
     source_value?: string
-    // 铃声参数
-    instrument?: string
-    duration?: number
-    tempo?: number
-    filename?: string
+    // 铃声参数，使用动态参数
+    params?: Record<string, any>;
 }
 
 // 任务创建响应
@@ -122,4 +119,19 @@ export interface UploadResult {
     format: string
     duration: number
     created_at: string
+}
+
+// 聊天消息类型
+export interface Message {
+    id: string;
+    type: 'ai' | 'user';
+    content?: string;
+    deepThinking?: string;
+    fileName?: string;
+    fileInfo?: string;
+    userFile?: string;
+    audioFileId?: string;
+    taskId?: string;
+    thinkingProcess?: { step: string; content: string; timestamp: string }[];
+    showThinking?: boolean;
 }

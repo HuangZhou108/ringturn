@@ -12,6 +12,32 @@
     }
 }
 
+/* 页面进入动画：淡入 + 向上移动 20px -> 原位 */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 应用于页面最外层容器的动画 */
+.page-enter {
+    animation: fadeInUp 0.5s ease-out forwards;
+}
+
+/* 可选的子元素逐个出现（添加延迟） */
+.welcome-text {
+    animation: fadeInUp 0.5s ease-out 0.1s both;
+}
+
+.welcome-subtitle {
+    animation: fadeInUp 0.5s ease-out 0.2s both;
+}
+
 /*:root {*/
 /*  --text: #6b6375;*/
 /*  --text-h: #08060d;*/

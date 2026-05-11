@@ -25,10 +25,10 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
     BASE_URL: str = "http://localhost:8000"
 
-    # OpenAI (用于Agent推理)
-    OPENAI_API_KEY: str = ""
-    OPENAI_MODEL: str = "gpt-4"
-    OPENAI_BASE_URL: str = ""  # 可选，用于自定义API端点
+    # LLM参数 (用于Agent推理)
+    LLM_API_KEY: str = ""
+    LLM_MODEL: str = "gpt-4"
+    LLM_BASE_URL: str = ""  # 可选，用于自定义API端点
 
     # 音频分析API
     CHORDMINI_URL: str = "http://localhost:8001"  # ChordMini服务地址

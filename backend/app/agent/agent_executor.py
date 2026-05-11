@@ -7,12 +7,14 @@ Agent执行器
 import asyncio
 from datetime import datetime
 from sqlalchemy.orm import Session
+from app.db.session import SessionLocal
 
 from app.agent.state import AgentState, TaskStep
-from app.agent.tools import tool_gateway
 from app.agent.nodes import NODE_HANDLERS
 from app.db.session import SessionLocal
 from app.models import Task as TaskModel, TaskStatus
+from .thinking_utils import record_thought
+from app.agent.tools import tool_gateway
 
 class RingtoneParams:
     """铃声参数"""
@@ -25,6 +27,8 @@ class RingtoneParams:
         self.filename = params.get("filename", "ringtone")
         # 文件ID（从 source_value 获取，当有上传文件时）
         self.file_id = task.source_value
+        # 额外保存所有原始参数，供语义解析使用
+        self.raw_params = params
 
 class AgentExecutor:
     """Agent执行器"""
@@ -108,6 +112,8 @@ class AgentExecutor:
             }
 
         except Exception as e:
+            if self.task.status == TaskStatus.cancelled:
+                return {"success": False, "reason": "cancelled"}
             await self._update_task_status(TaskStatus.failed)
             self.task.error_message = str(e)
             self.db.commit()
@@ -180,15 +186,34 @@ class AgentExecutor:
         from app.services.llm_service import llm_service
 
         user_request = self.state.get("user_request", "")
+        ringtone_params = self.ringtone_params.raw_params
+
+        # 构造参数提示块
+        param_desc = ""
+        if ringtone_params:
+            param_desc = "\n用户指定了以下参数：\n"
+            for k, v in ringtone_params.items():
+                param_desc += f"- {k}: {v}\n"
+
+        full_prompt = f"{user_request}\n{param_desc}\n请根据用户需求和参数约束生成执行计划。用户输入文字内容需求优先级高于参数。"
 
         # 调用LLM生成计划
         self._add_thinking_step("规划", f"分析用户需求: {user_request[:50]}...")
-        plan = await llm_service.generate_plan(user_request)
+        plan = await llm_service.generate_plan(full_prompt)
         self._add_thinking_step("规划", f"生成执行计划: {' → '.join(plan)}")
 
         self.state["plan"] = plan
         self.task.plan = plan
         self.db.commit()
+
+        normalized_plan = []
+        for item in plan:
+            if isinstance(item, dict) and "step" in item:
+                normalized_plan.append(item["step"])
+            else:
+                normalized_plan.append(item)
+        self.state["plan"] = normalized_plan
+        self.task.plan = normalized_plan
 
     async def _execute_steps(self) -> None:
         """
@@ -198,6 +223,10 @@ class AgentExecutor:
         total_steps = len(plan)
 
         for idx, step_name in enumerate(plan):
+            # 检查任务是否已被取消
+            self.db.refresh(self.task)
+            if self.task.status == TaskStatus.cancelled:
+                return  # 直接结束执行
             self.state["current_step_index"] = idx
             self.state["current_step"] = step_name
 
@@ -215,10 +244,21 @@ class AgentExecutor:
 
                 # 检查反思结果
                 if step_name == TaskStep.CHECK_QUALITY.value:
-                    if self.state.get("needs_revision"):
-                        # 质量不达标，尝试优化
-                        # 这里可以添加自动优化逻辑
-                        pass
+                    max_retries = 2
+                    retry_count = 0
+                    while self.state.get("needs_revision") and retry_count < max_retries:
+                        retry_count += 1
+                        self._add_thinking_step("retry", f"质量不达标，第{retry_count}次重试")
+                        # 根据反思建议调整参数（从 reflection 中提取）
+                        reflection = self.state.get("reflection", {})
+                        adjustments = reflection.get("adjustments", {})
+                        if adjustments.get("tempo_delta"):
+                            new_tempo = self.state["tempo"] + adjustments["tempo_delta"]
+                            self.state["tempo"] = max(60, min(200, new_tempo))
+                        # 重新执行 arrange 和 render
+                        await self._execute_step(TaskStep.ARRANGE.value)
+                        await self._execute_step(TaskStep.RENDER.value)
+                        await self._execute_step(TaskStep.CHECK_QUALITY.value)
 
             except Exception as e:
                 # 记录错误
@@ -234,37 +274,73 @@ class AgentExecutor:
         self.task.audio_duration = self.state.get("audio_duration")
         self.db.commit()
 
-    async def _execute_step(self, step: str) -> None:
-        """
-        执行单个步骤
+    # async def _execute_step(self, step: str) -> None:
+    #     """
+    #     执行单个步骤
 
-        Args:
-            step: 步骤名称
-        """
+    #     Args:
+    #         step: 步骤名称
+    #     """
+    #     # 新增：步骤前工具可用性检查
+    #     from app.agent.tools import tool_gateway
+    #     step_tool_map = {
+    #         "analyze_structure": "librosa",   # 或 chordmini
+    #         "extract_melody": "basic_pitch",
+    #         "render": "fluidsynth",
+    #     }
+    #     if step in step_tool_map:
+    #         try:
+    #             await tool_gateway.ensure_tool_available(step_tool_map[step])
+    #         except RuntimeError as e:
+    #             raise RuntimeError(f"步骤 {step} 所需工具不可用: {e}")
+
+    #     handler = NODE_HANDLERS.get(step)
+    #     if not handler:
+    #         raise ValueError(f"未知步骤: {step}")
+
+    #     try:
+    #         # 记录思考过程：开始执行
+    #         self._add_thinking_step(step, f"开始执行步骤：{step}")
+
+    #         await handler(self.state, self.db, tool_gateway)
+
+    #         # 记录节点内的思考过程（如果存在）
+    #         if self.state.get("_thinking"):
+    #             self._add_thinking_step(step, self.state["_thinking"])
+    #             del self.state["_thinking"]
+
+    #         # 记录思考过程：完成
+    #         self._add_thinking_step(step, f"步骤 {step} 执行完成")
+
+    #     except Exception as e:
+    #         # 即使失败也要记录思考过程
+    #         self._add_thinking_step(step, f"步骤 {step} 执行失败: {str(e)}")
+    #         raise
+
+    #     self.db.commit()
+
+    async def _execute_step(self, step: str) -> None:
         handler = NODE_HANDLERS.get(step)
         if not handler:
             raise ValueError(f"未知步骤: {step}")
-
-        try:
-            # 记录思考过程：开始执行
-            self._add_thinking_step(step, f"开始执行步骤：{step}")
-
-            await handler(self.state, self.db, tool_gateway)
-
-            # 记录节点内的思考过程（如果存在）
-            if self.state.get("_thinking"):
-                self._add_thinking_step(step, self.state["_thinking"])
-                del self.state["_thinking"]
-
-            # 记录思考过程：完成
-            self._add_thinking_step(step, f"步骤 {step} 执行完成")
-
-        except Exception as e:
-            # 即使失败也要记录思考过程
-            self._add_thinking_step(step, f"步骤 {step} 执行失败: {str(e)}")
-            raise
-
-        self.db.commit()
+        max_attempts = 3
+        last_error = None
+        for attempt in range(max_attempts):
+            try:
+                self._add_thinking_step(step, f"开始执行步骤：{step} (第{attempt+1}次尝试)")
+                await handler(self.state, self.db, None)
+                self._add_thinking_step(step, f"步骤 {step} 执行完成")
+                return
+            except Exception as e:
+                last_error = e
+                if attempt < max_attempts - 1:
+                    # 将错误信息反馈给状态，供 handler 内部的重试逻辑使用
+                    self.state["last_error"] = str(e)
+                    self._add_thinking_step(step, f"步骤 {step} 失败: {e}，准备重试")
+                    # handler 的设计应该能够利用 last_error 调整行为
+                    continue
+                self._add_thinking_step(step, f"步骤 {step} 执行最终失败: {e}")
+                raise
 
     async def _update_task_status(self, status: TaskStatus) -> None:
         """更新任务状态"""
@@ -275,6 +351,8 @@ class AgentExecutor:
     def _add_thinking_step(self, step: str, content: str) -> None:
         """添加思考步骤"""
         # 创建新的列表对象，避免 SQLAlchemy 追踪问题
+        # 从数据库重新加载最新数据，避免覆盖回调写入的内容
+        self.db.refresh(self.task)
         current_steps = list(self.task.thinking_process or [])
         current_steps.append({
             "step": step,
