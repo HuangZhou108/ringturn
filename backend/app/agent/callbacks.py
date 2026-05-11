@@ -48,7 +48,7 @@ class ThinkingCallbackHandler(AsyncCallbackHandler):
         #                     f"[LLM思考] {text[:500]}"
         #                 )
         print(f"[CALLBACK DEBUG] on_chat_model_end triggered for task={self.task_id}, step={self.step_name}")
-        await self.on_llm_end(response, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
+        pass
 
     async def on_llm_end(
         self,
