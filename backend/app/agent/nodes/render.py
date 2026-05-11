@@ -122,6 +122,31 @@ async def render_node(state: AgentState, db: Session, tools) -> None:
         record_thought(task_id, "render", f"截取失败: {e}")
         raise RuntimeError(f"音频截取出错: {e}")
 
+    # ---- 步骤4: 音量增强（使用 ffmpeg 响度归一化） ----
+    record_thought(task_id, "render", "正在调整最终音频音量...")
+    try:
+        import subprocess
+        import shutil
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            record_thought(task_id, "render", "ffmpeg 不可用，跳过音量增强")
+        else:
+            temp_mp3 = mp3_path + ".tmp.mp3"
+            # EBU R128 响度归一化，目标 -16 LUFS，峰值限制 -1.5 dBFS
+            cmd = [
+                ffmpeg, "-i", mp3_path,
+                "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                "-c:a", "libmp3lame", "-b:a", "192k",
+                temp_mp3
+            ]
+            subprocess.run(cmd, check=True, capture_output=True)
+            # 替换原文件
+            Path(temp_mp3).replace(mp3_path)
+            record_thought(task_id, "render", "音量调整完成（EBU 响度归一化）")
+    except Exception as e:
+        record_thought(task_id, "render", f"音量增强失败(不影响结果): {e}")
+        # 即使增益失败，之前的 mp3 仍然可用（已有截取后的音频）
+
     # ---- 更新状态 ----
     state["final_audio_path"] = mp3_path
     state["audio_duration"] = actual_duration

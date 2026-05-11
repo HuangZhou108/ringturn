@@ -19,11 +19,12 @@ async def extract_melody_basic_pitch(audio_path: str, output_midi_path: str | No
         - 从人声或乐器单轨提取主旋律
     """
     from basic_pitch.inference import predict
+    # 你可以自行调整一下3个参数以获得最佳效果，3个参数效果分别为：提高过滤弱音符，提升音高检测确信度，过滤所有长度小于minimum_note_length的音符
     model_output, midi_data, note_events = predict(
         audio_path=str(audio_path),
         onset_threshold=0.5,
-        frame_threshold=0.3,
-        minimum_note_length=0.5,
+        frame_threshold=0.4,
+        minimum_note_length=50,
     )
     melody_notes = []
     for start, end, pitch, velocity, _ in note_events:
