@@ -41,7 +41,7 @@ npm run dev
 ## 项目结构
 
 ```
-ringturn_frontend/
+frontend/
 ├── public/ # 静态资源
 ├── src/
 │ ├── api/
