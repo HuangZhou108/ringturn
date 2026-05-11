@@ -44,20 +44,20 @@ async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
     "midi_path": str   # 提取的 MIDI 文件路径
 }}
 **你必须严格遵守以下交互格式：**
-在每次调用任何工具之前，先输出一句中文说明，格式为：“[思考] 我接下来将使用 <工具名>，因为 <原因>。”
+在调用任何工具之前，先输出一段中文说明，格式为：“我接下来将使用 <工具名>，因为 <原因>。”
 然后调用工具。
 完成所有工具调用后，再单独输出最终的 JSON 结果。
-**绝对不要省略 `[思考]` 行！**
+最后再输出一段中文说明，总结JSON结果。
+**绝对不要省略自然语言思考内容！**
 
 示例：
-[思考] 我接下来将使用 extract_melody_basic_pitch，因为它是精度最高的深度学习模型。
+我接下来将使用 extract_melody_basic_pitch，因为它是精度最高的深度学习模型；将使用 filter_short_notes，因为需要去除过短的杂音音符，以保证音乐质量；最后将使用 quantize_notes，因为需要将音符对齐到节拍网格。。
 （随后调用 extract_melody_basic_pitch 工具）
-[思考] 我接下来将使用 filter_short_notes，因为需要去除过短的杂音音符。
 （随后调用 filter_short_notes 工具，并传入上一步得到的音符列表）
-[思考] 我接下来将使用 quantize_notes，因为需要将音符对齐到节拍网格。
 （随后调用 quantize_notes 工具）
 最终 JSON 结果：
 {{"melody_notes": [...], "confidence": 0.8, "midi_path": "/path/to/output.mid"}}
+已完成旋律提取，共提取x个音符。
 """
 
     llm = get_llm()

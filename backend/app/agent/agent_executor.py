@@ -14,6 +14,7 @@ from app.agent.nodes import NODE_HANDLERS
 from app.db.session import SessionLocal
 from app.models import Task as TaskModel, TaskStatus
 from .thinking_utils import record_thought
+from app.agent.tools import tool_gateway
 
 class RingtoneParams:
     """铃声参数"""

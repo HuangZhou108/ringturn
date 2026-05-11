@@ -23,7 +23,7 @@ async def extract_melody_basic_pitch(audio_path: str, output_midi_path: str | No
         audio_path=str(audio_path),
         onset_threshold=0.5,
         frame_threshold=0.3,
-        minimum_note_length=127.7,
+        minimum_note_length=0.5,
     )
     melody_notes = []
     for start, end, pitch, velocity, _ in note_events:

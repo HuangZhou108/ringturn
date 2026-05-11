@@ -10,6 +10,7 @@ from app.agent.state import (
 )
 from app.agent.nodes import NODE_HANDLERS
 from app.agent.agent_executor import AgentExecutor
+from app.agent.tools import tool_gateway
 
 __all__ = [
     "AgentState",

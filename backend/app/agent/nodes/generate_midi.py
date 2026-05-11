@@ -4,6 +4,7 @@ from app.agent.state import AgentState
 from app.core.config import get_settings
 from app.agent.atomic_tools.midi.create_from_notes import create_midi_from_notes
 import mido
+import shutil
 settings = get_settings()
 
 async def generate_midi_node(state: AgentState, db: Session, tools) -> None:
@@ -24,11 +25,18 @@ async def generate_midi_node(state: AgentState, db: Session, tools) -> None:
 
     # 直接调用工具函数，避免LLM token限制导致失败
     from app.agent.atomic_tools.midi.create_from_notes import create_midi_from_notes
-    await create_midi_from_notes(
-        notes=melody_data.get("melody_notes", []),
-        bpm=analysis_result.get("bpm", 120),
-        output_path=output_path
-    )
+    # 检查旋律提取是否已生成 MIDI
+    existing_midi = melody_data.get("midi_path")
+    if existing_midi and Path(existing_midi).exists():
+        # 直接复制或移动已有的 MIDI 到目标路径
+        shutil.copy(existing_midi, output_path)
+    else:
+        # 降级：重新生成
+        await create_midi_from_notes(
+            notes=melody_data.get("melody_notes", []),
+            bpm=analysis_result.get("bpm", 120),
+            output_path=output_path
+        )
     
     # 验证文件是否生成成功
     output_path_obj = Path(output_path)

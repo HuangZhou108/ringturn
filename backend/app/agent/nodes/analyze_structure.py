@@ -35,6 +35,7 @@ async def analyze_structure_node(state: AgentState, db: Session, tools) -> None:
 {', '.join([t.name for t in step_tools])}
 
 请根据用户需求，决定需要提取哪些特征。依次调用必要的工具。
+要成功改编一首歌，你至少要知道歌曲速度和其所使用的乐器。
 完成所有调用后，请输出一个 JSON 对象，包含以下字段（如果某个特征未提取，可以省略或设为 null）：
 {{
     "bpm": float,
@@ -45,18 +46,19 @@ async def analyze_structure_node(state: AgentState, db: Session, tools) -> None:
     "instruments": list[str]
 }}
 **你必须严格遵守以下交互格式：**
-在每次调用任何工具之前，先输出一句中文说明，格式为：“[思考] 我接下来将使用 <工具名>，因为 <原因>。”
+在调用任何工具之前，先输出一段中文说明，包括你接下来要使用的所有工具以及你使用这些工具的原因。
 然后调用工具。
 完成所有工具调用后，再单独输出最终的 JSON 结果。
-**绝对不要省略 `[思考]` 行！**
+最后用一句话的中文说明总结你所得到的结果。
+**绝对不要省略自然语言思考内容！**
 
 示例：
-[思考] 我接下来将使用 get_bpm，因为需要知道歌曲速度。
+我接下来将使用 get_bpm，因为需要知道歌曲速度。我接下来将使用 get_key，因为需要确定调性以便后续改编。
 （随后调用 get_bpm 工具）
-[思考] 我接下来将使用 get_key，因为需要确定调性以便后续改编。
 （随后调用 get_key 工具）
 最终 JSON 结果：
 {{"bpm": 120, "key": "C Major", ...}}
+我们分析得到歌曲bpm未120，所使用调性未C大调。
 """
 
     llm = get_llm()
