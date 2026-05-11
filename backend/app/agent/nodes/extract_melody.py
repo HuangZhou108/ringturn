@@ -11,6 +11,7 @@ from app.agent.atomic_tools.melody import (
     extract_melody_librosa_tool,
     filter_short_notes_tool,
     quantize_notes_tool,
+    separate_vocals_tool,
 )
 from ..callbacks import ThinkingCallbackHandler
 
@@ -27,6 +28,7 @@ async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
         extract_melody_librosa_tool,       # 备选
         filter_short_notes_tool,
         quantize_notes_tool,
+        separate_vocals_tool,
     ]
     system_prompt = f"""你是一个旋律提取专家。请从音频文件 `{audio_path}` 中提取主旋律。
 你可以使用工具：
@@ -34,10 +36,12 @@ async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
 - extract_melody_librosa: 提取音符列表并生成 MIDI（仅当 Basic Pitch 失败或返回空结果时作为备用）
 - filter_short_notes: 过滤短音符（需提供音符列表和最小时长）
 - quantize_notes: 量化音符（需提供音符列表、网格大小、BPM）
+- separate_vocals_tool：分离人声，为音频提取提供更好的原料。
 
 用户需求：{state["user_request"]}
 
 **关键规则（必须严格遵守）**：
+0. **首先必须调用 separate_vocals 工具分离人声，然后使用分离后的人声文件路径进行后续操作。**
 1. **首先必须调用 extract_melody_basic_pitch**。
 2. **如果 extract_melody_basic_pitch 返回了 melody_notes 且长度大于 0，则必须立即输出最终 JSON，绝对不能调用 extract_melody_librosa 或任何其他工具。**
 3. 仅在 extract_melody_basic_pitch 失败（返回空 melody_notes 或出错）时，才允许调用 extract_melody_librosa 作为备用。

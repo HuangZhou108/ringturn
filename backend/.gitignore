@@ -79,3 +79,5 @@ htmlcov/
 *.temp
 
 soundfonts/
+
+debug_melody.py
