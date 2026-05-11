@@ -110,10 +110,19 @@ backend/
 │   │           └── health.py # 健康检查
 │   ├── agent/               # Agent核心模块
 │   │   ├── state.py         # Agent状态定义
-│   │   ├── tools.py         # 工具调用网关
-│   │   ├── nodes.py         # 各节点处理逻辑
 │   │   ├── graph.py         # LangGraph工作流
-│   │   └── agent_executor.py # Agent执行器
+│   │   ├── nodes.py         # 各节点处理逻辑 + 处理器映射
+│   │   ├── agent_executor.py # Agent执行器
+│   │   ├── callbacks.py     # LangChain回调处理器
+│   │   ├── thinking_utils.py # 思考记录工具
+│   │   ├── tools.py         # 工具网关（parse_user_request）
+│   │   └── atomic_tools/    # 原子工具集
+│   │       ├── analysis/    # 音频分析工具（BPM、调性、和弦等）
+│   │       ├── melody/     # 旋律提取工具
+│   │       ├── midi/       # MIDI处理工具
+│   │       ├── arrangement/ # 改编工具
+│   │       ├── rendering/   # 渲染工具
+│   │       └── quality/    # 质量评估工具
 │   ├── services/            # 业务服务
 │   │   └── file_service.py  # 文件上传/下载
 │   └── db/                   # 数据库相关
@@ -170,18 +179,38 @@ class AgentState(TypedDict):
 | `render` | 音频渲染 | MIDI转音频 |
 | `quality_check` | 质量检查 | 评估生成质量 |
 
+#### 工具层（atomic_tools/）
+
+原子工具按功能分组，通过 LangChain `@tool` 装饰器定义：
+
+```python
+# 分析工具
+get_bpm_tool, get_key_tool, extract_chord_progression_tool, detect_instruments_tool, ...
+
+# 旋律工具
+extract_melody_basic_pitch_tool, extract_melody_librosa_tool, quantize_notes_tool, ...
+
+# MIDI工具
+create_midi_from_notes_tool, validate_midi_file_tool
+
+# 改编工具
+change_instrument_tool, change_tempo_tool, quantize_midi_tool
+
+# 渲染工具
+render_midi_with_fluidsynth_tool, convert_wav_to_mp3_tool, smart_clip_audio_tool
+
+# 质量工具
+evaluate_overall_quality_tool, loudness_check_tool, dynamic_range_tool, ...
+```
+
 #### 工具网关（tools.py）
 
-统一封装外部API调用：
+`ToolGateway` 类提供辅助方法：
 
 ```python
 class ToolGateway:
-    async def analyze_audio_structure(audio_path) -> dict
-    async def extract_melody(audio_path) -> dict
-    async def generate_midi(melody_data, analysis, output_path) -> str
-    async def arrange_instrument(midi_path, instruments, style, output) -> str
-    async def render_audio(midi_path, instruments, output, duration) -> str
-    async def check_quality(audio_path, reference=None) -> dict
+    async def parse_user_request(user_request) -> dict  # 解析用户需求
+    async def ensure_tool_available(tool_name) -> None  # 检查工具可用性
 ```
 
 ### 2. 任务状态机（models/__init__.py）
@@ -358,60 +387,70 @@ curl http://localhost:8000/api/v1/tasks/{task_id}/result
 
 ## 后续开发
 
-### 待实现功能
+### 已实现功能
 
-1. **音频分析API接入**
-   - ChordMini: 和弦/BPM检测
-   - Essentia/Beatlyze: 音乐特征提取
+1. **音频分析** ✅
+   - librosa 本地分析（BPM、调性、频谱特征）
+   - FluidSynth: MIDI转WAV音频 ✅
 
-2. **MIDI生成接入**
-   - Basic Pitch (Spotify)
-   - 字节跳动钢琴转录
+2. **旋律提取** ✅
+   - Basic Pitch (Spotify) 深度学习模型
+   - librosa 峰值检测（降级方案）
 
-3. **乐器改编模型**
+3. **MIDI处理** ✅
+   - 从音符生成MIDI
+   - 乐器更换、速度调整、量化
+
+4. **质量评估** ✅
+   - 响度检查、动态范围、频谱平衡、过零率
+
+5. **WebSocket实时流** ✅
+   - Agent思考过程实时推送（`app/api/v1/websocket/chat.py`）
+
+### 待扩展功能
+
+1. **高级音频分析API**
+   - ChordMini: 和弦/BPM检测（可选接入）
+   - Essentia: 更多音乐特征提取
+
+2. **乐器改编模型**
    - MuseMorphose: 钢琴风格迁移
    - Groove2Groove: 伴奏风格迁移
 
-4. **音频渲染**
-   - FluidSynth: MIDI转音频
-
-5. **质量评估**
-   - speechmetrics / UTMOS
-
-6. **WebSocket实时流**
-   - Agent思考过程可视化
-
-7. **用户系统**
+3. **用户系统**
    - 登录认证
    - 偏好存储
    - 历史记录
 
 ### 添加新工具
 
-在 `app/agent/tools.py` 的 `ToolGateway` 类中添加方法：
+在 `app/agent/atomic_tools/<category>/` 目录下创建工具文件：
 
 ```python
-async def your_new_tool(self, params) -> dict:
-    """新工具说明"""
-    # TODO: 接入真实API
-    return {"mock": "result"}
+# app/agent/atomic_tools/analysis/my_tool.py
+from langchain_core.tools import tool
+
+@tool
+def my_analysis_tool(audio_path: str) -> dict:
+    """我的分析工具"""
+    # 实现逻辑
+    return {"result": "value"}
 ```
 
-然后在 `app/agent/nodes.py` 中创建对应节点处理器。
+然后在对应目录的 `__init__.py` 中导出，在 `nodes.py` 中引入使用。
 
-## 开发规范
+### 添加新Agent节点
+
+1. 在 `app/agent/state.py` 的 `TaskStep` 枚举添加步骤
+2. 在 `app/agent/nodes.py` 实现节点处理器
+3. 在 `nodes.py` 的 `NODE_HANDLERS` 映射中注册
+4. 在 `app/agent/graph.py` 中连接节点
 
 ### 添加新API
 
 1. 在 `app/schemas/` 添加Pydantic模型
 2. 在 `app/api/v1/endpoints/` 添加路由
 3. 在 `app/api/v1/__init__.py` 注册路由
-
-### 添加新Agent节点
-
-1. 在 `app/agent/state.py` 的 `TaskStep` 枚举添加步骤
-2. 在 `app/agent/nodes.py` 实现节点逻辑
-3. 在 `app/agent/agent_executor.py` 添加执行逻辑
 
 ### 数据库迁移
 
@@ -425,5 +464,5 @@ A: 确保在 `backend/` 目录下执行，或使用 `PYTHONPATH=. python -m app.
 **Q: 数据库被锁定**
 A: SQLite WAL模式已启用，减少并发写入可解决
 
-**Q: 工具调用返回Mock数据**
-A: 当前所有工具都是Mock实现，需要接入真实API
+**Q: FluidSynth 渲染失败**
+A: 确保已安装 FluidSynth 并配置 `SOUNDFONT_PATH`，参考 README 中的安装说明
