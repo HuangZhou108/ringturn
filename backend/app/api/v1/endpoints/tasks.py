@@ -59,13 +59,22 @@ async def create_task(
         # 生成任务ID
         task_id = str(uuid.uuid4())
 
-        # 铃声参数（存储在单独字段）
+        # 从 params 中提取已知参数，未提供则使用默认值
+        params = request.params or {}
+        instrument = params.get("instrument", "Acoustic Piano")
+        duration = params.get("duration", 30)
+        tempo = params.get("tempo", 120)
+        filename = params.get("filename", "Untitled_Track")
         ringtone_params = {
-            "instrument": request.instrument,
-            "duration": request.duration,
-            "tempo": request.tempo,
-            "filename": request.filename,
+        "instrument": instrument,
+        "duration": duration,
+        "tempo": tempo,
+        "filename": filename,
         }
+        # 如果将来有额外参数，一并保留
+        for k, v in params.items():
+            if k not in ringtone_params:
+                ringtone_params[k] = v
 
         # 创建任务记录
         task = TaskModel(

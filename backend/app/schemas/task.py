@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Literal, Optional
+from typing import Literal, Optional, Dict, Any
 from datetime import datetime
 import json
 
@@ -20,10 +20,8 @@ class TaskCreate(BaseModel):
     source_type: Literal["upload", "search"] = "upload"
     source_value: str | None = None
     # 铃声参数
-    instrument: Optional[str] = "Acoustic Piano"
-    duration: Optional[int] = 30
-    tempo: Optional[int] = 120
-    filename: Optional[str] = "ringtone"
+    # 动态参数，包含 instrument、duration、tempo、filename 等
+    params: Optional[Dict[str, Any]] = Field(default_factory=dict, description="用户自定义参数键值对")
 
 class TaskCreateResponse(BaseModel):
     """创建任务响应"""

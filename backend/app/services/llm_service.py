@@ -29,12 +29,12 @@ class LLMService:
         self._init_client()
 
     def _init_client(self):
-        """初始化OpenAI客户端"""
-        api_key = settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY")
-        base_url = settings.OPENAI_BASE_URL or os.getenv("OPENAI_BASE_URL")
+        """初始化LLM配置"""
+        api_key = settings.LLM_API_KEY or os.getenv("LLM_API_KEY")
+        base_url = settings.LLM_BASE_URL or os.getenv("LLM_BASE_URL")
 
         if not api_key:
-            raise ValueError("OPENAI_API_KEY未配置")
+            raise ValueError("LLM_API_KEY未配置")
 
         self.client = AsyncOpenAI(
             api_key=api_key,
@@ -63,7 +63,7 @@ class LLMService:
         if not self.client:
             self._init_client()
 
-        model = model or settings.OPENAI_MODEL
+        model = model or settings.LLM_MODEL
         last_error = None
 
         for attempt in range(MAX_RETRIES):
@@ -84,7 +84,7 @@ class LLMService:
                 last_error = e
                 # 计算指数退避延迟
                 delay = min(INITIAL_RETRY_DELAY * (2 ** attempt), MAX_RETRY_DELAY)
-                print(f"[LLM RATE LIMIT] 触发限流，等待 {delay:.1f} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRIES})")
+                print(f"[LLM RATE LIMIT] 触发限流，等待 {delay:.2f} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRIES})")
                 print(f"[LLM RATE LIMIT] 错误详情: {e}")
                 await asyncio.sleep(delay)
 
@@ -259,3 +259,17 @@ class LLMService:
 
 # 全局LLM服务实例
 llm_service = LLMService()
+
+def get_llm():
+    """返回一个 LangChain 兼容的 ChatOpenAI 实例"""
+    from langchain_openai import ChatOpenAI
+    settings = get_settings()
+    return ChatOpenAI(
+        api_key=settings.LLM_API_KEY,
+        base_url=settings.LLM_BASE_URL or None,
+        model=settings.LLM_MODEL,
+        temperature=0.7,
+        max_retries=5,                # 增加重试次数
+        # retry_on=[RateLimitError],    # 仅对限流错误重试
+        # retry_delay=2,                # 初始延迟 2 秒（指数退避）
+    )

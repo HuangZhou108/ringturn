@@ -36,6 +36,8 @@ ENV/
 *.db
 *.sqlite
 *.sqlite3
+*.db-shm
+*.db-wal
 
 # Logs
 *.log
@@ -58,7 +60,7 @@ checkpoints.db
 
 # Model files (large, download separately)
 # models/
-# soundfonts/*.sf2
+soundfonts/*.sf2
 
 # OS
 .DS_Store
@@ -77,3 +79,5 @@ htmlcov/
 *.temp
 
 soundfonts/
+
+debug_melody.py
