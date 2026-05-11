@@ -31,18 +31,24 @@ async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
     system_prompt = f"""你是一个旋律提取专家。请从音频文件 `{audio_path}` 中提取主旋律。
 你可以使用工具：
 - extract_melody_basic_pitch: 使用深度学习模型提取旋律（推荐，精度更高）
-- extract_melody_librosa: 提取音符列表并生成 MIDI（作为basic_pitch的降级方案）
+- extract_melody_librosa: 提取音符列表并生成 MIDI（仅当 Basic Pitch 失败或返回空结果时作为备用）
 - filter_short_notes: 过滤短音符（需提供音符列表和最小时长）
 - quantize_notes: 量化音符（需提供音符列表、网格大小、BPM）
 
 用户需求：{state["user_request"]}
 
-请按顺序调用工具，最终输出一个 JSON 对象：
+**关键规则（必须严格遵守）**：
+1. **首先必须调用 extract_melody_basic_pitch**。
+2. **如果 extract_melody_basic_pitch 返回了 melody_notes 且长度大于 0，则必须立即输出最终 JSON，绝对不能调用 extract_melody_librosa 或任何其他工具。**
+3. 仅在 extract_melody_basic_pitch 失败（返回空 melody_notes 或出错）时，才允许调用 extract_melody_librosa 作为备用。
+4. 不要重复调用同一个提取工具。
+最终输出 JSON 格式：
 {{
     "melody_notes": list[dict],  # 每个音符 {{"pitch": int, "start": float, "end": float, "velocity": int, "confidence": float}}
     "confidence": float,
-    "midi_path": str   # 提取的 MIDI 文件路径
+    "midi_path": str            # 提取的 MIDI 文件路径
 }}
+
 **你必须严格遵守以下交互格式：**
 在调用任何工具之前，先输出一段中文说明，格式为：“我接下来将使用 <工具名>，因为 <原因>。”
 然后调用工具。
@@ -67,10 +73,34 @@ async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
         {"messages": [SystemMessage(content=system_prompt), HumanMessage(content="开始提取旋律。")]},
         config={"callbacks": [callback]}
     )
+    # 解析结果
     try:
         melody_data = json.loads(resp["messages"][-1].content)
-    except:
-        # 降级：直接调用基础提取
-        from app.agent.atomic_tools.melody.extract_with_librosa import extract_melody_librosa
-        melody_data = await extract_melody_librosa(audio_path)
+        print(f"[extract_melody] LLM 返回 melody_data: {melody_data}")
+    except Exception as e:
+        print(f"[WARN] JSON 解析失败: {e}，启用降级逻辑")
+        melody_data = None
+
+    # 降级/覆盖保护逻辑
+    if not melody_data or not melody_data.get("melody_notes"):
+        print("[WARN] 子 Agent 未返回有效 melody_notes，尝试直接调用 Basic Pitch 降级...")
+        try:
+            from app.agent.atomic_tools.melody.extract_with_basic_pitch import extract_melody_basic_pitch
+            melody_data = await extract_melody_basic_pitch(audio_path)
+            print(f"[降级] Basic Pitch 降级成功，音符数: {len(melody_data['melody_notes'])}")
+        except Exception as bp_err:
+            print(f"[ERROR] Basic Pitch 降级失败: {bp_err}，使用 librosa 降级")
+            from app.agent.atomic_tools.melody.extract_with_librosa import extract_melody_librosa
+            melody_data = await extract_melody_librosa(audio_path)
+
+    # 确保 meloy_data 包含 midi_path
+    if "midi_path" not in melody_data:
+        # 尝试从 Basic Pitch 结果中提取（从工具返回可能已丢失，此时从常见位置推断）
+        import os
+        possible_midi = audio_path.replace(".mp3", "_melody.mid").replace(".wav", "_melody.mid")
+        if os.path.exists(possible_midi):
+            melody_data["midi_path"] = possible_midi
+        else:
+            melody_data["midi_path"] = ""  # 后续 generate_midi 会重建
+
     state["melody_data"] = melody_data

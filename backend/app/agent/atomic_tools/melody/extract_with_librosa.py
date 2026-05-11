@@ -100,6 +100,7 @@ async def extract_melody_librosa(
     pm.instruments.append(instrument)
     pm.write(output_midi_path)
 
+    print(f"[DEBUG Librosa] 提取完成，音符数: {len(melody_notes)}，midi_path: {output_midi_path}")
     # 5. 返回与原来一致的数据结构
     return {
         "melody_notes": melody_notes,

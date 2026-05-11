@@ -39,6 +39,8 @@ async def extract_melody_basic_pitch(audio_path: str, output_midi_path: str | No
     Path(output_midi_path).parent.mkdir(parents=True, exist_ok=True)
     midi_data.write(output_midi_path)
     
+    print(f"[DEBUG Basic Pitch] 提取完成，音符数: {len(melody_notes)}，midi_path: {output_midi_path}")
+    print(f"[DEBUG Basic Pitch] 前5个音符: {melody_notes[:5]}")
     return {
         "melody_notes": melody_notes,
         "confidence": float(model_output.get("average_note_confidence", 0.8)) if model_output else 0.8,
