@@ -200,6 +200,24 @@ class AgentExecutor:
         # 调用LLM生成计划
         self._add_thinking_step("规划", f"分析用户需求: {user_request[:50]}...")
         plan = await llm_service.generate_plan(full_prompt)
+
+        thoughts_prompt = (
+            f"用户想要将一首歌曲改编为手机铃声。需求：{user_request}。"
+            f"参数：{param_desc if param_desc else '无'}。"
+            "请你用简短的自然语言描述一下你会如何改编，比如选择什么乐器、调整速度、截取片段等。"
+            "不要输出 JSON，只用中文描述。"
+        )
+        try:
+            thinking_msg = await llm_service.chat(
+                [{"role": "user", "content": thoughts_prompt}],
+                temperature=0.7,
+                max_tokens=200,
+            )
+            self._add_thinking_step("规划", thinking_msg)
+        except Exception:
+            # LLM 调用失败不影响主流程
+            self._add_thinking_step("规划", "根据用户需求自动生成改编计划。")
+
         self._add_thinking_step("规划", f"生成执行计划: {' → '.join(plan)}")
 
         self.state["plan"] = plan

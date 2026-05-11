@@ -6,6 +6,7 @@ from app.services.llm_service import get_llm
 from app.agent.state import AgentState
 from app.agent.atomic_tools.quality import evaluate_overall_quality_tool
 from ..callbacks import ThinkingCallbackHandler
+from app.agent.thinking_utils import record_thought
 
 async def check_quality_node(state: AgentState, db: Session, tools) -> None:
     """
@@ -76,6 +77,8 @@ async def check_quality_node(state: AgentState, db: Session, tools) -> None:
     if not quality.get("passed", False):
         state["needs_revision"] = True
         state["reflection"] = {"message": "质量不达标", "adjustments": {}}
+        record_thought(state["task_id"], "check_quality", "质量不达标，即将触发重试")
     else:
         state["needs_revision"] = False
+        record_thought(state["task_id"], "check_quality", "质量检查通过，无需重试")
     state["step_results"]["quality_check"] = quality
