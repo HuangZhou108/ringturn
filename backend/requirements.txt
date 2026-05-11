@@ -15,7 +15,7 @@ langchain-core>=0.3.0
 langgraph-checkpoint-sqlite>=0.1.0
 
 # Audio processing
-librosa>=0.10.0
+librosa==0.10.0
 soundfile>=0.12.0
 mido>=1.3.0  # MIDI handling
 numpy>=1.24.0
