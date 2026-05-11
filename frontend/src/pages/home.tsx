@@ -20,6 +20,7 @@ function Home() {
     const [uploadProgress, setUploadProgress] = useState<number>(0);
     const [isUploading, setIsUploading] = useState(false);
     const [toastMessage, setToastMessage] = useState<string | null>(null);
+    const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
 
     // 参数设置（与 TrackParams 共享）
     const [instrument, setInstrument] = useState('');
@@ -56,6 +57,7 @@ function Home() {
                         taskId: res.data.task_id,
                         userMessage: inputValue.trim(),
                         audioFileId: audioFileId,
+                        filename: uploadedFileName,
                         params,
                     },
                 });
@@ -98,6 +100,7 @@ function Home() {
 
             if (res.code === 200) {
                 setAudioFileId(res.data.file_id);
+                setUploadedFileName(res.data.filename);
                 setUploadSuccess(`文件已上传: ${res.data.filename} (${res.data.file_size.toFixed(2)} MB)`);
             } else {
                 setUploadError(res.message || '文件上传失败');

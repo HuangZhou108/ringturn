@@ -341,7 +341,9 @@ function ChatFlow() {
         if (params.tempo) setTempo(String(params.tempo));
         if (params.duration) setDuration(String(params.duration));
         if (params.filename) setFilename(params.filename);
-
+        if (userFilename) {
+            setUploadedFileName(userFilename);   
+        }
         // 如果是新建空对话（从“开始新对话”按钮进入）
         if (newChat) {
             // 重置消息列表为空（清空示例消息）
