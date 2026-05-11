@@ -19,12 +19,12 @@ async def arrange_node(state: AgentState, db: Session, tools) -> None:
 
     根据用户需求更换乐器、调整风格
     """
-    midi_path = state["midi_path"].replace("\\", "/")
+    midi_path = state["midi_path"]
     target_instrument = state.get("instrument", "piano")
     user_tempo = state.get("tempo")
     task_id = state["task_id"]
     task_dir = Path(settings.RINGTONES_DIR) / task_id
-    output_path = str(task_dir / "arrange_arranged.mid").replace("\\", "/")
+    output_path = str(task_dir / "arrange_arranged.mid")
 
     step_tools = [change_instrument_tool, change_tempo_tool, quantize_midi_tool]
     system_prompt = f"""你是一个音乐改编专家。你需要严格按照以下步骤操作：：
