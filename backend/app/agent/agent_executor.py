@@ -313,12 +313,12 @@ class AgentExecutor:
 
     #     self.db.commit()
 
-    # 使用简化的_execute_step
     async def _execute_step(self, step: str) -> None:
         handler = NODE_HANDLERS.get(step)
         if not handler:
             raise ValueError(f"未知步骤: {step}")
-        max_attempts = 2
+        max_attempts = 3
+        last_error = None
         for attempt in range(max_attempts):
             try:
                 self._add_thinking_step(step, f"开始执行步骤：{step} (第{attempt+1}次尝试)")
@@ -326,10 +326,14 @@ class AgentExecutor:
                 self._add_thinking_step(step, f"步骤 {step} 执行完成")
                 return
             except Exception as e:
-                if attempt < max_attempts - 1 and step in ("generate_midi", "arrange", "render"):
-                    self._add_thinking_step(step, f"步骤 {step} 失败，准备重试: {str(e)}")
+                last_error = e
+                if attempt < max_attempts - 1:
+                    # 将错误信息反馈给状态，供 handler 内部的重试逻辑使用
+                    self.state["last_error"] = str(e)
+                    self._add_thinking_step(step, f"步骤 {step} 失败: {e}，准备重试")
+                    # handler 的设计应该能够利用 last_error 调整行为
                     continue
-                self._add_thinking_step(step, f"步骤 {step} 执行失败: {str(e)}")
+                self._add_thinking_step(step, f"步骤 {step} 执行最终失败: {e}")
                 raise
 
     async def _update_task_status(self, status: TaskStatus) -> None:
