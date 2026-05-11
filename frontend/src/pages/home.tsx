@@ -122,6 +122,8 @@ function Home() {
                     <WelcomeMessage />
                 </div>
                 <ChatInputArea
+                    isProcessing={false}
+                    onCancel={undefined}
                     mode="home"
                     isFloating={true}
                     inputValue={inputValue}

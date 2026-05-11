@@ -5,7 +5,7 @@ import { useLocation } from 'react-router-dom';
 import { api } from '../api';
 import type { TaskListItem } from '../types';
 import TopBar from '../components/TopBar';
-import Sidebar from '../components/Sidebar';
+import Sidebar from '../components/SideBar';
 import Toast from '../components/notifications/Toast';
 import WelcomeMessage from '../components/chat/WelcomeMessage';
 import MessageList from '../components/chat/MessageList';
@@ -45,6 +45,8 @@ function ChatFlow() {
     const [toastMessage, setToastMessage] = useState<string | null>(null);
     const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null); // 处理页面自动滚动
+    const [isProcessing, setIsProcessing] = useState(false)
+    const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null) // 保存轮询定时器
 
     // 处理侧边栏开关拖拽
     const [position, setPosition] = useState({ x: 24, y: 80 }); // left: 1.5rem=24px, top: 5rem=80px
@@ -178,6 +180,7 @@ function ChatFlow() {
             });
 
             if (res.code === 200) {
+                setIsProcessing(true);
                 setCurrentTaskId(res.data.task_id);
                 fetchHistoryRef.current?.();
 
@@ -205,6 +208,11 @@ function ChatFlow() {
                 if (res.code !== 200) return;
 
                 const { status, current_subtask, message, thinking_process } = res.data;
+                if (['pending', 'planning', 'executing'].includes(status)) {
+                    setIsProcessing(true);
+                } else {
+                    setIsProcessing(false);
+                }
 
                 // 更新思考过程（与原逻辑完全一致，此处保留原样）
                 setMessages((prev) => {
@@ -259,10 +267,19 @@ function ChatFlow() {
                     updateMessage(msgId, { content: t('chat.failed') });
                     fetchHistoryRef.current?.();
                 }
+
+                if (status === 'cancelled') {
+                    clearInterval(poll);
+                    pollingIntervalRef.current = null;
+                    setCurrentTaskId(null);
+                    setIsProcessing(false);
+                    // 可选：更新消息提示“任务已取消”
+                }
             } catch {
                 // 忽略网络错误，继续轮询
             }
         }, 5000);
+        pollingIntervalRef.current = poll;
     };
 
     const updateMessage = (msgId: string, updates: Partial<Message>) => {
@@ -290,6 +307,7 @@ function ChatFlow() {
             });
 
             if (res.code === 200) {
+                setIsProcessing(true);
                 setCurrentTaskId(res.data.task_id);
                 const processingMsg: Message = {
                     id: nextId(),
@@ -432,6 +450,19 @@ function ChatFlow() {
         setToastMessage(msg);
     };
 
+    const handleCancel = async () => {
+        if (!currentTaskId) return
+        await api.cancelTask(currentTaskId)
+        // 停止轮询
+        if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current)
+            pollingIntervalRef.current = null
+        }
+        setCurrentTaskId(null)
+        setIsProcessing(false)
+        // 可选择更新消息列表，提示任务已取消
+    }
+
     return (
         <div className="flex flex-col h-screen bg-white text-gray-800 font-sans page-enter">
             <TopBar
@@ -485,6 +516,8 @@ function ChatFlow() {
 
                     {/* 底部输入区域 */}
                     <ChatInputArea
+                        isProcessing={isProcessing}
+                        onCancel={handleCancel}
                         mode="chat"
                         isFloating={false}
                         inputValue={inputValue}

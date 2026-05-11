@@ -8,7 +8,6 @@ from app.agent.state import (
     get_step_index,
     get_step_message,
 )
-from app.agent.tools import tool_gateway
 from app.agent.nodes import NODE_HANDLERS
 from app.agent.agent_executor import AgentExecutor
 

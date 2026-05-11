@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 
 from app.agent.state import AgentState, TaskStep
-from app.agent.tools import tool_gateway
 from app.agent.nodes import NODE_HANDLERS
 from app.db.session import SessionLocal
 from app.models import Task as TaskModel, TaskStatus
@@ -112,6 +111,8 @@ class AgentExecutor:
             }
 
         except Exception as e:
+            if self.task.status == TaskStatus.cancelled:
+                return {"success": False, "reason": "cancelled"}
             await self._update_task_status(TaskStatus.failed)
             self.task.error_message = str(e)
             self.db.commit()
@@ -221,6 +222,10 @@ class AgentExecutor:
         total_steps = len(plan)
 
         for idx, step_name in enumerate(plan):
+            # 检查任务是否已被取消
+            self.db.refresh(self.task)
+            if self.task.status == TaskStatus.cancelled:
+                return  # 直接结束执行
             self.state["current_step_index"] = idx
             self.state["current_step"] = step_name
 

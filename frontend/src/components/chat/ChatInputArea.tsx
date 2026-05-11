@@ -25,6 +25,9 @@ interface ChatInputAreaProps {
     uploadSuccess: string | null;
     // 布局模式
     mode?: 'home' | 'chat';   // home: 大输入框+透明底边；chat: 紧凑固定底部
+    // 任务终止判断
+    isProcessing?: boolean;
+    onCancel?: () => void;
 }
 
 export default function ChatInputArea({
@@ -46,6 +49,8 @@ export default function ChatInputArea({
                                           uploadError,
                                           uploadSuccess,
                                           mode = 'chat',
+                                          isProcessing,
+                                          onCancel,
                                       }: ChatInputAreaProps) {
     const { t } = useTranslation();
     const [showParams, setShowParams] = useState(false); // chat模式下参数面板折叠
@@ -233,12 +238,22 @@ export default function ChatInputArea({
                 {/* 输入栏主体 */}
                 <div className="relative flex flex-row-reverse items-center gap-2 bg-white border border-[#e0f2fe] rounded-3xl px-2.5 py-2.5">
                     <button
-                        onClick={wrappedHandleSend}
-                        className="w-11 h-11 bg-[#00639d] rounded-2xl flex items-center justify-center flex-shrink-0 shadow-[0px_10px_15px_-3px_#00639d4D,0px_4px_6px_-4px_#00639d4D] hover:bg-[#005288] transition"
+                        onClick={isProcessing ? onCancel : wrappedHandleSend}
+                        className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 transition ${
+                            isProcessing
+                                ? 'bg-red-500 hover:bg-red-600 shadow-[0_10px_15px_-3px_rgba(239,68,68,0.3)]'
+                                : 'bg-[#00639d] hover:bg-[#005288] shadow-[0px_10px_15px_-3px_#00639d4D,0px_4px_6px_-4px_#00639d4D]'
+                        }`}
                     >
-                        <svg width="19" height="16" viewBox="0 0 19 16" fill="none">
-                            <path d="M0 16V0L19 8L0 16ZM2 13L13.85 8L2 3V6.5L8 8L2 9.5V13Z" fill="#f7f9ff"/>
-                        </svg>
+                        {isProcessing ? (
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                                <rect x="4" y="4" width="16" height="16" rx="2" />
+                            </svg>
+                        ) : (
+                            <svg width="19" height="16" viewBox="0 0 19 16" fill="none">
+                                <path d="M0 16V0L19 8L0 16ZM2 13L13.85 8L2 3V6.5L8 8L2 9.5V13Z" fill="#f7f9ff"/>
+                            </svg>
+                        )}
                     </button>
 
                     {/* 文本输入框 */}
@@ -247,6 +262,7 @@ export default function ChatInputArea({
                             placeholder={t('input.placeholder')}
                             value={inputValue}
                             onChange={(e) => setInputValue(e.target.value)}
+                            disabled={isProcessing}
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter' && !e.shiftKey) {
                                     e.preventDefault();
