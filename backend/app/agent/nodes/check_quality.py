@@ -8,7 +8,7 @@ from app.agent.atomic_tools.quality import evaluate_overall_quality_tool
 from ..callbacks import ThinkingCallbackHandler
 from app.agent.thinking_utils import record_thought
 
-async def check_quality_node(state: AgentState, db: Session, tools) -> None:
+async def check_quality_node(state: AgentState) -> None:
     """
     节点7: 质量检查
 

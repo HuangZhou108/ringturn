@@ -13,7 +13,7 @@ from ..callbacks import ThinkingCallbackHandler
 import mido
 settings = get_settings()
 
-async def arrange_node(state: AgentState, db: Session, tools) -> None:
+async def arrange_node(state: AgentState) -> None:
     """
     节点5: 乐器改编
 

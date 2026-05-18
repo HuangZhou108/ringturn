@@ -1,10 +1,9 @@
-from sqlalchemy.orm import Session
+from pathlib import Path
 from app.agent.state import AgentState
-from app.core.config import get_settings
 from app.services.file_service import file_service
-import librosa
+from app.agent.thinking_utils import record_thought
 
-async def fetch_source_node(state: AgentState, db: Session, tools) -> None:
+async def fetch_source_node(state: AgentState) -> None:
     """
     节点1: 获取音频源
 
@@ -12,6 +11,7 @@ async def fetch_source_node(state: AgentState, db: Session, tools) -> None:
     """
     source_type = state.get("source_type", "upload")
     source_value = state.get("source_value")
+    task_id = state["task_id"]
 
     if source_type == "upload":
         # 获取上传文件
@@ -33,6 +33,7 @@ async def fetch_source_node(state: AgentState, db: Session, tools) -> None:
             raise RuntimeError(f"无法打开或解析上传的音频文件: {e}")
 
         state["audio_path"] = str(file_path)
+        record_thought(task_id, "fetch_source", f"音频源获取成功: {file_path}")
 
     elif source_type == "search":
         # TODO: 实现搜索功能

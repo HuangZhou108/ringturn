@@ -7,7 +7,7 @@ import mido
 import shutil
 settings = get_settings()
 
-async def generate_midi_node(state: AgentState, db: Session, tools) -> None:
+async def generate_midi_node(state: AgentState) -> None:
     """
     节点4: 生成MIDI
 

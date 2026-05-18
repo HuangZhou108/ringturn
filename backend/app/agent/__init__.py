@@ -11,6 +11,7 @@ from app.agent.state import (
 from app.agent.nodes import NODE_HANDLERS
 from app.agent.agent_executor import AgentExecutor
 from app.agent.tools import tool_gateway
+from app.agent.graph import get_agent_graph
 
 __all__ = [
     "AgentState",
@@ -20,4 +21,5 @@ __all__ = [
     "tool_gateway",
     "NODE_HANDLERS",
     "AgentExecutor",
+    "get_agent_graph",
 ]

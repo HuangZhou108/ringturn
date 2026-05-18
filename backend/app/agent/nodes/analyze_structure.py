@@ -11,7 +11,7 @@ from app.agent.atomic_tools.analysis import (
 )
 from ..callbacks import ThinkingCallbackHandler
 
-async def analyze_structure_node(state: AgentState, db: Session, tools) -> None:
+async def analyze_structure_node(state: AgentState) -> None:
     """
     节点2: 分析音乐结构
 

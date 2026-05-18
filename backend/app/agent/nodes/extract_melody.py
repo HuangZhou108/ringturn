@@ -15,7 +15,7 @@ from app.agent.atomic_tools.melody import (
 )
 from ..callbacks import ThinkingCallbackHandler
 
-async def extract_melody_node(state: AgentState, db: Session, tools) -> None:
+async def extract_melody_node(state: AgentState) -> None:
     """
     节点3: 提取主旋律
 

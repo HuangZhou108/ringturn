@@ -10,7 +10,7 @@ from app.agent.thinking_utils import record_thought
 
 settings = get_settings()
 
-async def render_node(state: AgentState, db: Session, tools) -> None:
+async def render_node(state: AgentState) -> None:
     """
     节点6: 渲染音频
 
