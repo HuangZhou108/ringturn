@@ -5,6 +5,16 @@ import enum
 
 Base = declarative_base()
 
+class ConversationStatus(enum.Enum):
+    """会话状态枚举"""
+    active = "active"
+    completed = "completed"
+
+class MessageRole(enum.Enum):
+    """消息角色枚举"""
+    user = "user"
+    assistant = "assistant"
+
 class TaskStatus(enum.Enum):
     """任务状态枚举"""
     pending = "pending"
@@ -26,6 +36,7 @@ class User(Base):
     # 关联
     tasks = relationship("Task", back_populates="user", cascade="all, delete-orphan")
     preferences = relationship("Preference", back_populates="user", cascade="all, delete-orphan")
+    conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
 
 class Task(Base):
     """任务表"""
@@ -71,6 +82,7 @@ class Task(Base):
     user = relationship("User", back_populates="tasks")
     parent_task = relationship("Task", remote_side=[id], backref="subtasks")
     feedbacks = relationship("Feedback", back_populates="task", cascade="all, delete-orphan")
+    conversation_messages = relationship("ConversationMessage", back_populates="task")
 
 class Feedback(Base):
     """反馈表"""
@@ -95,3 +107,36 @@ class Preference(Base):
 
     # 关联
     user = relationship("User", back_populates="preferences")
+
+class Conversation(Base):
+    """会话表"""
+    __tablename__ = "conversations"
+
+    id = Column(String(36), primary_key=True)  # UUID
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    title = Column(String(200))
+    status = Column(Enum(ConversationStatus), default=ConversationStatus.active, nullable=False)
+
+    # 时间戳
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # 关联
+    user = relationship("User", back_populates="conversations")
+    messages = relationship("ConversationMessage", back_populates="conversation", cascade="all, delete-orphan")
+
+class ConversationMessage(Base):
+    """会话消息表"""
+    __tablename__ = "conversation_messages"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    conversation_id = Column(String(36), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
+    role = Column(Enum(MessageRole), nullable=False)
+    content = Column(Text, nullable=False)
+    task_id = Column(String(36), ForeignKey("tasks.id"), nullable=True)
+
+    # 时间戳
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # 关联
+    conversation = relationship("Conversation", back_populates="messages")
