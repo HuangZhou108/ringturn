@@ -30,6 +30,15 @@ from .conversation import (
     ConversationUpdateResponse,
     ConversationCompleteResponse,
 )
+from .profile import (
+    ProfileCreate,
+    ProfileUpdate,
+    ProfileResponse,
+    ProfileListResponse,
+    PreferencesImport,
+    PreferencesExport,
+    PreferencesApply,
+)
 
 __all__ = [
     "ResponseBase",
@@ -64,4 +73,11 @@ __all__ = [
     "ConversationUpdate",
     "ConversationUpdateResponse",
     "ConversationCompleteResponse",
+    "ProfileCreate",
+    "ProfileUpdate",
+    "ProfileResponse",
+    "ProfileListResponse",
+    "PreferencesImport",
+    "PreferencesExport",
+    "PreferencesApply",
 ]

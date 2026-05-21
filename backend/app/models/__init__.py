@@ -26,7 +26,7 @@ class TaskStatus(enum.Enum):
     cancelled = "cancelled"
 
 class User(Base):
-    """用户表"""
+    """用户表（单用户模式，仅用于数据隔离）"""
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
@@ -38,12 +38,27 @@ class User(Base):
     preferences = relationship("Preference", back_populates="user", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
 
+class Profile(Base):
+    """Profile 表（用于多配置切换）"""
+    __tablename__ = "profiles"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    name = Column(String(64), nullable=False)
+    is_active = Column(Integer, default=0)  # 0=非活跃, 1=活跃
+    preferences_data = Column(Text, nullable=True)  # 偏好配置的 JSON 字符串
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # 关联
+    tasks = relationship("Task", back_populates="profile", cascade="all, delete-orphan")
+
 class Task(Base):
     """任务表"""
     __tablename__ = "tasks"
 
     id = Column(String(36), primary_key=True)  # UUID
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)  # Profile外键
     parent_task_id = Column(String(36), ForeignKey("tasks.id"), nullable=True)
 
     # 用户输入
@@ -80,6 +95,7 @@ class Task(Base):
 
     # 关联
     user = relationship("User", back_populates="tasks")
+    profile = relationship("Profile")
     parent_task = relationship("Task", remote_side=[id], backref="subtasks")
     feedbacks = relationship("Feedback", back_populates="task", cascade="all, delete-orphan")
     conversation_messages = relationship("ConversationMessage", back_populates="task")
