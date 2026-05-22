@@ -156,3 +156,4 @@ class ConversationMessage(Base):
 
     # 关联
     conversation = relationship("Conversation", back_populates="messages")
+    task = relationship("Task", back_populates="conversation_messages")

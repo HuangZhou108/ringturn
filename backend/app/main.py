@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, WebSocket, status
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -67,7 +67,9 @@ async def general_exception_handler(request: Request, exc: Exception):
 app.include_router(api_router)
 
 # WebSocket路由
-app.websocket_route("/ws/chat/{task_id}")(websocket_endpoint)
+@app.websocket("/ws/chat/{task_id}")
+async def ws_chat(websocket: WebSocket, task_id: str):
+    await websocket_endpoint(websocket, task_id)
 
 # 挂载静态文件（用于提供生成的铃声文件）
 app.mount("/static", StaticFiles(directory="static"), name="static")

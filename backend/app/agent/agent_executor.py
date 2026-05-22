@@ -148,6 +148,9 @@ class AgentExecutor:
             error_msg = f"任务执行失败：{str(e)}"
             self._add_assistant_message(error_msg)
 
+            # 将会话标记为完成（无论是成功还是失败）
+            self._complete_conversation()
+
             raise
 
     async def execute_optimization(self, feedback: str) -> dict:
@@ -206,6 +209,14 @@ class AgentExecutor:
             await self._update_task_status(TaskStatus.failed)
             self.task.error_message = str(e)
             self.db.commit()
+
+            # 记录错误消息到会话
+            error_msg = f"任务执行失败：{str(e)}"
+            self._add_assistant_message(error_msg)
+
+            # 将会话标记为完成
+            self._complete_conversation()
+
             raise
 
     async def _plan(self) -> None:

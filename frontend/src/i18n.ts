@@ -18,6 +18,7 @@ i18n
                     sidebar: {
                         ringTurn: 'RingTurn',
                         aiMusic: 'AI MUSIC ADAPTATION',
+                        newConversation: 'New Conversation',
                         newAdaptation: 'New Adaptation',
                         mainMenu: 'MAIN MENU',
                         recentTracks: 'Recent Tracks',
@@ -79,6 +80,7 @@ i18n
                     sidebar: {
                         ringTurn: 'RingTurn',
                         aiMusic: 'AI 音乐改编',
+                        newConversation: '新建会话',
                         newAdaptation: '新建改编',
                         mainMenu: '主菜单',
                         recentTracks: '最近曲目',

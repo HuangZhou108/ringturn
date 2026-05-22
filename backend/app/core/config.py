@@ -57,7 +57,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
-
 @lru_cache()
 def get_settings() -> Settings:
     """获取配置单例"""
