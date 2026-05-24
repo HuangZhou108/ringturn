@@ -240,23 +240,16 @@ export default function Sidebar({
                                 `}
                             >
                                 {/* 会话标题 */}
-                                <div className="flex items-start justify-between gap-2">
-                                    <div className="flex-1 min-w-0">
-                                        <div className={`text-sm font-medium truncate ${
-                                            currentConversationId === conv.conversation_id
-                                                ? 'text-white'
-                                                : 'text-gray-800'
-                                        }`}>
-                                            {conv.title || '未命名会话'}
-                                        </div>
-                                        <div className={`text-xs mt-0.5 truncate ${
-                                            currentConversationId === conv.conversation_id
-                                                ? 'text-white/70'
-                                                : 'text-gray-500'
-                                        }`}>
-                                            {conv.last_message || '暂无消息'}
-                                        </div>
-                                        <div className={`text-xs mt-1 ${
+                                <div className="flex flex-col">
+                                    <div className={`text-sm font-medium truncate ${
+                                        currentConversationId === conv.conversation_id
+                                            ? 'text-white'
+                                            : 'text-gray-800'
+                                    }`}>
+                                        {conv.title || '未命名会话'}
+                                    </div>
+                                    <div className="flex items-center justify-between mt-1">
+                                        <span className={`text-xs ${
                                             currentConversationId === conv.conversation_id
                                                 ? 'text-white/50'
                                                 : 'text-gray-400'
@@ -267,23 +260,22 @@ export default function Sidebar({
                                                 hour: '2-digit',
                                                 minute: '2-digit'
                                             })}
-                                        </div>
+                                        </span>
+                                                                        {/* 状态标签 */}
+                                                                        <span className={`
+                                            px-1.5 py-0.5 text-[10px] font-medium rounded
+                                            ${conv.status === 'active'
+                                                                            ? (currentConversationId === conv.conversation_id
+                                                                                ? 'bg-white/20 text-white'
+                                                                                : 'bg-green-100 text-green-600')
+                                                                            : (currentConversationId === conv.conversation_id
+                                                                                ? 'bg-white/20 text-white'
+                                                                                : 'bg-gray-100 text-gray-500')
+                                                                        }
+                                        `}>
+                                            {conv.status === 'active' ? '进行中' : '已完成'}
+                                        </span>
                                     </div>
-
-                                    {/* 状态标签 */}
-                                    <span className={`
-                                        px-1.5 py-0.5 text-[10px] font-medium rounded
-                                        ${conv.status === 'active'
-                                            ? (currentConversationId === conv.conversation_id
-                                                ? 'bg-white/20 text-white'
-                                                : 'bg-green-100 text-green-600')
-                                            : (currentConversationId === conv.conversation_id
-                                                ? 'bg-white/20 text-white'
-                                                : 'bg-gray-100 text-gray-500')
-                                        }
-                                    `}>
-                                        {conv.status === 'active' ? '进行中' : '已完成'}
-                                    </span>
                                 </div>
 
                                 {/* 删除按钮 */}

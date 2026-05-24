@@ -28,6 +28,8 @@ i18n
                         settings: 'Settings',
                         support: 'Support',
                         notAvailable: 'Sidebar is temporarily unavailable',
+                        conversations: 'Conversations',
+                        noConversation: 'No Conversation',
                     },
                     welcome: {
                         titleBefore: 'Adapt your track, ',
@@ -90,6 +92,8 @@ i18n
                         settings: '设置',
                         support: '支持',
                         notAvailable: '侧边栏暂不开放',
+                        conversations: '会话',
+                        noConversations: '暂无会话',
                     },
                     welcome: {
                         titleBefore: '为您提供，',

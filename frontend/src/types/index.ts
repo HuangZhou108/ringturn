@@ -194,3 +194,34 @@ export interface CreateTaskResponse {
     status: TaskStatus
     created_at: string
 }
+
+// Profile 相关类型
+export interface Profile {
+    profile_id: number
+    name: string
+    is_active: boolean
+    created_at: string
+}
+
+export interface ProfileListResponse {
+    data: Profile[]
+}
+
+export interface ProfileActiveResponse {
+    data: Profile
+}
+
+export interface ProfileTasksResponse {
+    total: number
+    page: number
+    page_size: number
+    tasks: TaskListItem[]
+}
+
+export interface ProfilePreferences {
+    default_instrument?: string
+    disliked_instruments?: string[]
+    default_duration?: number
+    default_tempo?: number
+    [key: string]: any
+}

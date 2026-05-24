@@ -61,7 +61,7 @@ function ChatFlow() {
 
     // 调试日志 - 每次渲染时打印完整状态
     console.log('[ChatFlow] === RENDER === audioFileId:', audioFileId, '| uploadSuccess:', uploadSuccess, '| isUploading:', isUploading, '| location.state:', JSON.stringify(location.state))
-    const fileInputRef = useRef<HTMLInputElement>(null)
+    const fileInputRef = useRef<HTMLInputElement>(null!)
 
     // UI状态
     const [toastMessage, setToastMessage] = useState<string | null>(null)
@@ -143,6 +143,9 @@ function ChatFlow() {
         setDuration('')
         setTempo('')
         setFilename('Untitled_Track')
+        if (fileInputRef.current) {
+            fileInputRef.current.value = ''
+        }
     }, [])
 
     // 加载历史任务（保留兼容性）
@@ -406,7 +409,7 @@ function ChatFlow() {
         const userFilename = state.filename as string | undefined
 
         // 处理新建空会话
-        if (newChat) {
+        if (newChat&& currentConversationId !== null) {
             handleNewConversation()
             // 清除 location.state 避免重复触发
             if (location.state && (location.state as any).newChat) {
@@ -683,7 +686,7 @@ function ChatFlow() {
                         isProcessing={isProcessing}
                         onCancel={handleCancel}
                         mode="chat"
-                        isFloating={false}
+                        // isFloating={false}
                         inputValue={inputValue}
                         setInputValue={setInputValue}
                         handleSend={handleSend}
