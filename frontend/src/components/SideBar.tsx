@@ -254,7 +254,7 @@ export default function Sidebar({
                                                 ? 'text-white/50'
                                                 : 'text-gray-400'
                                         }`}>
-                                            {new Date(conv.updated_at).toLocaleDateString('zh-CN', {
+                                            {new Date(conv.updated_at + 'Z').toLocaleDateString('zh-CN', {
                                                 month: 'short',
                                                 day: 'numeric',
                                                 hour: '2-digit',
