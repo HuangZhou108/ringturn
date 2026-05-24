@@ -3,7 +3,7 @@ from app.agent.state import AgentState
 from app.services.file_service import file_service
 from app.agent.thinking_utils import record_thought
 
-async def fetch_source_node(state: AgentState) -> None:
+async def fetch_source_node(state: AgentState) -> dict:
     """
     节点1: 获取音频源
 
@@ -32,8 +32,9 @@ async def fetch_source_node(state: AgentState) -> None:
         except Exception as e:
             raise RuntimeError(f"无法打开或解析上传的音频文件: {e}")
 
-        state["audio_path"] = str(file_path)
+        audio_path = str(file_path)
         record_thought(task_id, "fetch_source", f"音频源获取成功: {file_path}")
+        return {"audio_path": audio_path}
 
     elif source_type == "search":
         # TODO: 实现搜索功能

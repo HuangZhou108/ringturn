@@ -9,7 +9,7 @@ from app.services.llm_service import llm_service
 from app.agent.thinking_utils import record_thought
 
 
-async def reflect_node(state: AgentState) -> None:
+async def reflect_node(state: AgentState) -> dict:
     """
     反思节点：判断质量是否达标，是否需要重新改编
 
@@ -37,15 +37,20 @@ async def reflect_node(state: AgentState) -> None:
     if max_retries == 0:
         needs_revision = False
 
-    state["needs_revision"] = needs_revision
-    state["reflection"] = {"reason": reason, "suggestions": suggestions}
+    new_retry_count = retry_count + 1 if needs_revision else 0
+    reflection_data = {"reason": reason, "suggestions": suggestions}
+    
     if needs_revision:
-        state["retry_count"] = retry_count + 1
         record_thought(
             state["task_id"],
             "reflect",
             f"质量不达标，将进行第 {state['retry_count']} 次重试。原因: {reason}",
         )
     else:
-        state["retry_count"] = 0
         record_thought(state["task_id"], "reflect", "质量检查通过，无需重试")
+
+    return {
+        "needs_revision": needs_revision,
+        "reflection": reflection_data,
+        "retry_count": new_retry_count,
+    }

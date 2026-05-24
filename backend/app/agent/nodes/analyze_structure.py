@@ -10,8 +10,9 @@ from app.agent.atomic_tools.analysis import (
     detect_instruments_tool
 )
 from ..callbacks import ThinkingCallbackHandler
+from app.agent.utils import convert_numpy_to_native
 
-async def analyze_structure_node(state: AgentState) -> None:
+async def analyze_structure_node(state: AgentState) -> dict:
     """
     节点2: 分析音乐结构
 
@@ -71,10 +72,10 @@ async def analyze_structure_node(state: AgentState) -> None:
             config={"callbacks": [callback]}
         )
         # 调试输出
-        print(f"[NODE DEBUG] final_response type: {type(final_response)}")
-        print(f"[NODE DEBUG] messages count: {len(final_response.get('messages', []))}")
-        for i, msg in enumerate(final_response.get('messages', [])):
-            print(f"[NODE DEBUG] msg[{i}] type={type(msg).__name__}, content={str(msg.content)[:100]}")
+        # print(f"[NODE DEBUG] final_response type: {type(final_response)}")
+        # print(f"[NODE DEBUG] messages count: {len(final_response.get('messages', []))}")
+        # for i, msg in enumerate(final_response.get('messages', [])):
+        #     print(f"[NODE DEBUG] msg[{i}] type={type(msg).__name__}, content={str(msg.content)[:100]}")
         last_msg = final_response["messages"][-1].content
         analysis_result = json.loads(last_msg)
     except Exception as e:
@@ -95,3 +96,6 @@ async def analyze_structure_node(state: AgentState) -> None:
     y, sr = librosa.load(audio_path, sr=22050)
     state["analysis_result"]["duration"] = librosa.get_duration(y=y, sr=sr)
     # sections 可以单独使用 detect_sections_tool，但为了简化，此处省略
+
+    analysis_result = convert_numpy_to_native(analysis_result)
+    return {"analysis_result": analysis_result}

@@ -5,6 +5,7 @@ uvicorn[standard]>=0.30.0
 # Database
 sqlalchemy>=2.0.0
 alembic>=1.13.0
+aiosqlite
 
 # Agent framework
 langgraph>=1.0.0

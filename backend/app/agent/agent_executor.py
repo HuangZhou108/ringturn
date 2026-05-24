@@ -36,7 +36,7 @@ class AgentExecutor:
 
         self.ringtone_params = RingtoneParams(self.task)
         self.state = self._init_state()
-        self.graph = get_agent_graph()
+        self.graph = None   # 延迟加载
 
     def _init_state(self) -> AgentState:
         """初始化 Agent 状态"""
@@ -123,6 +123,8 @@ class AgentExecutor:
             await self._plan()
 
             await self._update_task_status(TaskStatus.executing)
+            # 异步获取图实例
+            self.graph = await get_agent_graph()
             config = {"configurable": {"thread_id": self.task_id}}
             final_state = await self.graph.ainvoke(self.state, config=config)
 

@@ -7,8 +7,9 @@ from app.agent.state import AgentState
 from app.agent.atomic_tools.quality import evaluate_overall_quality_tool
 from ..callbacks import ThinkingCallbackHandler
 from app.agent.thinking_utils import record_thought
+from app.agent.utils import convert_numpy_to_native
 
-async def check_quality_node(state: AgentState) -> None:
+async def check_quality_node(state: AgentState) -> dict:
     """
     节点7: 质量检查
 
@@ -65,20 +66,42 @@ async def check_quality_node(state: AgentState) -> None:
         quality = default_quality
 
     
-    # 验证必要字段，缺失则补默认值
-    if "overall_score" not in quality:
-        quality["overall_score"] = 4.0
-    if "passed" not in quality:
-        quality["passed"] = True
-    if "quality_issues" not in quality:
-        quality["quality_issues"] = []
+    # # 验证必要字段，缺失则补默认值
+    # if "overall_score" not in quality:
+    #     quality["overall_score"] = 4.0
+    # if "passed" not in quality:
+    #     quality["passed"] = True
+    # if "quality_issues" not in quality:
+    #     quality["quality_issues"] = []
 
-    # 将质量结果写入状态
-    if not quality.get("passed", False):
-        state["needs_revision"] = True
-        state["reflection"] = {"message": "质量不达标", "adjustments": {}}
-        record_thought(state["task_id"], "check_quality", "质量不达标，即将触发重试")
+    # # 将质量结果写入状态
+    # if not quality.get("passed", False):
+    #     state["needs_revision"] = True
+    #     state["reflection"] = {"message": "质量不达标", "adjustments": {}}
+    #     record_thought(state["task_id"], "check_quality", "质量不达标，即将触发重试")
+    # else:
+    #     state["needs_revision"] = False
+    #     record_thought(state["task_id"], "check_quality", "质量检查通过，无需重试")
+    # state["step_results"]["quality_check"] = quality
+    
+    quality.setdefault("overall_score", 4.0)
+    quality.setdefault("passed", True)
+    quality.setdefault("quality_issues", [])
+
+    needs_revision = not quality.get("passed", False)
+    reflection = {"message": "质量不达标", "adjustments": {}} if needs_revision else {}
+    step_results = state.get("step_results", {})
+    step_results["quality_check"] = quality
+
+    if needs_revision:
+        record_thought(task_id, "check_quality", "质量不达标，即将触发重试")
     else:
-        state["needs_revision"] = False
-        record_thought(state["task_id"], "check_quality", "质量检查通过，无需重试")
-    state["step_results"]["quality_check"] = quality
+        record_thought(task_id, "check_quality", "质量检查通过，无需重试")
+
+    step_results = convert_numpy_to_native(step_results)
+    quality = convert_numpy_to_native(quality)   # 可选，已包含在 step_results 中
+    return {
+        "needs_revision": needs_revision,
+        "reflection": reflection,
+        "step_results": step_results,
+    }

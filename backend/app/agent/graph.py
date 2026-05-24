@@ -4,8 +4,11 @@ LangGraph工作流定义
 定义Agent的完整状态流转图，支持检查点和条件重试
 """
 
+import asyncio
+import aiosqlite
+from pathlib import Path
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from app.agent.state import AgentState
 from app.agent.nodes import (
     fetch_source_node,
@@ -31,9 +34,12 @@ NODE_RENDER = "render"
 NODE_CHECK = "check_quality"
 NODE_REFLECT = "reflect"
 
+_agent_graph = None
+_graph_lock = asyncio.Lock()
 
-def build_agent_graph():
-    """构建并编译LangGraph状态图"""
+
+async def build_agent_graph():
+    """异步构建并编译LangGraph状态图"""
     workflow = StateGraph(AgentState)
 
     # 注册节点（所有节点已修改为只接收 state 参数）
@@ -76,18 +82,21 @@ def build_agent_graph():
 
     workflow.set_entry_point(NODE_FETCH)
 
-    # 配置检查点存储
-    checkpointer = SqliteSaver.from_conn_string(settings.CHECKPOINT_DB_URL)
-    graph = workflow.compile(checkpointer=checkpointer)
+    # 异步检查点
+    db_path = settings.CHECKPOINT_DB_URL.replace("sqlite:///", "")
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    # conn = await aiosqlite.connect(db_path)
+    # checkpointer = AsyncSqliteSaver(conn)
+
+    graph = workflow.compile(checkpointer=None)
     return graph
 
 
-# 全局单例
-_agent_graph = None
-
-
-def get_agent_graph():
+async def get_agent_graph():
+    """异步获取全局图实例（线程安全）"""
     global _agent_graph
     if _agent_graph is None:
-        _agent_graph = build_agent_graph()
+        async with _graph_lock:
+            if _agent_graph is None:
+                _agent_graph = await build_agent_graph()
     return _agent_graph

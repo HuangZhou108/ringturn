@@ -7,7 +7,7 @@ import mido
 import shutil
 settings = get_settings()
 
-async def generate_midi_node(state: AgentState) -> None:
+async def generate_midi_node(state: AgentState) -> dict:
     """
     节点4: 生成MIDI
 
@@ -23,8 +23,6 @@ async def generate_midi_node(state: AgentState) -> None:
     task_dir.mkdir(parents=True, exist_ok=True)
     output_path = str(task_dir / "generate_midi_original.mid")
 
-    # 直接调用工具函数，避免LLM token限制导致失败
-    from app.agent.atomic_tools.midi.create_from_notes import create_midi_from_notes
     # 检查旋律提取是否已生成 MIDI
     existing_midi = melody_data.get("midi_path")
     if existing_midi and Path(existing_midi).exists():
@@ -49,4 +47,4 @@ async def generate_midi_node(state: AgentState) -> None:
     except Exception as e:
         raise RuntimeError(f"MIDI 文件无效: {e}")
     
-    state["midi_path"] = output_path
+    return {"midi_path": output_path}
