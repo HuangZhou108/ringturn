@@ -19,6 +19,8 @@ class TaskCreate(BaseModel):
     user_request: str = Field(..., description="用户的自然语言描述")
     source_type: Literal["upload", "search"] = "upload"
     source_value: str | None = None
+    # 关联的会话ID（可选，用于历史会话功能）
+    conversation_id: str | None = Field(None, description="关联的会话ID")
     # 铃声参数
     # 动态参数，包含 instrument、duration、tempo、filename 等
     params: Optional[Dict[str, Any]] = Field(default_factory=dict, description="用户自定义参数键值对")

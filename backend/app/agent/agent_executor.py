@@ -12,7 +12,7 @@ from app.db.session import SessionLocal
 from app.agent.state import AgentState, TaskStep
 from app.agent.nodes import NODE_HANDLERS
 from app.db.session import SessionLocal
-from app.models import Task as TaskModel, TaskStatus
+from app.models import Task as TaskModel, TaskStatus, Conversation, ConversationMessage, MessageRole, ConversationStatus
 from .thinking_utils import record_thought
 from app.agent.tools import tool_gateway
 
@@ -33,14 +33,24 @@ class RingtoneParams:
 class AgentExecutor:
     """Agent执行器"""
 
-    def __init__(self, task_id: str, db: Session = None):
+    def __init__(self, task_id: str, db: Session = None, conversation_id: str = None):
         self.task_id = task_id
         self.db = db or SessionLocal(expire_on_commit=False)
+        self.conversation_id = conversation_id
 
         # 获取任务
         self.task = self.db.query(TaskModel).filter(TaskModel.id == task_id).first()
         if not self.task:
             raise ValueError(f"任务不存在: {task_id}")
+
+        # 如果没有传入 conversation_id，尝试从数据库中查找
+        if not self.conversation_id:
+            user_message = self.db.query(ConversationMessage).filter(
+                ConversationMessage.task_id == task_id,
+                ConversationMessage.role == MessageRole.user
+            ).first()
+            if user_message:
+                self.conversation_id = user_message.conversation_id
 
         # 解析铃声参数
         self.ringtone_params = RingtoneParams(self.task)
@@ -95,9 +105,17 @@ class AgentExecutor:
             dict: 执行结果
         """
         try:
+            # 记录 Agent 开始执行的消息
+            plan_preview = f"收到任务请求，正在开始执行...\n用户需求：{self.state.get('user_request', '')}"
+            self._add_assistant_message(plan_preview)
+
             # 1. 规划阶段
             await self._update_task_status(TaskStatus.planning)
             await self._plan()
+
+            # 记录规划完成的消息
+            plan_msg = f"执行计划已生成：{' → '.join(self.state.get('plan', []))}"
+            self._add_assistant_message(plan_msg)
 
             # 2. 执行阶段
             await self._update_task_status(TaskStatus.executing)
@@ -105,6 +123,14 @@ class AgentExecutor:
 
             # 3. 完成
             await self._update_task_status(TaskStatus.completed)
+
+            # 记录完成消息
+            final_msg = f"任务已完成！\n生成铃声：{self.task.final_audio_url}\n时长：{self.task.audio_duration}秒"
+            self._add_assistant_message(final_msg)
+
+            # 将会话标记为完成
+            self._complete_conversation()
+
             return {
                 "success": True,
                 "audio_url": self.task.final_audio_url,
@@ -117,6 +143,14 @@ class AgentExecutor:
             await self._update_task_status(TaskStatus.failed)
             self.task.error_message = str(e)
             self.db.commit()
+
+            # 记录错误消息到会话
+            error_msg = f"任务执行失败：{str(e)}"
+            self._add_assistant_message(error_msg)
+
+            # 将会话标记为完成（无论是成功还是失败）
+            self._complete_conversation()
+
             raise
 
     async def execute_optimization(self, feedback: str) -> dict:
@@ -175,6 +209,14 @@ class AgentExecutor:
             await self._update_task_status(TaskStatus.failed)
             self.task.error_message = str(e)
             self.db.commit()
+
+            # 记录错误消息到会话
+            error_msg = f"任务执行失败：{str(e)}"
+            self._add_assistant_message(error_msg)
+
+            # 将会话标记为完成
+            self._complete_conversation()
+
             raise
 
     async def _plan(self) -> None:
@@ -240,6 +282,17 @@ class AgentExecutor:
         plan = self.state["plan"]
         total_steps = len(plan)
 
+        # 步骤名称映射到中文
+        step_names_cn = {
+            "fetch_source": "获取音频源",
+            "analyze_structure": "分析音乐结构",
+            "extract_melody": "提取主旋律",
+            "generate_midi": "生成 MIDI",
+            "arrange": "乐器改编",
+            "render": "渲染音频",
+            "check_quality": "质量检查",
+        }
+
         for idx, step_name in enumerate(plan):
             # 检查任务是否已被取消
             self.db.refresh(self.task)
@@ -247,6 +300,10 @@ class AgentExecutor:
                 return  # 直接结束执行
             self.state["current_step_index"] = idx
             self.state["current_step"] = step_name
+
+            # 记录步骤开始
+            step_cn = step_names_cn.get(step_name, step_name)
+            self._add_assistant_message(f"开始执行：{step_cn}")
 
             try:
                 # 更新子步骤状态
@@ -260,6 +317,9 @@ class AgentExecutor:
                 # 记录结果
                 self.state["step_results"][step_name] = "completed"
 
+                # 记录步骤完成
+                self._add_assistant_message(f"步骤完成：{step_cn}")
+
                 # 检查反思结果
                 if step_name == TaskStep.CHECK_QUALITY.value:
                     max_retries = 2
@@ -267,6 +327,7 @@ class AgentExecutor:
                     while self.state.get("needs_revision") and retry_count < max_retries:
                         retry_count += 1
                         self._add_thinking_step("retry", f"质量不达标，第{retry_count}次重试")
+                        self._add_assistant_message(f"质量不达标，正在进行第{retry_count}次优化...")
                         # 根据反思建议调整参数（从 reflection 中提取）
                         reflection = self.state.get("reflection", {})
                         adjustments = reflection.get("adjustments", {})
@@ -379,6 +440,47 @@ class AgentExecutor:
         })
         self.task.thinking_process = current_steps
         self.db.commit()
+
+    def _add_assistant_message(self, content: str) -> None:
+        """记录助手消息到会话"""
+        if not self.conversation_id:
+            return
+
+        try:
+            message = ConversationMessage(
+                conversation_id=self.conversation_id,
+                role=MessageRole.assistant,
+                content=content,
+                task_id=self.task_id,
+            )
+            self.db.add(message)
+
+            # 更新会话的更新时间
+            conversation = self.db.query(Conversation).filter(
+                Conversation.id == self.conversation_id
+            ).first()
+            if conversation:
+                conversation.updated_at = datetime.utcnow()
+
+            self.db.commit()
+        except Exception as e:
+            # 记录消息失败不影响主流程
+            print(f"[WARNING] Failed to add assistant message: {e}")
+
+    def _complete_conversation(self) -> None:
+        """将会话标记为已完成"""
+        if not self.conversation_id:
+            return
+
+        try:
+            conversation = self.db.query(Conversation).filter(
+                Conversation.id == self.conversation_id
+            ).first()
+            if conversation and conversation.status == ConversationStatus.active:
+                conversation.status = ConversationStatus.completed
+                self.db.commit()
+        except Exception as e:
+            print(f"[WARNING] Failed to complete conversation: {e}")
 
     def __del__(self):
         """清理资源"""

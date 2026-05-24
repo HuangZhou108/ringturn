@@ -17,6 +17,28 @@ from .feedback import (
     FeedbackListResponse,
 )
 from .upload import UploadResponse, UploadMetadata
+from .conversation import (
+    ConversationCreate,
+    ConversationCreateResponse,
+    ConversationListItem,
+    ConversationListResponse,
+    MessageItem,
+    ConversationDetailResponse,
+    MessageCreate,
+    MessageCreateResponse,
+    ConversationUpdate,
+    ConversationUpdateResponse,
+    ConversationCompleteResponse,
+)
+from .profile import (
+    ProfileCreate,
+    ProfileUpdate,
+    ProfileResponse,
+    ProfileListResponse,
+    PreferencesImport,
+    PreferencesExport,
+    PreferencesApply,
+)
 
 __all__ = [
     "ResponseBase",
@@ -40,4 +62,22 @@ __all__ = [
     "FeedbackListResponse",
     "UploadResponse",
     "UploadMetadata",
+    "ConversationCreate",
+    "ConversationCreateResponse",
+    "ConversationListItem",
+    "ConversationListResponse",
+    "MessageItem",
+    "ConversationDetailResponse",
+    "MessageCreate",
+    "MessageCreateResponse",
+    "ConversationUpdate",
+    "ConversationUpdateResponse",
+    "ConversationCompleteResponse",
+    "ProfileCreate",
+    "ProfileUpdate",
+    "ProfileResponse",
+    "ProfileListResponse",
+    "PreferencesImport",
+    "PreferencesExport",
+    "PreferencesApply",
 ]
