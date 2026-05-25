@@ -6,7 +6,7 @@ import uuid
 import json
 
 from app.db.session import get_db, SessionLocal
-from app.models import Task as TaskModel, TaskStatus, User, Feedback
+from app.models import Task as TaskModel, TaskStatus, User, Feedback, Conversation, ConversationMessage, ConversationStatus, MessageRole, Profile
 from app.schemas import (
     TaskCreate,
     TaskCreateResponse,
@@ -21,6 +21,7 @@ from app.schemas import (
 )
 from app.services.file_service import file_service
 from app.agent.agent_executor import AgentExecutor
+from app.api.v1.endpoints.profiles import get_active_profile as get_active_profile_from_db
 from app.core.exceptions import (
     TaskNotFoundException,
     UserNotFoundException,
@@ -50,26 +51,87 @@ async def create_task(
     创建任务（开始生成铃声）
 
     异步触发Agent执行，立即返回task_id
+    同时创建或关联会话（历史会话功能）
     """
     try:
         # 获取或创建默认用户
         user = get_or_create_default_user(db)
         user_id = user.id
 
+        # 获取当前活跃的Profile
+        profile = db.query(Profile).filter(Profile.is_active == 1).first()
+        profile_id = profile.id if profile else None
+
+        # 解析Profile偏好
+        profile_preferences = {}
+        if profile and profile.preferences_data:
+            try:
+                profile_preferences = json.loads(profile.preferences_data)
+            except json.JSONDecodeError:
+                profile_preferences = {}
+
         # 生成任务ID
         task_id = str(uuid.uuid4())
 
-        # 从 params 中提取已知参数，未提供则使用默认值
+        # 处理会话关联
+        conversation_id = request.conversation_id
+        if not conversation_id:
+            # 如果没有提供会话ID，创建新会话
+            conversation_id = str(uuid.uuid4())
+            title = request.user_request[:50] + "..." if len(request.user_request) > 50 else request.user_request
+            conversation = Conversation(
+                id=conversation_id,
+                user_id=user_id,
+                title=title,
+                status=ConversationStatus.active,
+            )
+            db.add(conversation)
+
+            # 创建第一条用户消息
+            first_message = ConversationMessage(
+                conversation_id=conversation_id,
+                role=MessageRole.user,
+                content=request.user_request,
+                task_id=task_id,
+            )
+            db.add(first_message)
+        else:
+            # 验证会话存在
+            conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+            if not conversation:
+                return {
+                    "code": 400,
+                    "data": {},
+                    "message": f"会话 {conversation_id} 不存在",
+                }
+
+            # 添加用户消息到会话
+            user_message = ConversationMessage(
+                conversation_id=conversation_id,
+                role=MessageRole.user,
+                content=request.user_request,
+                task_id=task_id,
+            )
+            db.add(user_message)
+
+        # 从 params 中提取已知参数，未提供则使用Profile偏好，最后使用默认值
         params = request.params or {}
-        instrument = params.get("instrument", "Acoustic Piano")
-        duration = params.get("duration", 30)
-        tempo = params.get("tempo", 120)
+        
+        # 优先级：用户请求 > Profile偏好 > 默认值
+        instrument = params.get("instrument", profile_preferences.get("default_instrument", "Acoustic Piano"))
+        duration = params.get("duration", profile_preferences.get("default_duration", 30))
+        tempo = params.get("tempo", profile_preferences.get("default_tempo", 120))
         filename = params.get("filename", "Untitled_Track")
+        
+        # 如果auto_apply开启，可以记录偏好到Profile（可选）
+        auto_apply = profile_preferences.get("auto_apply", True)
+        disliked_instruments = profile_preferences.get("disliked_instruments", [])
+        liked_instruments = profile_preferences.get("liked_instruments", [])
         ringtone_params = {
-        "instrument": instrument,
-        "duration": duration,
-        "tempo": tempo,
-        "filename": filename,
+            "instrument": instrument,
+            "duration": duration,
+            "tempo": tempo,
+            "filename": filename,
         }
         # 如果将来有额外参数，一并保留
         for k, v in params.items():
@@ -80,6 +142,7 @@ async def create_task(
         task = TaskModel(
             id=task_id,
             user_id=user_id,
+            profile_id=profile_id,
             user_request=request.user_request,
             source_type=request.source_type,
             source_value=request.source_value,  # 文件ID或链接（字符串）
@@ -96,6 +159,7 @@ async def create_task(
             "code": 200,
             "data": {
                 "task_id": task_id,
+                "conversation_id": conversation_id,
                 "status": task.status.value,
                 "created_at": task.created_at.isoformat() if task.created_at else None,
             },
@@ -207,6 +271,7 @@ async def submit_feedback(
 ):
     """
     提交反馈（创建子任务优化）
+    同时将反馈追加到对应的会话中
     """
     parent_task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
     if not parent_task:
@@ -229,6 +294,31 @@ async def submit_feedback(
         content=request.feedback,
     )
     db.add(feedback)
+
+    # 查找该任务关联的会话，并追加反馈消息
+    # 通过查找该任务创建时的用户消息来获取会话ID
+    user_message = db.query(ConversationMessage).filter(
+        ConversationMessage.task_id == task_id,
+        ConversationMessage.role == MessageRole.user
+    ).first()
+
+    if user_message:
+        # 添加用户反馈消息
+        feedback_msg = ConversationMessage(
+            conversation_id=user_message.conversation_id,
+            role=MessageRole.user,
+            content=f"[优化反馈] {request.feedback}",
+            task_id=new_task_id,
+        )
+        db.add(feedback_msg)
+
+        # 更新会话的更新时间
+        conversation = db.query(Conversation).filter(
+            Conversation.id == user_message.conversation_id
+        ).first()
+        if conversation:
+            conversation.updated_at = datetime.utcnow()
+
     db.commit()
 
     return {

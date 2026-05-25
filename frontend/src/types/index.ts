@@ -135,3 +135,93 @@ export interface Message {
     thinkingProcess?: { step: string; content: string; timestamp: string }[];
     showThinking?: boolean;
 }
+
+// 会话相关类型
+export interface Conversation {
+    conversation_id: string;
+    title: string;
+    status: 'active' | 'completed';
+    created_at: string;
+    updated_at: string;
+}
+
+export interface ConversationListItem {
+    conversation_id: string;
+    title: string;
+    status: string;
+    message_count: number;
+    last_message: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface ConversationDetail {
+    conversation_id: string;
+    title: string;
+    status: string;
+    messages: ConversationMessage[];
+    created_at: string;
+    updated_at: string;
+}
+
+export interface ConversationMessage {
+    id: number;
+    role: 'user' | 'assistant';
+    content: string;
+    task_id: string | null;
+    created_at: string;
+}
+
+// 更新任务创建请求
+export interface CreateTaskRequest {
+    user_request: string
+    conversation_id?: string  // 关联的会话ID
+    source_type?: SourceType
+    source_value?: string
+    params?: {
+        instrument?: string
+        duration?: number
+        tempo?: number
+        filename?: string
+        [key: string]: any
+    }
+}
+
+// 更新任务创建响应
+export interface CreateTaskResponse {
+    task_id: string
+    conversation_id: string  // 新增
+    status: TaskStatus
+    created_at: string
+}
+
+// Profile 相关类型
+export interface Profile {
+    profile_id: number
+    name: string
+    is_active: boolean
+    created_at: string
+}
+
+export interface ProfileListResponse {
+    data: Profile[]
+}
+
+export interface ProfileActiveResponse {
+    data: Profile
+}
+
+export interface ProfileTasksResponse {
+    total: number
+    page: number
+    page_size: number
+    tasks: TaskListItem[]
+}
+
+export interface ProfilePreferences {
+    default_instrument?: string
+    disliked_instruments?: string[]
+    default_duration?: number
+    default_tempo?: number
+    [key: string]: any
+}

@@ -12,7 +12,7 @@ from app.agent.state import AgentState, TaskStep
 from app.agent.graph import get_agent_graph
 from app.models import Task as TaskModel, TaskStatus
 from app.agent.thinking_utils import record_thought
-
+from app.models import Task as TaskModel, TaskStatus, Conversation, ConversationMessage, MessageRole, ConversationStatus
 
 class RingtoneParams:
     def __init__(self, task: TaskModel):
@@ -25,15 +25,27 @@ class RingtoneParams:
         self.max_retries = params.get("max_retries", 0)  # 用户可配置重试次数
         self.raw_params = params
 
-
 class AgentExecutor:
-    def __init__(self, task_id: str, db: Session = None):
+    def __init__(self, task_id: str, db: Session = None, conversation_id: str = None):
         self.task_id = task_id
         self.db = db or SessionLocal(expire_on_commit=False)
+        self.conversation_id = conversation_id
+
+        # 获取任务
         self.task = self.db.query(TaskModel).filter(TaskModel.id == task_id).first()
         if not self.task:
             raise ValueError(f"任务不存在: {task_id}")
 
+        # 如果没有传入 conversation_id，尝试从数据库中查找
+        if not self.conversation_id:
+            user_message = self.db.query(ConversationMessage).filter(
+                ConversationMessage.task_id == task_id,
+                ConversationMessage.role == MessageRole.user
+            ).first()
+            if user_message:
+                self.conversation_id = user_message.conversation_id
+
+        # 解析铃声参数
         self.ringtone_params = RingtoneParams(self.task)
         self.state = self._init_state()
         self.graph = None   # 延迟加载
@@ -119,8 +131,18 @@ class AgentExecutor:
     async def execute(self) -> dict:
         """执行任务：调用 LangGraph 图"""
         try:
+            # 记录开始消息
+            self._add_assistant_message(
+                f"收到任务请求，正在开始执行...\n用户需求：{self.state.get('user_request', '')}"
+            )
+
             await self._update_task_status(TaskStatus.planning)
             await self._plan()
+
+            # 记录规划完成消息
+            self._add_assistant_message(
+                f"执行计划已生成：{' → '.join(self.state.get('plan', []))}"
+            )
 
             await self._update_task_status(TaskStatus.executing)
             # 异步获取图实例
@@ -133,6 +155,12 @@ class AgentExecutor:
             self.task.audio_duration = final_state.get("audio_duration")
             self.task.thinking_process = final_state.get("thinking_process", [])
             await self._update_task_status(TaskStatus.completed)
+
+            # 记录完成消息
+            self._add_assistant_message(
+                f"任务已完成！\n生成铃声：{self.task.final_audio_url}\n时长：{self.task.audio_duration}秒"
+            )
+            self._complete_conversation()
 
             return {
                 "success": True,
@@ -147,6 +175,10 @@ class AgentExecutor:
             await self._update_task_status(TaskStatus.failed)
             self.task.error_message = str(e)
             self.db.commit()
+
+            # 记录错误消息到会话
+            self._add_assistant_message(f"任务执行失败：{str(e)}")
+            self._complete_conversation()
             raise
 
     async def _update_task_status(self, status: TaskStatus) -> None:
@@ -164,6 +196,47 @@ class AgentExecutor:
         })
         self.task.thinking_process = steps
         self.db.commit()
+
+    def _add_assistant_message(self, content: str) -> None:
+        """记录助手消息到会话"""
+        if not self.conversation_id:
+            return
+
+        try:
+            message = ConversationMessage(
+                conversation_id=self.conversation_id,
+                role=MessageRole.assistant,
+                content=content,
+                task_id=self.task_id,
+            )
+            self.db.add(message)
+
+            # 更新会话的更新时间
+            conversation = self.db.query(Conversation).filter(
+                Conversation.id == self.conversation_id
+            ).first()
+            if conversation:
+                conversation.updated_at = datetime.utcnow()
+
+            self.db.commit()
+        except Exception as e:
+            # 记录消息失败不影响主流程
+            print(f"[WARNING] Failed to add assistant message: {e}")
+
+    def _complete_conversation(self) -> None:
+        """将会话标记为已完成"""
+        if not self.conversation_id:
+            return
+
+        try:
+            conversation = self.db.query(Conversation).filter(
+                Conversation.id == self.conversation_id
+            ).first()
+            if conversation and conversation.status == ConversationStatus.active:
+                conversation.status = ConversationStatus.completed
+                self.db.commit()
+        except Exception as e:
+            print(f"[WARNING] Failed to complete conversation: {e}")
 
     def __del__(self):
         if hasattr(self, 'db') and self.db:
