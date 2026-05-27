@@ -28,7 +28,8 @@ class RingtoneParams:
 class AgentExecutor:
     def __init__(self, task_id: str, db: Session = None, conversation_id: str = None):
         self.task_id = task_id
-        self.db = db or SessionLocal(expire_on_commit=False)
+        self.db = db if db is not None else SessionLocal(expire_on_commit=False)
+        self._owns_db = db is None  # 标记是否自己创建的会话
         self.conversation_id = conversation_id
 
         # 获取任务
@@ -180,6 +181,8 @@ class AgentExecutor:
             self._add_assistant_message(f"任务执行失败：{str(e)}")
             self._complete_conversation()
             raise
+        finally:
+            self.close()  # 确保执行完毕后关闭会话
 
     async def _update_task_status(self, status: TaskStatus) -> None:
         self.task.status = status
@@ -237,6 +240,12 @@ class AgentExecutor:
                 self.db.commit()
         except Exception as e:
             print(f"[WARNING] Failed to complete conversation: {e}")
+
+    def close(self):
+        """显式关闭会话"""
+        if self._owns_db and self.db:
+            self.db.close()
+            self.db = None
 
     def __del__(self):
         if hasattr(self, 'db') and self.db:

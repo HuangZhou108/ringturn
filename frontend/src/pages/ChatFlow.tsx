@@ -174,6 +174,7 @@ function ChatFlow() {
     useEffect(() => {
         if (taskStatus && currentTaskId) {
             // 更新消息中的思考过程
+            // 仅更新思考过程，不覆盖正文
             setMessages((prev) => {
                 const lastAiMsgIndex = prev.findLastIndex(m => m.type === 'ai')
                 if (lastAiMsgIndex === -1) return prev
@@ -182,7 +183,7 @@ function ChatFlow() {
                     if (index === lastAiMsgIndex) {
                         return {
                             ...msg,
-                            content: taskStatus.message || taskStatus.current_subtask || msg.content,
+                            // content: taskStatus.message || taskStatus.current_subtask || msg.content,
                             thinkingProcess: taskStatus.thinking_process || msg.thinkingProcess,
                         }
                     }
@@ -205,10 +206,27 @@ function ChatFlow() {
                     pollingIntervalRef.current = null
                 }
                 setIsProcessing(false)
-                showError(t('chat.failed'))
+                // showError(t('chat.failed'))
+                // 修改最后一条 AI 消息的内容为错误文案
+                setMessages((prev) => {
+                    const lastAiIdx = prev.findLastIndex(m => m.type === 'ai')
+                    if (lastAiIdx === -1) return prev
+                    return prev.map((msg, idx) =>
+                        idx === lastAiIdx ? { ...msg, content: t('chat.failed') } : msg
+                    )
+                })
             }
         }
     }, [taskStatus, currentTaskId, t])
+
+    // 当 WebSocket 连接成功时，停止轮询（降级方案自动停止）
+    useEffect(() => {
+        if (isConnected && currentTaskId && pollingIntervalRef.current) {
+            console.log('[ChatFlow] WebSocket connected, stopping polling for task', currentTaskId)
+            clearInterval(pollingIntervalRef.current)
+            pollingIntervalRef.current = null
+        }
+    }, [isConnected, currentTaskId])
 
     // 组件卸载时清理轮询
     useEffect(() => {
@@ -228,7 +246,6 @@ function ChatFlow() {
                 setMessages((prev) => {
                     const lastAiMsgIndex = prev.findLastIndex(m => m.type === 'ai')
                     if (lastAiMsgIndex === -1) return prev
-
                     return prev.map((msg, index) => {
                         if (index === lastAiMsgIndex) {
                             return {
@@ -309,12 +326,27 @@ function ChatFlow() {
                 // 如果WebSocket未连接或不是当前任务，使用轮询
                 if (!isConnected || currentTaskId !== res.data.task_id) {
                     pollTaskStatus(res.data.task_id, processingMsg.id)
+                } else {
+                    // WebSocket 已连接，确保清除可能残留的轮询
+                    if (pollingIntervalRef.current) {
+                        clearInterval(pollingIntervalRef.current)
+                        pollingIntervalRef.current = null
+                    }
                 }
             } else {
                 showError(res.message || t('chat.createFailed'))
             }
         } catch {
-            showError(t('chat.networkError'))
+            setMessages((prev) => {
+                const lastAi = prev.findLastIndex(m => m.type === 'ai')
+                if (lastAi !== -1) {
+                    return prev.map((msg, idx) =>
+                        idx === lastAi ? { ...msg, content: t('chat.networkError') } : msg
+                    )
+                }
+                // 不存在 AI 消息时才新增
+                return [...prev, { id: nextId(), type: 'ai', content: t('chat.networkError') }]
+            })
         }
     }
 

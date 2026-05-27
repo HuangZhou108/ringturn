@@ -4,6 +4,7 @@ from typing import Optional
 from datetime import datetime
 import uuid
 import json
+import asyncio
 
 from app.db.session import get_db, SessionLocal
 from app.models import Task as TaskModel, TaskStatus, User, Feedback, Conversation, ConversationMessage, ConversationStatus, MessageRole, Profile
@@ -372,53 +373,22 @@ async def run_agent_task(task_id: str):
     import threading
     
     def run_in_thread():
-        db = SessionLocal(expire_on_commit=False)
-        try:
-            # 更新状态为planning
+        with SessionLocal(expire_on_commit=False) as db:  # SQLAlchemy 2.x 支持上下文
             task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
             if not task:
-                print(f"[ERROR] Task {task_id} not found")
                 return
             task.status = TaskStatus.planning
             db.commit()
 
-            # 初始化Agent执行器
             agent_executor = AgentExecutor(task_id=task_id, db=db)
-
-            # 创建新的事件循环给这个线程用
-            import asyncio
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                # 执行任务
                 result = loop.run_until_complete(agent_executor.execute())
             finally:
                 loop.close()
-
-            # 更新任务状态为completed
-            task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
-            if task:
-                task.status = TaskStatus.completed
-                task.final_audio_url = result["audio_url"]
-                task.audio_duration = result["duration"]
-                task.current_subtask = None
-                task.subtask_progress = 1.0
-                db.commit()
-                print(f"[SUCCESS] Task {task_id} completed")
-
-        except Exception as e:
-            print(f"[ERROR] Task {task_id} failed: {e}")
-            import traceback
-            traceback.print_exc()
-            # 更新任务状态为failed
-            task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
-            if task:
-                task.status = TaskStatus.failed
-                task.error_message = str(e)
-                db.commit()
-        finally:
-            db.close()
-    
+                agent_executor.close()  # 显式关闭内部会话（如果 db 是外部传入，则不会重复关闭）
+                
     # 在独立线程中运行，完全不阻塞主应用
     thread = threading.Thread(target=run_in_thread, daemon=True)
     thread.start()
