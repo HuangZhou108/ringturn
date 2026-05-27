@@ -35,6 +35,7 @@ export interface Message {
   role: 'user' | 'assistant'
   content: string
   task_id: string | null
+  thinking_process?: { step: string; content: string; timestamp: string }[]
   created_at: string
 }
 

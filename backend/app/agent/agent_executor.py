@@ -51,6 +51,14 @@ class AgentExecutor:
         self.state = self._init_state()
         self.graph = None   # 延迟加载
 
+        # 查找该任务对应的 assistant 消息（应该存在）
+        self.assistant_message = None
+        if self.conversation_id:
+            self.assistant_message = self.db.query(ConversationMessage).filter(
+                ConversationMessage.task_id == task_id,
+                ConversationMessage.role == MessageRole.assistant
+            ).first()
+
     def _init_state(self) -> AgentState:
         """初始化 Agent 状态"""
         return {
@@ -132,18 +140,8 @@ class AgentExecutor:
     async def execute(self) -> dict:
         """执行任务：调用 LangGraph 图"""
         try:
-            # 记录开始消息
-            self._add_assistant_message(
-                f"收到任务请求，正在开始执行...\n用户需求：{self.state.get('user_request', '')}"
-            )
-
             await self._update_task_status(TaskStatus.planning)
             await self._plan()
-
-            # 记录规划完成消息
-            self._add_assistant_message(
-                f"执行计划已生成：{' → '.join(self.state.get('plan', []))}"
-            )
 
             await self._update_task_status(TaskStatus.executing)
             # 异步获取图实例
@@ -158,7 +156,7 @@ class AgentExecutor:
             await self._update_task_status(TaskStatus.completed)
 
             # 记录完成消息
-            self._add_assistant_message(
+            self._update_assistant_message(
                 f"任务已完成！\n生成铃声：{self.task.final_audio_url}\n时长：{self.task.audio_duration}秒"
             )
             self._complete_conversation()
@@ -178,7 +176,7 @@ class AgentExecutor:
             self.db.commit()
 
             # 记录错误消息到会话
-            self._add_assistant_message(f"任务执行失败：{str(e)}")
+            self._update_assistant_message(f"任务执行失败：{str(e)}")
             self._complete_conversation()
             raise
         finally:
@@ -225,6 +223,13 @@ class AgentExecutor:
         except Exception as e:
             # 记录消息失败不影响主流程
             print(f"[WARNING] Failed to add assistant message: {e}")
+
+    def _update_assistant_message(self, content: str) -> None:
+        """更新已有的 assistant 消息内容"""
+        if not self.assistant_message:
+            return
+        self.assistant_message.content = content
+        self.db.commit()
 
     def _complete_conversation(self) -> None:
         """将会话标记为已完成"""

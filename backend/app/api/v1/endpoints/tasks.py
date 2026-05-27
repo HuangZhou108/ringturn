@@ -96,6 +96,13 @@ async def create_task(
                 task_id=task_id,
             )
             db.add(first_message)
+            assistant_message = ConversationMessage(
+                conversation_id=conversation_id,
+                role=MessageRole.assistant,
+                content="正在处理您的请求...",   # 占位内容
+                task_id=task_id,
+            )
+            db.add(assistant_message)
         else:
             # 验证会话存在
             conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
@@ -114,6 +121,13 @@ async def create_task(
                 task_id=task_id,
             )
             db.add(user_message)
+            assistant_message = ConversationMessage(
+                conversation_id=conversation_id,
+                role=MessageRole.assistant,
+                content="正在处理您的请求...",   # 占位内容
+                task_id=task_id,
+            )
+            db.add(assistant_message)
 
         # 从 params 中提取已知参数，未提供则使用Profile偏好，最后使用默认值
         params = request.params or {}
@@ -182,6 +196,13 @@ async def get_task(
     task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
     if not task:
         raise TaskNotFoundException(task_id)
+    
+    # 查找该任务关联的会话ID（通过第一条用户消息）
+    user_message = db.query(ConversationMessage).filter(
+        ConversationMessage.task_id == task_id,
+        ConversationMessage.role == MessageRole.user
+    ).first()
+    conversation_id = user_message.conversation_id if user_message else None
 
     return {
         "code": 200,
@@ -194,6 +215,7 @@ async def get_task(
             "final_audio_url": task.final_audio_url,
             "audio_duration": task.audio_duration,
             "plan": task.plan,
+            "conversation_id": conversation_id,
             "created_at": task.created_at.isoformat() if task.created_at else None,
             "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         },

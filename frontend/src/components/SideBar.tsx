@@ -88,25 +88,18 @@ export default function Sidebar({
     const handleConversationClick = (conv: ConversationListItem) => {
         setCurrentConversationId(conv.conversation_id)
         // 可以导航到聊天页面并加载该会话
-        navigate('/chat', {
-            state: {
-                conversationId: conv.conversation_id,
-                newChat: false,
-            }
-        })
+        navigate(`/chat/c/${conv.conversation_id}`, {
+            state: { conversationId: conv.conversation_id, newChat: false }
+        });
     }
 
     // 新建会话
     const handleNewChat = () => {
-        setCurrentConversationId(null)
+        setCurrentConversationId(null);
         if (onNewConversation) {
-            onNewConversation()
+            onNewConversation();
         }
-        navigate('/chat', {
-            state: {
-                newChat: true,
-            }
-        })
+        navigate('/chat');
     }
 
     return (

@@ -115,8 +115,8 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
                 last_progress = task.subtask_progress
                 last_thinking_count = thinking_count
 
-                # 获取最新的思考过程（最近3条）
-                thinking_process = task.thinking_process[-3:] if task.thinking_process else []
+                # 获取最新的思考过程(全部)
+                thinking_process = task.thinking_process
 
                 # 发送状态更新
                 await manager.send_message(task_id, {

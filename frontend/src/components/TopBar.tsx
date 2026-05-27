@@ -24,7 +24,7 @@ export default function TopBar({
         if (onNewChat) {
             onNewChat();
         } else {
-            navigate('/');
+            navigate('/chat');
         }
     };
 

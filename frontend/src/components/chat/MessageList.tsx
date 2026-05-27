@@ -53,26 +53,43 @@ export default function MessageList({ messages, t }: MessageListProps) {
                                     return (
                                         <div className="bg-white rounded-xl border border-gray-200 p-3 -mx-2">
                                             <p className="text-xs font-medium text-[#00639d] mb-2">
-                                                深度思考过程 ({msg.thinkingProcess.length}步)
+                                                深度思考过程 ({msg.thinkingProcess?.length || 0}步)
                                             </p>
-                                            <div className="space-y-3">
-                                                {merged.map((group, groupIdx) => (
-                                                    <div key={groupIdx} className="space-y-1.5">
-                                                        {/* 只显示第一个 step 标签 */}
-                                                        <span className="inline-block px-1.5 py-0.5 bg-[#00639d]/10 text-[#00639d] rounded text-[10px] font-medium">
-              {group.step}
-            </span>
-                                                        {/* 对应的所有 content，保持原样式且无标签 */}
-                                                        <div className="space-y-1.5 pl-2">
-                                                            {group.contents.map((content, contentIdx) => (
-                                                                <div key={contentIdx} className="text-xs text-gray-600 leading-relaxed">
-                                                                    {content}
+                                            {msg.thinkingProcess && msg.thinkingProcess.length > 0 ? (
+                                                // 合并并显示思考步骤
+                                                (() => {
+                                                    const merged: { step: string; contents: string[] }[] = [];
+                                                    for (let i = 0; i < msg.thinkingProcess.length; i++) {
+                                                        const current = msg.thinkingProcess[i];
+                                                        if (i === 0 || current.step !== msg.thinkingProcess[i - 1].step) {
+                                                            merged.push({ step: current.step, contents: [current.content] });
+                                                        } else {
+                                                            merged[merged.length - 1].contents.push(current.content);
+                                                        }
+                                                    }
+                                                    return (
+                                                        <div className="space-y-3">
+                                                            {merged.map((group, groupIdx) => (
+                                                                <div key={groupIdx} className="space-y-1.5">
+                            <span className="inline-block px-1.5 py-0.5 bg-[#00639d]/10 text-[#00639d] rounded text-[10px] font-medium">
+                                {group.step}
+                            </span>
+                                                                    <div className="space-y-1.5 pl-2">
+                                                                        {group.contents.map((content, contentIdx) => (
+                                                                            <div key={contentIdx} className="text-xs text-gray-600 leading-relaxed">
+                                                                                {content}
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
                                                                 </div>
                                                             ))}
                                                         </div>
-                                                    </div>
-                                                ))}
-                                            </div>
+                                                    );
+                                                })()
+                                            ) : (
+                                                // 无思考内容时的占位符（可显示灰色提示文字）
+                                                <div className="text-xs text-gray-400 italic">等待思考过程...</div>
+                                            )}
                                         </div>
                                     );
                                 })()}

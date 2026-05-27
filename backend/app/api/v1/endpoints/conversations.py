@@ -7,7 +7,7 @@ from typing import Optional
 import uuid
 
 from app.db.session import get_db
-from app.models import Conversation as ConversationModel, ConversationMessage as MessageModel, ConversationStatus, MessageRole
+from app.models import Conversation as ConversationModel, ConversationMessage as MessageModel, ConversationStatus, MessageRole, Task as TaskModel, TaskStatus
 from app.schemas.conversation import (
     ConversationCreate,
     ConversationCreateResponse,
@@ -188,16 +188,23 @@ async def get_conversation(
         MessageModel.conversation_id == conversation_id
     ).order_by(MessageModel.created_at.asc()).all()
 
-    message_list = [
-        {
+    message_list = []
+    for msg in messages:
+        # 如果是助理消息且关联了任务，则查询该任务的思考过程
+        thinking_process = None
+        if msg.role == MessageRole.assistant and msg.task_id:
+            task = db.query(TaskModel).filter(TaskModel.id == msg.task_id).first()
+            if task:
+                thinking_process = task.thinking_process  # 直接取 JSON 字段
+
+        message_list.append({
             "id": msg.id,
             "role": msg.role.value,
             "content": msg.content,
             "task_id": msg.task_id,
+            "thinking_process": thinking_process,  # 新增字段
             "created_at": msg.created_at.isoformat() if msg.created_at else None,
-        }
-        for msg in messages
-    ]
+        })
 
     return {
         "code": 200,
@@ -339,3 +346,21 @@ async def complete_conversation(
         },
         "message": "会话已标记为完成",
     }
+
+@router.get("/{conversation_id}/active_task")
+async def get_active_task(conversation_id: str, db: Session = Depends(get_db)):
+    # 未使用。查找该会话下最新且未完成/未失败/未取消的任务，可用于恢复当前任务
+    task = db.query(TaskModel).join(
+        MessageModel, TaskModel.id == MessageModel.task_id
+    ).filter(
+        MessageModel.conversation_id == conversation_id,
+        TaskModel.status.notin_([TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled])
+    ).order_by(TaskModel.created_at.desc()).first()
+    
+    if task:
+        return {
+            "code": 200,
+            "data": {"task_id": task.id, "status": task.status.value},
+            "message": "success"
+        }
+    return {"code": 404, "data": None, "message": "No active task"}

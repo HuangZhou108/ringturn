@@ -49,6 +49,7 @@ export interface Task {
     thread_id?: string
     final_audio_url?: string
     audio_duration?: number
+    conversation_id?: string
     created_at: string
     updated_at: string
     error_message?: string

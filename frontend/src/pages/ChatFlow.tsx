@@ -1,7 +1,7 @@
 // src/pages/ChatFlow.tsx
 import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { conversationApi, type ConversationDetail } from '../api/conversation'
 import type { TaskListItem, Message as AppMessage } from '../types'
@@ -31,11 +31,13 @@ interface Message {
 function ChatFlow() {
     const { t } = useTranslation()
     const location = useLocation()
+    const navigate = useNavigate()
 
     // 侧边栏状态
     const [sidebarOpen, setSidebarOpen] = useState(false)
 
     // 会话状态
+    const { conversationId: urlConversationId } = useParams<{ conversationId?: string }>();
     const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
     const [currentConversation, setCurrentConversation] = useState<ConversationDetail | null>(null)
 
@@ -105,12 +107,13 @@ function ChatFlow() {
                 setCurrentConversation(res.data)
 
                 // 将会话消息转换为UI消息
-                const uiMessages: Message[] = res.data.messages.map((msg, index) => ({
+                const uiMessages: Message[] = res.data.messages.map((msg) => ({
                     id: `msg-${msg.id}`,
                     type: msg.role === 'user' ? 'user' : 'ai',
                     content: msg.content,
                     taskId: msg.task_id || undefined,
                     userFile: msg.role === 'user' ? uploadedFileName : undefined,
+                    thinkingProcess: msg.thinking_process || [],
                 }))
 
                 // 如果没有消息，显示欢迎消息
@@ -267,6 +270,75 @@ function ChatFlow() {
         }
     }
 
+    const fetchTaskInfo = async (taskId: string) => {
+        try {
+            const res = await api.getTask(taskId)
+            if (res.code === 200 && res.data) {
+                const task = res.data
+                // 设置会话 ID
+                if (task.conversation_id) {
+                    setCurrentConversationId(task.conversation_id)
+                    // 加载会话消息，补全对话历史
+                    loadConversation(task.conversation_id)
+                }
+                // 设置用户消息（从任务的 user_request）
+                setMessages([])
+                setCurrentTaskId(taskId)
+
+                // 设置参数
+                // if (task.ringtone_params) {
+                //     if (task.ringtone_params.instrument) setInstrument(task.ringtone_params.instrument)
+                //     if (task.ringtone_params.tempo) setTempo(String(task.ringtone_params.tempo))
+                //     if (task.ringtone_params.duration) setDuration(String(task.ringtone_params.duration))
+                //     if (task.ringtone_params.filename) setFilename(task.ringtone_params.filename)
+                // }
+
+                // 添加用户消息（从 task.user_request）
+                const userMsg: Message = {
+                    id: nextId(),
+                    type: 'user',
+                    content: task.user_request,
+                    userFile: task.source_value || undefined, // 或者从文件服务获取文件名
+                }
+                setMessages([userMsg])
+
+                // 添加处理中消息（如果任务未完成）
+                if (task.status !== 'completed' && task.status !== 'failed') {
+                    const processingMsg: Message = {
+                        id: nextId(),
+                        type: 'ai',
+                        taskId: taskId,
+                        deepThinking: t('chat.deepThinking'),
+                        content: t('chat.taskCreated'),
+                        thinkingProcess: [],
+                    }
+                    setMessages((prev) => [...prev, processingMsg])
+                    pollTaskStatus(taskId, processingMsg.id)
+                } else if (task.status === 'completed') {
+                    // 已完成任务，显示结果
+                    const completedMsg: Message = {
+                        id: nextId(),
+                        type: 'ai',
+                        content: t('chat.completed'),
+                        fileName: task.final_audio_url,
+                        fileInfo: task.audio_duration ? `${task.audio_duration}s` : undefined,
+                    }
+                    setMessages((prev) => [...prev, completedMsg])
+                } else if (task.status === 'failed') {
+                    const failedMsg: Message = {
+                        id: nextId(),
+                        type: 'ai',
+                        content: t('chat.failed'),
+                    }
+                    setMessages((prev) => [...prev, failedMsg])
+                }
+            }
+        } catch (err) {
+            console.error('Failed to fetch task info:', err)
+            showToast('加载任务失败')
+        }
+    }
+
     // 发送消息
     const handleSend = async () => {
         if (!inputValue.trim()) return
@@ -303,15 +375,15 @@ function ChatFlow() {
             })
 
             if (res.code === 200) {
-                setIsProcessing(true)
-                setCurrentTaskId(res.data.task_id)
-
-                // 如果创建了新会话，保存会话ID
-                if (res.data.conversation_id && !currentConversationId) {
-                    setCurrentConversationId(res.data.conversation_id)
+                const newConvId = res.data.conversation_id;
+                if (!currentConversationId) {
+                    // 新建会话，跳转到新会话 URL
+                    navigate(`/chat/c/${newConvId}`, { replace: true });
+                    setCurrentConversationId(newConvId);
+                } else {
+                    // 已有会话，只更新状态，不改变 URL
+                    setCurrentTaskId(res.data.task_id);
                 }
-
-                fetchHistoryRef.current?.()
 
                 // 添加处理中消息
                 const processingMsg: Message = {
@@ -430,66 +502,36 @@ function ChatFlow() {
     }
 
     // 处理路由状态变化
+    // 只从 URL/state 解析 ID
     useEffect(() => {
-        const state = location.state as any || {}
-        const newChat = state.newChat as boolean | undefined
-        const conversationId = state.conversationId as string | undefined
-        const taskId = state.taskId as string | undefined
-        const userMessage = state.userMessage as string | undefined
-        const userFileId = state.audioFileId as string | undefined
-        const params = state.params || {}
-        const userFilename = state.filename as string | undefined
-
-        // 处理新建空会话
-        if (newChat&& currentConversationId !== null) {
-            handleNewConversation()
-            // 清除 location.state 避免重复触发
-            if (location.state && (location.state as any).newChat) {
-                window.history.replaceState({}, '', location.pathname)
-            }
-            return
-        }
-
-        // 处理加载指定会话
+        const conversationId = urlConversationId || location.state?.conversationId;
+        const taskId = location.state?.taskId;
         if (conversationId) {
-            setCurrentConversationId(conversationId)
-            loadConversation(conversationId)
-            return
+            setCurrentConversationId(conversationId);
+            // 清除可能残留的任务 ID
+            setCurrentTaskId(null);
+        } else if (taskId) {
+            // 如果只有 taskId（理论上不应发生），可以恢复
+            setCurrentTaskId(taskId);
+            setCurrentConversationId(null);
+        } else {
+            // 无任何 ID，显示欢迎页
+            handleNewConversation();
         }
+    }, [urlConversationId, location.state]);
 
-        // 处理任务ID（旧逻辑兼容）
-        if (taskId && userMessage) {
-            setMessages([])
-            setCurrentTaskId(taskId)
-
-            if (userFilename) setUploadedFileName(userFilename)
-            if (params.instrument) setInstrument(params.instrument)
-            if (params.tempo) setTempo(String(params.tempo))
-            if (params.duration) setDuration(String(params.duration))
-            if (params.filename) setFilename(params.filename)
-
-            // 添加用户消息
-            const userMsg: Message = {
-                id: nextId(),
-                type: 'user',
-                content: userMessage,
-                userFile: userFilename || undefined,
-            }
-            setMessages([userMsg])
-
-            // 添加处理中消息
-            const processingMsg: Message = {
-                id: nextId(),
-                type: 'ai',
-                taskId: taskId,
-                deepThinking: t('chat.deepThinking'),
-                content: t('chat.taskCreated'),
-            }
-            setMessages((prev) => [...prev, processingMsg])
-
-            pollTaskStatus(taskId, processingMsg.id)
+// 单独 effect 加载数据
+    useEffect(() => {
+        if (currentConversationId) {
+            loadConversation(currentConversationId);
+            // 可选：调用 active_task 接口恢复任务
+            fetchActiveTask(currentConversationId).then(taskId => {
+                if (taskId) setCurrentTaskId(taskId);
+            });
+        } else if (currentTaskId && !currentConversationId) {
+            fetchTaskInfo(currentTaskId);
         }
-    }, [location.state, loadConversation, handleNewConversation, t])
+    }, [currentConversationId, currentTaskId]);
 
     // 文件选择
     const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -622,6 +664,20 @@ function ChatFlow() {
             window.removeEventListener('mouseup', handleMouseUp)
         }
     }, [isDragging])
+
+    const fetchActiveTask = async (conversationId: string) => {
+        try {
+            const res = await fetch(`/api/v1/conversations/${conversationId}/active_task`);
+            const data = await res.json();
+            if (data.code === 200 && data.data?.task_id) {
+                setCurrentTaskId(data.data.task_id);
+                // 如果需要，可以恢复轮询/WebSocket
+                restoreTask(data.data.task_id);
+            }
+        } catch (err) {
+            console.error('Failed to fetch active task', err);
+        }
+    };
 
     return (
         <div className="flex flex-col h-screen bg-white text-gray-800 font-sans page-enter">
