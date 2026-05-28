@@ -44,14 +44,6 @@ export const api = {
     cancelTask: (taskId: string) =>
         request<TaskCancelResult>(`/tasks/${taskId}`, { method: 'DELETE' }),
 
-    // 获取用户历史任务列表
-    getUserTasks: (userId: number, params?: { page?: number; page_size?: number; status?: string }) => {
-        const query = new URLSearchParams()
-        if (params?.page) query.append('page', String(params.page))
-        if (params?.page_size) query.append('page_size', String(params.page_size))
-        if (params?.status) query.append('status', params.status)
-        return request<TaskListResponse>(`/users/${userId}/tasks?${query.toString()}`)
-    },
 
     // 上传音频文件
     uploadFile: async (file: File, metadata?: { title?: string; artist?: string }) => {

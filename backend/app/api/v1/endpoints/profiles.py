@@ -1,14 +1,14 @@
 """
 Profile 管理接口
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 import json
 from datetime import datetime
 
 from app.db.session import get_db
-from app.models import Profile
+from app.models import Profile, Task as TaskModel
 from app.schemas.profile import (
     ProfileCreate,
     ProfileUpdate,
@@ -44,7 +44,7 @@ def ensure_profiles_exist(db: Session) -> None:
     """确保存在至少一个 Profile"""
     count = db.query(Profile).count()
     if count == 0:
-        default = Profile(name="默认", is_active=1)
+        default = Profile(name="default", is_active=1)
         db.add(default)
         db.commit()
 
@@ -346,4 +346,39 @@ async def get_profile(
             "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
         },
         "message": "获取成功",
+    }
+
+@router.get("/{profile_id}/tasks")
+async def get_profile_tasks(
+    profile_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """获取指定 Profile 的任务列表"""
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise ProfileNotFoundException(profile_id)
+
+    query = db.query(TaskModel).filter(TaskModel.profile_id == profile_id)
+    if status:
+        query = query.filter(TaskModel.status == status)
+    total = query.count()
+    tasks = query.order_by(TaskModel.created_at.desc()) \
+                 .offset((page - 1) * page_size) \
+                 .limit(page_size) \
+                 .all()
+    items = [{
+        "task_id": t.id,
+        "user_request": t.user_request,
+        "status": t.status.value,
+        "final_audio_url": t.final_audio_url,
+        "audio_duration": t.audio_duration,
+        "created_at": t.created_at.isoformat(),
+    } for t in tasks]
+    return {
+        "code": 200,
+        "data": {"total": total, "page": page, "page_size": page_size, "tasks": items},
+        "message": "success"
     }

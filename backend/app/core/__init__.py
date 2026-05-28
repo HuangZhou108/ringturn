@@ -2,7 +2,7 @@ from .config import Settings, get_settings, ensure_directories
 from .exceptions import (
     AppException,
     TaskNotFoundException,
-    UserNotFoundException,
+    ProfileNotFoundException,
     TaskNotCompletedException,
     TaskCannotBeCancelledException,
     InvalidAudioFormatException,
@@ -16,7 +16,7 @@ __all__ = [
     "ensure_directories",
     "AppException",
     "TaskNotFoundException",
-    "UserNotFoundException",
+    "ProfileNotFoundException",
     "TaskNotCompletedException",
     "TaskCannotBeCancelledException",
     "InvalidAudioFormatException",

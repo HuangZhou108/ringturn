@@ -47,7 +47,7 @@ async def submit_feedback(
 
     child_task = Task(
         id=new_task_id,
-        user_id=parent_task.user_id,
+        profile_id=parent_task.profile_id,
         parent_task_id=task_id,
         user_request=new_user_request,
         source_type=parent_task.source_type,

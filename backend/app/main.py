@@ -10,6 +10,7 @@ from app.core.exceptions import AppException
 from app.db.session import init_db, enable_wal_mode
 from app.api.v1 import api_router
 from app.api.v1.websocket.chat import websocket_endpoint
+from app.api.v1.endpoints.profiles import ensure_profiles_exist
 
 settings = get_settings()
 
@@ -20,6 +21,14 @@ async def lifespan(app: FastAPI):
     ensure_directories()
     init_db()
     enable_wal_mode()
+    # 确保至少有一个 Profile（默认）
+    from app.db.session import SessionLocal
+    db = SessionLocal()
+    try:
+        ensure_profiles_exist(db)
+        db.commit()
+    finally:
+        db.close()
     yield
     # 关闭时执行
     pass

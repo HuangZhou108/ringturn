@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useLocation, useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api'
+import { profileApi } from '../api/profile'
 import { conversationApi, type ConversationDetail } from '../api/conversation'
 import type { TaskListItem, Message as AppMessage } from '../types'
 import TopBar from '../components/TopBar'
@@ -37,6 +38,7 @@ function ChatFlow() {
     const [sidebarOpen, setSidebarOpen] = useState(false)
 
     // 会话状态
+    const [activeProfileId, setActiveProfileId] = useState<number | null>(null);
     const { conversationId: urlConversationId } = useParams<{ conversationId?: string }>();
     const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
     const [currentConversation, setCurrentConversation] = useState<ConversationDetail | null>(null)
@@ -76,6 +78,15 @@ function ChatFlow() {
     const [refreshSidebar, setRefreshSidebar] = useState(0); // 刷新侧边栏
     // 使用 ref 保存路由状态，避免重新渲染时丢失
     const locationStateRef = useRef(location.state as any)
+
+    // 获取当前Profile
+    useEffect(() => {
+        const loadProfile = async () => {
+            const res = await profileApi.getActive();
+            if (res.code === 200) setActiveProfileId(res.data.profile_id);
+        };
+        loadProfile();
+    }, []);
 
     const handleScroll = () => {
         const container = messagesEndRef.current;
@@ -167,15 +178,12 @@ function ChatFlow() {
     // 加载历史任务（保留兼容性）
     useEffect(() => {
         const fetchHistory = async () => {
+            if (!activeProfileId) return;
             try {
-                const res = await api.getUserTasks(1)
-                if (res.code === 200 && res.data) {
-                    setRecentTasks(res.data.tasks || [])
-                }
-            } catch {
-                // 静默失败
-            }
-        }
+                const res = await api.getProfileTasks(activeProfileId, { page: 1, page_size: 10 });
+                if (res.code === 200) setRecentTasks(res.data.tasks);
+            } catch { /* ignore */ }
+        };
         fetchHistoryRef.current = fetchHistory
     }, [])
 
@@ -719,10 +727,49 @@ function ChatFlow() {
         }
     };
 
+    // 处理Profile切换
+    const handleProfileChanged = useCallback(async () => {
+        try {
+            // 1. 重新获取当前活跃的 Profile
+            const res = await profileApi.getActive();
+            if (res.code === 200 && res.data) {
+                setActiveProfileId(res.data.profile_id);
+            }
+
+            // 2. 清空当前会话状态，回到欢迎页
+            setCurrentConversationId(null);
+            setCurrentConversation(null);
+            setMessages([]);
+            setCurrentTaskId(null);
+            setInputValue('');
+            setAudioFileId(null);
+            setUploadedFileName(null);
+            setUploadSuccess(null);
+            setUploadError(null);
+            setInstrument('');
+            setDuration('');
+            setTempo('');
+            setFilename('Untitled_Track');
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+
+            // 3. 清除 URL 中的会话 ID，避免重新加载旧会话
+            navigate('/chat', { replace: true });
+
+            // 4. 刷新侧边栏
+            setRefreshSidebar(prev => prev + 1);
+        } catch (err) {
+            console.error('Failed to refresh after profile change:', err);
+            showToast('切换档案失败，请刷新页面重试');
+        }
+    }, [navigate]);
+
     return (
         <div className="flex flex-col h-screen bg-white text-gray-800 font-sans page-enter">
             <TopBar
                 onNewChat={() => handleNewConversation()}
+                onProfileChanged={handleProfileChanged}
             />
 
             <div className="flex flex-1 overflow-hidden">
@@ -740,6 +787,7 @@ function ChatFlow() {
                         if (fetchHistoryRef.current) await fetchHistoryRef.current()
                     }}
                     refreshTrigger={refreshSidebar}
+                    profileId={activeProfileId}
                 />
 
                 {/* 主内容区 */}

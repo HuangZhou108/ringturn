@@ -72,11 +72,12 @@ async function request<T>(url: string, options?: RequestInit): Promise<ApiRespon
 
 export const conversationApi = {
   // 获取会话列表
-  list: (params?: { page?: number; page_size?: number; status?: string }) => {
+  list: (params?: { page?: number; page_size?: number; status?: string; profile_id: number }) => {
     const query = new URLSearchParams()
     if (params?.page) query.append('page', String(params.page))
     if (params?.page_size) query.append('page_size', String(params.page_size))
     if (params?.status) query.append('status', params.status)
+    if (params?.profile_id) query.append('profile_id', String(params.profile_id));
     const queryStr = query.toString() ? `?${query.toString()}` : ''
     return request<ConversationListResponse>(`/conversations${queryStr}`)
   },

@@ -25,19 +25,6 @@ class TaskStatus(enum.Enum):
     failed = "failed"
     cancelled = "cancelled"
 
-class User(Base):
-    """用户表（单用户模式，仅用于数据隔离）"""
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    username = Column(String(64), unique=True, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    # 关联
-    tasks = relationship("Task", back_populates="user", cascade="all, delete-orphan")
-    preferences = relationship("Preference", back_populates="user", cascade="all, delete-orphan")
-    conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
-
 class Profile(Base):
     """Profile 表（用于多配置切换）"""
     __tablename__ = "profiles"
@@ -57,7 +44,6 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id = Column(String(36), primary_key=True)  # UUID
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)  # Profile外键
     parent_task_id = Column(String(36), ForeignKey("tasks.id"), nullable=True)
 
@@ -94,7 +80,6 @@ class Task(Base):
     error_message = Column(Text)
 
     # 关联
-    user = relationship("User", back_populates="tasks")
     profile = relationship("Profile")
     parent_task = relationship("Task", remote_side=[id], backref="subtasks")
     feedbacks = relationship("Feedback", back_populates="task", cascade="all, delete-orphan")
@@ -117,19 +102,19 @@ class Preference(Base):
     __tablename__ = "preferences"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=False)
     key = Column(String(64), nullable=False)
     value = Column(JSON, nullable=False)  # 如 ["cello"] 或 {"bpm": 120}
 
     # 关联
-    user = relationship("User", back_populates="preferences")
+    # profile = relationship("Profile", back_populates="preferences")
 
 class Conversation(Base):
     """会话表"""
     __tablename__ = "conversations"
 
     id = Column(String(36), primary_key=True)  # UUID
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=False)
     title = Column(String(200))
     status = Column(Enum(ConversationStatus), default=ConversationStatus.active, nullable=False)
 
@@ -138,7 +123,7 @@ class Conversation(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # 关联
-    user = relationship("User", back_populates="conversations")
+    profile = relationship("Profile")
     messages = relationship("ConversationMessage", back_populates="conversation", cascade="all, delete-orphan")
 
 class ConversationMessage(Base):

@@ -16,7 +16,8 @@ interface SidebarProps {
     currentTaskId?: string | null
     setCurrentTaskId?: (id: string | null) => void
     onRefresh?: () => Promise<void>
-    refreshTrigger?: number; // 在ChatFlow新建对话时自动刷新侧边栏
+    refreshTrigger?: number // 在ChatFlow新建对话时自动刷新侧边栏
+    profileId?: number | null
 }
 
 export default function Sidebar({
@@ -30,6 +31,7 @@ export default function Sidebar({
                                     setCurrentTaskId,
                                     onRefresh,
                                     refreshTrigger,
+                                    profileId,
                                 }: SidebarProps) {
     const { t } = useTranslation()
     const navigate = useNavigate()
@@ -41,11 +43,11 @@ export default function Sidebar({
 
     // 加载会话列表
     const loadConversations = async () => {
+        if (!profileId) return;
         setIsLoading(true)
         try {
             const status = filter === 'all' ? undefined : filter
-            const res = await conversationApi.list({ page: 1, page_size: 50, status })
-            if (res.code === 200) {
+            const res = await conversationApi.list({ page: 1, page_size: 50, status: filter === 'all' ? undefined : filter, profile_id: profileId });            if (res.code === 200) {
                 setConversations(res.data.conversations)
             }
         } catch (err) {
@@ -59,7 +61,7 @@ export default function Sidebar({
         if (sidebarOpen) {
             loadConversations()
         }
-    }, [sidebarOpen, filter])
+    }, [sidebarOpen, filter, profileId])
 
     // 删除会话
     const handleDeleteConversation = async (e: React.MouseEvent, id: string) => {

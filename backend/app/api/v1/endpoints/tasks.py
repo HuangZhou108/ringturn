@@ -7,7 +7,7 @@ import json
 import asyncio
 
 from app.db.session import get_db, SessionLocal
-from app.models import Task as TaskModel, TaskStatus, User, Feedback, Conversation, ConversationMessage, ConversationStatus, MessageRole, Profile
+from app.models import Task as TaskModel, TaskStatus, Feedback, Conversation, ConversationMessage, ConversationStatus, MessageRole, Profile
 from app.schemas import (
     TaskCreate,
     TaskCreateResponse,
@@ -25,22 +25,12 @@ from app.agent.agent_executor import AgentExecutor
 from app.api.v1.endpoints.profiles import get_active_profile as get_active_profile_from_db
 from app.core.exceptions import (
     TaskNotFoundException,
-    UserNotFoundException,
+    ProfileNotFoundException,
     TaskCannotBeCancelledException,
     AppException,
 )
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
-
-def get_or_create_default_user(db: Session) -> User:
-    """获取或创建默认用户"""
-    user = db.query(User).filter(User.username == "default").first()
-    if not user:
-        user = User(id=1, username="default")
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    return user
 
 @router.post("")
 async def create_task(
@@ -55,10 +45,6 @@ async def create_task(
     同时创建或关联会话（历史会话功能）
     """
     try:
-        # 获取或创建默认用户
-        user = get_or_create_default_user(db)
-        user_id = user.id
-
         # 获取当前活跃的Profile
         profile = db.query(Profile).filter(Profile.is_active == 1).first()
         profile_id = profile.id if profile else None
@@ -82,7 +68,7 @@ async def create_task(
             title = request.user_request[:50] + "..." if len(request.user_request) > 50 else request.user_request
             conversation = Conversation(
                 id=conversation_id,
-                user_id=user_id,
+                profile_id=profile_id,
                 title=title,
                 status=ConversationStatus.active,
             )
@@ -156,7 +142,6 @@ async def create_task(
         # 创建任务记录
         task = TaskModel(
             id=task_id,
-            user_id=user_id,
             profile_id=profile_id,
             user_request=request.user_request,
             source_type=request.source_type,
@@ -304,7 +289,7 @@ async def submit_feedback(
     new_task_id = str(uuid.uuid4())
     child_task = TaskModel(
         id=new_task_id,
-        user_id=parent_task.user_id,
+        profile_id=parent_task.profile_id,
         parent_task_id=task_id,
         user_request=f"[优化] {parent_task.user_request} - 反馈: {request.feedback}",
         status=TaskStatus.pending,

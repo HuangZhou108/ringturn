@@ -22,7 +22,7 @@ class AgentState(TypedDict, total=False):
     # 基础信息
     task_id: str
     user_request: str
-    user_id: int
+    profile_id: int
 
     # 音频源
     source_type: str

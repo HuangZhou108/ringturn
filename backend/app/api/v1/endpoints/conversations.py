@@ -7,7 +7,7 @@ from typing import Optional
 import uuid
 
 from app.db.session import get_db
-from app.models import Conversation as ConversationModel, ConversationMessage as MessageModel, ConversationStatus, MessageRole, Task as TaskModel, TaskStatus
+from app.models import Conversation as ConversationModel, ConversationMessage as MessageModel, ConversationStatus, MessageRole, Task as TaskModel, TaskStatus, Profile
 from app.schemas.conversation import (
     ConversationCreate,
     ConversationCreateResponse,
@@ -40,18 +40,6 @@ class MessageNotFoundException(AppException):
         self.detail = f"消息 {message_id} 不存在"
 
 
-def get_or_create_default_user(db: Session):
-    """获取或创建默认用户"""
-    from app.models import User
-    user = db.query(User).filter(User.username == "default").first()
-    if not user:
-        user = User(id=1, username="default")
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    return user
-
-
 @router.post("", response_model=dict)
 async def create_conversation(
     request: ConversationCreate,
@@ -63,14 +51,20 @@ async def create_conversation(
     同时创建第一条用户消息
     """
     try:
-        user = get_or_create_default_user(db)
+        profile = db.query(Profile).filter(Profile.is_active == 1).first()
+        if not profile:
+            # 如果没有活跃 Profile，创建默认（或报错）
+            profile = Profile(name="默认", is_active=1)
+            db.add(profile)
+            db.commit()
+            db.refresh(profile)
         conversation_id = str(uuid.uuid4())
 
         title = request.title or (request.user_request[:50] + "..." if len(request.user_request) > 50 else request.user_request)
 
         conversation = ConversationModel(
             id=conversation_id,
-            user_id=user.id,
+            profile_id=profile.id,
             title=title,
             status=ConversationStatus.active,
         )
@@ -105,6 +99,7 @@ async def create_conversation(
 
 @router.get("", response_model=dict)
 async def list_conversations(
+    profile_id: int = Query(...),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
     status: Optional[str] = Query(None, description="状态过滤"),
@@ -115,9 +110,11 @@ async def list_conversations(
 
     按更新时间倒序排列
     """
-    user = get_or_create_default_user(db)
-
-    query = db.query(ConversationModel).filter(ConversationModel.user_id == user.id)
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise HTTPException(404, "Profile not found")
+    
+    query = db.query(ConversationModel).filter(ConversationModel.profile_id == profile_id)
 
     if status:
         try:

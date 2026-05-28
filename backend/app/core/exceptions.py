@@ -11,10 +11,10 @@ class TaskNotFoundException(AppException):
         detail = f"任务不存在: {task_id}" if task_id else "任务不存在"
         super().__init__(status_code=404, detail=detail)
 
-class UserNotFoundException(AppException):
-    """用户不存在"""
-    def __init__(self, user_id: int = None):
-        detail = f"用户不存在: {user_id}" if user_id else "用户不存在"
+class ProfileNotFoundException(AppException):
+    """档案不存在"""
+    def __init__(self, profile_id: int = None):
+        detail = f"档案不存在: {profile_id}" if profile_id else "档案不存在"
         super().__init__(status_code=404, detail=detail)
 
 class TaskNotCompletedException(AppException):

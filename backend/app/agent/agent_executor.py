@@ -63,7 +63,7 @@ class AgentExecutor:
         """初始化 Agent 状态"""
         return {
             "task_id": self.task.id,
-            "user_id": self.task.user_id,
+            "profile_id": self.task.profile_id,
             "user_request": self.task.user_request,
             "source_type": self.task.source_type,
             "source_value": self.task.source_value,
