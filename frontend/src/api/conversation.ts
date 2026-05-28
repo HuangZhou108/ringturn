@@ -36,6 +36,9 @@ export interface Message {
   content: string
   task_id: string | null
   thinking_process?: { step: string; content: string; timestamp: string }[]
+  file_name: string | null
+  audio_url: string | null
+  audio_duration: number | null
   created_at: string
 }
 

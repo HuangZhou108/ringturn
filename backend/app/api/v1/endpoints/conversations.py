@@ -192,10 +192,21 @@ async def get_conversation(
     for msg in messages:
         # 如果是助理消息且关联了任务，则查询该任务的思考过程
         thinking_process = None
+        audio_url = None
+        audio_duration = None
+        file_name = None
         if msg.role == MessageRole.assistant and msg.task_id:
             task = db.query(TaskModel).filter(TaskModel.id == msg.task_id).first()
             if task:
                 thinking_process = task.thinking_process  # 直接取 JSON 字段
+                audio_url = task.final_audio_url
+                audio_duration = task.audio_duration
+            elif msg.role == MessageRole.user and msg.task_id:
+                task = db.query(TaskModel).filter(TaskModel.id == msg.task_id).first()
+                if task and task.source_type == 'upload' and task.source_value:
+                    # 尝试获取原始文件名（如果有上传记录）
+                    # 简化：从文件服务获取文件名，或直接使用 task.source_value + 默认显示
+                    file_name = f"音频文件 ({task.source_value[:8]}...)"  # 占位符
 
         message_list.append({
             "id": msg.id,
@@ -203,6 +214,9 @@ async def get_conversation(
             "content": msg.content,
             "task_id": msg.task_id,
             "thinking_process": thinking_process,  # 新增字段
+            "audio_url": audio_url,
+            "audio_duration": audio_duration,
+            "file_name": file_name,
             "created_at": msg.created_at.isoformat() if msg.created_at else None,
         })
 

@@ -71,9 +71,18 @@ function ChatFlow() {
     const idCounter = useRef(Date.now())
     const fetchHistoryRef = useRef<(() => Promise<void>) | null>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
+    const [autoScroll, setAutoScroll] = useState(true); // 处理自动滚动
     const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
     // 使用 ref 保存路由状态，避免重新渲染时丢失
     const locationStateRef = useRef(location.state as any)
+
+    const handleScroll = () => {
+        const container = messagesEndRef.current;
+        if (!container) return;
+        const { scrollTop, scrollHeight, clientHeight } = container;
+        const isAtBottom = Math.abs(scrollHeight - scrollTop - clientHeight) < 10;
+        setAutoScroll(isAtBottom);
+    };
 
     // WebSocket
     const { isConnected, taskStatus } = useWebSocket(currentTaskId)
@@ -112,8 +121,10 @@ function ChatFlow() {
                     type: msg.role === 'user' ? 'user' : 'ai',
                     content: msg.content,
                     taskId: msg.task_id || undefined,
-                    userFile: msg.role === 'user' ? uploadedFileName : undefined,
+                    userFile: msg.file_name || (msg.role === 'user' ? uploadedFileName : undefined),
                     thinkingProcess: msg.thinking_process || [],
+                    fileName: msg.audio_url,                     // 音频 URL 作为文件名显示
+                    fileInfo: msg.audio_duration ? `${msg.audio_duration}s` : undefined,
                 }))
 
                 // 如果没有消息，显示欢迎消息
@@ -168,14 +179,28 @@ function ChatFlow() {
 
     // 页面自动滚动
     useEffect(() => {
-        if (messagesEndRef.current) {
-            messagesEndRef.current.scrollTop = messagesEndRef.current.scrollHeight
+        const container = messagesEndRef.current;
+        if (!container) return;
+        container.addEventListener('scroll', handleScroll);
+        return () => container.removeEventListener('scroll', handleScroll);
+    }, []);
+    useEffect(() => {
+        if (autoScroll && messagesEndRef.current) {
+            messagesEndRef.current.scrollTop = messagesEndRef.current.scrollHeight;
         }
-    }, [messages])
+    }, [messages, autoScroll]);
 
     // 处理WebSocket状态更新
     useEffect(() => {
         if (taskStatus && currentTaskId) {
+            // 如果 currentTaskId 已经被清除（取消），不再处理
+            if (!currentTaskId) return;
+            // 根据任务状态更新 processing 状态
+            if (['pending', 'planning', 'executing'].includes(taskStatus.status)) {
+                setIsProcessing(true);
+            } else {
+                setIsProcessing(false);
+            }
             // 更新消息中的思考过程
             // 仅更新思考过程，不覆盖正文
             setMessages((prev) => {
@@ -304,6 +329,8 @@ function ChatFlow() {
 
                 // 添加处理中消息（如果任务未完成）
                 if (task.status !== 'completed' && task.status !== 'failed') {
+                    // 恢复任务且任务未完成时，设为处理中状态
+                    setIsProcessing(true);
                     const processingMsg: Message = {
                         id: nextId(),
                         type: 'ai',
@@ -375,6 +402,7 @@ function ChatFlow() {
             })
 
             if (res.code === 200) {
+                setIsProcessing(true);
                 const newConvId = res.data.conversation_id;
                 if (!currentConversationId) {
                     // 新建会话，跳转到新会话 URL
@@ -605,14 +633,21 @@ function ChatFlow() {
     const handleCancel = async () => {
         if (!currentTaskId) return
 
+        // 立即清除状态，防止后续更新
+        setIsProcessing(false)
+        const cancelledTaskId = currentTaskId
+        setCurrentTaskId(null)
+
         if (pollingIntervalRef.current) {
             clearInterval(pollingIntervalRef.current)
             pollingIntervalRef.current = null
         }
 
-        await api.cancelTask(currentTaskId)
-        setCurrentTaskId(null)
-        setIsProcessing(false)
+        try {
+            await api.cancelTask(cancelledTaskId)
+        } catch (err) {
+            console.error('Cancel task error:', err)
+        }
     }
 
     // 拖拽相关

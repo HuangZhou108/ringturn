@@ -140,6 +140,10 @@ class AgentExecutor:
     async def execute(self) -> dict:
         """执行任务：调用 LangGraph 图"""
         try:
+            # 检查是否已取消
+            if self.task.status == TaskStatus.cancelled:
+                return {"success": False, "reason": "cancelled"}
+
             await self._update_task_status(TaskStatus.planning)
             await self._plan()
 
@@ -152,7 +156,7 @@ class AgentExecutor:
             # 同步结果到数据库
             self.task.final_audio_url = final_state.get("final_audio_url")
             self.task.audio_duration = final_state.get("audio_duration")
-            self.task.thinking_process = final_state.get("thinking_process", [])
+            # self.task.thinking_process = final_state.get("thinking_process", [])
             await self._update_task_status(TaskStatus.completed)
 
             # 记录完成消息
