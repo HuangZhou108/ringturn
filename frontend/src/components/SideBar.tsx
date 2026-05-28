@@ -16,6 +16,8 @@ interface SidebarProps {
     currentTaskId?: string | null
     setCurrentTaskId?: (id: string | null) => void
     onRefresh?: () => Promise<void>
+    refreshTrigger?: number // 在ChatFlow新建对话时自动刷新侧边栏
+    profileId?: number | null
 }
 
 export default function Sidebar({
@@ -28,6 +30,8 @@ export default function Sidebar({
                                     currentTaskId = null,
                                     setCurrentTaskId,
                                     onRefresh,
+                                    refreshTrigger,
+                                    profileId,
                                 }: SidebarProps) {
     const { t } = useTranslation()
     const navigate = useNavigate()
@@ -39,11 +43,11 @@ export default function Sidebar({
 
     // 加载会话列表
     const loadConversations = async () => {
+        if (!profileId) return;
         setIsLoading(true)
         try {
             const status = filter === 'all' ? undefined : filter
-            const res = await conversationApi.list({ page: 1, page_size: 50, status })
-            if (res.code === 200) {
+            const res = await conversationApi.list({ page: 1, page_size: 50, status: filter === 'all' ? undefined : filter, profile_id: profileId });            if (res.code === 200) {
                 setConversations(res.data.conversations)
             }
         } catch (err) {
@@ -57,7 +61,7 @@ export default function Sidebar({
         if (sidebarOpen) {
             loadConversations()
         }
-    }, [sidebarOpen, filter])
+    }, [sidebarOpen, filter, profileId])
 
     // 删除会话
     const handleDeleteConversation = async (e: React.MouseEvent, id: string) => {
@@ -88,26 +92,66 @@ export default function Sidebar({
     const handleConversationClick = (conv: ConversationListItem) => {
         setCurrentConversationId(conv.conversation_id)
         // 可以导航到聊天页面并加载该会话
-        navigate('/chat', {
-            state: {
-                conversationId: conv.conversation_id,
-                newChat: false,
-            }
-        })
+        navigate(`/chat/c/${conv.conversation_id}`, {
+            state: { conversationId: conv.conversation_id, newChat: false }
+        });
     }
 
     // 新建会话
     const handleNewChat = () => {
-        setCurrentConversationId(null)
+        setCurrentConversationId(null);
         if (onNewConversation) {
-            onNewConversation()
+            onNewConversation();
         }
-        navigate('/chat', {
-            state: {
-                newChat: true,
-            }
-        })
+        navigate('/chat');
     }
+
+    // 自动刷新
+    useEffect(() => {
+        if (sidebarOpen) {
+            loadConversations();
+        }
+    }, [refreshTrigger, sidebarOpen, filter]);
+
+    // 添加状态管理编辑中的会话
+    const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
+    const [editingTitle, setEditingTitle] = useState('');
+
+    // 添加编辑处理函数
+    const handleDoubleClick = (conv: ConversationListItem) => {
+        setEditingConversationId(conv.conversation_id);
+        setEditingTitle(conv.title || '未命名会话');
+    };
+
+    const handleEditSubmit = async (convId: string) => {
+        if (!editingTitle.trim()) return;
+
+        try {
+            const res = await conversationApi.updateTitle(convId, editingTitle.trim());
+            if (res.code === 200) {
+                // 更新本地列表
+                setConversations(prev => prev.map(conv =>
+                    conv.conversation_id === convId
+                        ? { ...conv, title: editingTitle.trim() }
+                        : conv
+                ));
+            }
+        } catch (err) {
+            console.error('更新标题失败:', err);
+        } finally {
+            setEditingConversationId(null);
+            setEditingTitle('');
+        }
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent, convId: string) => {
+        if (e.key === 'Enter') {
+            handleEditSubmit(convId);
+        } else if (e.key === 'Escape') {
+            setEditingConversationId(null);
+            setEditingTitle('');
+        }
+    };
 
     return (
         <aside
@@ -117,8 +161,25 @@ export default function Sidebar({
         >
             {/* Logo 区域 */}
             <div className="w-full mb-6">
-                <div className="flex flex-row-reverse items-center justify-end gap-3">
-                    {/* 收缩按钮 */}
+                <div className="flex items-center justify-between">
+                    {/* 左侧：Logo区域 */}
+                    <div className="flex items-center gap-2">
+                        <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center flex-shrink-0">
+                            <svg width="12" height="18" viewBox="0 0 12 18" fill="none">
+                                <path d="M4 18C2.8999 18 1.9585 17.6083 1.17505 16.825C0.391602 16.0417 0 15.1 0 14C0 12.9 0.391602 11.9583 1.17505 11.175C1.9585 10.3917 2.8999 10 4 10C4.3833 10 4.73755 10.0458 5.0625 10.1375C5.38745 10.2292 5.69995 10.3667 6 10.55V0H12V4H8V14C8 15.1 7.6084 16.0417 6.82495 16.825C6.0415 17.6083 5.1001 18 4 18Z" fill="#458ecb"/>
+                            </svg>
+                        </div>
+                        <div className="relative w-[132px] h-[38px]">
+                            <div className="absolute left-0 -top-[1px]">
+                                <span className="text-lg font-semibold leading-tight text-[#0c4a6e] font-['Inter']">{t('sidebar.ringTurn')}</span>
+                            </div>
+                            <div className="absolute left-0 top-[22.5px]">
+                                <span className="text-[10px] font-semibold uppercase tracking-[1px] text-[#41565f]/70 font-['Inter']">{t('sidebar.aiMusic')}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 右侧：收起按钮 */}
                     <button
                         onClick={() => setSidebarOpen(!sidebarOpen)}
                         className="w-6 h-6 rounded hover:bg-gray-200 flex items-center justify-center flex-shrink-0 text-gray-400 hover:text-gray-600 transition"
@@ -131,23 +192,6 @@ export default function Sidebar({
                             )}
                         </svg>
                     </button>
-                    <div className="relative w-[132px] h-[38px]">
-                        <div className="absolute left-0 -top-[1px]">
-              <span className="text-lg font-semibold leading-tight text-[#0c4a6e] font-['Inter']">
-                {t('sidebar.ringTurn')}
-              </span>
-                        </div>
-                        <div className="absolute left-0 top-[22.5px]">
-              <span className="text-[10px] font-semibold uppercase tracking-[1px] text-[#41565f]/70 font-['Inter']">
-                {t('sidebar.aiMusic')}
-              </span>
-                        </div>
-                    </div>
-                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center flex-shrink-0">
-                        <svg width="12" height="18" viewBox="0 0 12 18" fill="none">
-                            <path d="M4 18C2.8999 18 1.9585 17.6083 1.17505 16.825C0.391602 16.0417 0 15.1 0 14C0 12.9 0.391602 11.9583 1.17505 11.175C1.9585 10.3917 2.8999 10 4 10C4.3833 10 4.73755 10.0458 5.0625 10.1375C5.38745 10.2292 5.69995 10.3667 6 10.55V0H12V4H8V14C8 15.1 7.6084 16.0417 6.82495 16.825C6.0415 17.6083 5.1001 18 4 18Z" fill="#458ecb"/>
-                        </svg>
-                    </div>
                 </div>
             </div>
 
@@ -203,15 +247,11 @@ export default function Sidebar({
                         className="p-1 hover:bg-gray-200 rounded transition disabled:opacity-50"
                         title="刷新"
                     >
-                        <svg
-                            width="14"
-                            height="14"
-                            viewBox="0 0 14 14"
-                            fill="none"
-                            className={isLoading ? 'animate-spin' : ''}
-                        >
-                            <path d="M12.8 5.6C12.4167 3.76667 11.325 2.2 9.525 1H11.9V0H7.9V4H9.3V2.475C9.8835 2.79167 10.35 3.25417 10.7 3.8625C11.05 4.47083 11.1667 5.13333 11.05 5.85C10.7167 7.65 9.33333 9.075 7 9.125C6.03333 9.15833 5.13333 8.86667 4.3 8.25C3.46667 7.63333 2.9 6.8 2.6 5.75H4.65C4.83333 6.35 5.175 6.84167 5.675 7.225C6.175 7.60833 6.75 7.8 7.4 7.8C8.4 7.8 9.20833 7.46667 9.825 6.8C10.4417 6.13333 10.675 5.33333 10.525 4.4L12.8 5.6Z" fill="#475569"/>
+                        {/* 图标来自：https://heroicons.com/ */}
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor" className={`size-4 ${isLoading ? 'animate-spin' : ''}`}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
                         </svg>
+
                     </button>
                 </div>
 
@@ -230,51 +270,72 @@ export default function Sidebar({
                             <div
                                 key={conv.conversation_id}
                                 onClick={() => handleConversationClick(conv)}
-                                className={`
-                                    group relative px-3 py-2.5 rounded-lg cursor-pointer
-                                    transition-all duration-150
-                                    ${currentConversationId === conv.conversation_id
+                                className={`group relative px-3 py-2.5 rounded-lg cursor-pointer transition-all duration-150 ${
+                                    currentConversationId === conv.conversation_id
                                         ? 'bg-[#00639d] text-white shadow-md'
                                         : 'hover:bg-white hover:shadow-sm'
-                                    }
-                                `}
+                                }`}
                             >
-                                {/* 会话标题 */}
+                                {/* 会话标题 - 支持双击编辑 */}
                                 <div className="flex flex-col">
-                                    <div className={`text-sm font-medium truncate ${
-                                        currentConversationId === conv.conversation_id
-                                            ? 'text-white'
-                                            : 'text-gray-800'
-                                    }`}>
-                                        {conv.title || '未命名会话'}
-                                    </div>
+                                    {editingConversationId === conv.conversation_id ? (
+                                        <input
+                                            type="text"
+                                            value={editingTitle}
+                                            onChange={(e) => setEditingTitle(e.target.value)}
+                                            onBlur={() => handleEditSubmit(conv.conversation_id)}
+                                            onKeyDown={(e) => handleKeyDown(e, conv.conversation_id)}
+                                            onClick={(e) => e.stopPropagation()}
+                                            className={`text-sm font-medium px-1 py-0.5 rounded ${
+                                                currentConversationId === conv.conversation_id
+                                                    ? 'bg-white/20 text-white'
+                                                    : 'bg-gray-100 text-gray-800'
+                                            }`}
+                                            autoFocus
+                                        />
+                                    ) : (
+                                        <div
+                                            onDoubleClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDoubleClick(conv);
+                                            }}
+                                            className={`text-sm font-medium truncate ${
+                                                currentConversationId === conv.conversation_id
+                                                    ? 'text-white'
+                                                    : 'text-gray-800'
+                                            }`}
+                                        >
+                                            {conv.title || '未命名会话'}
+                                        </div>
+                                    )}
+
+                                    {/* 时间 + 状态标签（保持原样） */}
                                     <div className="flex items-center justify-between mt-1">
-                                        <span className={`text-xs ${
-                                            currentConversationId === conv.conversation_id
-                                                ? 'text-white/50'
-                                                : 'text-gray-400'
-                                        }`}>
-                                            {new Date(conv.updated_at + 'Z').toLocaleDateString('zh-CN', {
-                                                month: 'short',
-                                                day: 'numeric',
-                                                hour: '2-digit',
-                                                minute: '2-digit'
-                                            })}
-                                        </span>
-                                                                        {/* 状态标签 */}
-                                                                        <span className={`
-                                            px-1.5 py-0.5 text-[10px] font-medium rounded
-                                            ${conv.status === 'active'
-                                                                            ? (currentConversationId === conv.conversation_id
-                                                                                ? 'bg-white/20 text-white'
-                                                                                : 'bg-green-100 text-green-600')
-                                                                            : (currentConversationId === conv.conversation_id
-                                                                                ? 'bg-white/20 text-white'
-                                                                                : 'bg-gray-100 text-gray-500')
-                                                                        }
-                                        `}>
-                                            {conv.status === 'active' ? '进行中' : '已完成'}
-                                        </span>
+                <span className={`text-xs ${
+                    currentConversationId === conv.conversation_id
+                        ? 'text-white/50'
+                        : 'text-gray-400'
+                }`}>
+                    {new Date(conv.updated_at + 'Z').toLocaleDateString('zh-CN', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    })}
+                </span>
+                                        <span className={`
+                    px-1.5 py-0.5 text-[10px] font-medium rounded
+                    ${conv.status === 'active'
+                                            ? (currentConversationId === conv.conversation_id
+                                                ? 'bg-white/20 text-white'
+                                                : 'bg-green-100 text-green-600')
+                                            : (currentConversationId === conv.conversation_id
+                                                ? 'bg-white/20 text-white'
+                                                : 'bg-gray-100 text-gray-500')
+                                        }
+                `}>
+                    {conv.status === 'active' ? '进行中' : '已完成'}
+                </span>
                                     </div>
                                 </div>
 

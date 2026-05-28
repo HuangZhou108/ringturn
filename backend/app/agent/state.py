@@ -22,7 +22,7 @@ class AgentState(TypedDict, total=False):
     # 基础信息
     task_id: str
     user_request: str
-    user_id: int
+    profile_id: int
 
     # 音频源
     source_type: str
@@ -60,6 +60,8 @@ class AgentState(TypedDict, total=False):
     feedback_history: list[dict]
     reflection: str | None
     needs_revision: bool
+    user_approve_retry: bool   # 用户是否允许重试，默认 False
+    max_retries: int  # 最大重试次数（用户可配置，默认0）
 
     # 错误处理
     error: str | None
@@ -68,6 +70,11 @@ class AgentState(TypedDict, total=False):
     # 元数据
     created_at: datetime
     updated_at: datetime
+
+    # LangGraph
+    thread_id: str                     # LangGraph 线程 ID
+    human_feedback: str | None         # 用户反馈内容
+    waiting_for_feedback: bool         # 是否等待用户输入
 
 def get_step_index(step: TaskStep) -> int:
     """获取步骤索引"""

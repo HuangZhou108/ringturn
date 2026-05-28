@@ -1,8 +1,9 @@
 // src/pages/ChatFlow.tsx
 import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api'
+import { profileApi } from '../api/profile'
 import { conversationApi, type ConversationDetail } from '../api/conversation'
 import type { TaskListItem, Message as AppMessage } from '../types'
 import TopBar from '../components/TopBar'
@@ -31,11 +32,14 @@ interface Message {
 function ChatFlow() {
     const { t } = useTranslation()
     const location = useLocation()
+    const navigate = useNavigate()
 
     // 侧边栏状态
     const [sidebarOpen, setSidebarOpen] = useState(false)
 
     // 会话状态
+    const [activeProfileId, setActiveProfileId] = useState<number | null>(null);
+    const { conversationId: urlConversationId } = useParams<{ conversationId?: string }>();
     const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
     const [currentConversation, setCurrentConversation] = useState<ConversationDetail | null>(null)
 
@@ -69,9 +73,28 @@ function ChatFlow() {
     const idCounter = useRef(Date.now())
     const fetchHistoryRef = useRef<(() => Promise<void>) | null>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
+    const [autoScroll, setAutoScroll] = useState(true); // 处理自动滚动
     const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+    const [refreshSidebar, setRefreshSidebar] = useState(0); // 刷新侧边栏
     // 使用 ref 保存路由状态，避免重新渲染时丢失
     const locationStateRef = useRef(location.state as any)
+
+    // 获取当前Profile
+    useEffect(() => {
+        const loadProfile = async () => {
+            const res = await profileApi.getActive();
+            if (res.code === 200) setActiveProfileId(res.data.profile_id);
+        };
+        loadProfile();
+    }, []);
+
+    const handleScroll = () => {
+        const container = messagesEndRef.current;
+        if (!container) return;
+        const { scrollTop, scrollHeight, clientHeight } = container;
+        const isAtBottom = Math.abs(scrollHeight - scrollTop - clientHeight) < 10;
+        setAutoScroll(isAtBottom);
+    };
 
     // WebSocket
     const { isConnected, taskStatus } = useWebSocket(currentTaskId)
@@ -105,12 +128,15 @@ function ChatFlow() {
                 setCurrentConversation(res.data)
 
                 // 将会话消息转换为UI消息
-                const uiMessages: Message[] = res.data.messages.map((msg, index) => ({
+                const uiMessages: Message[] = res.data.messages.map((msg) => ({
                     id: `msg-${msg.id}`,
                     type: msg.role === 'user' ? 'user' : 'ai',
                     content: msg.content,
                     taskId: msg.task_id || undefined,
-                    userFile: msg.role === 'user' ? uploadedFileName : undefined,
+                    userFile: msg.file_name || (msg.role === 'user' ? uploadedFileName : undefined),
+                    thinkingProcess: msg.thinking_process || [],
+                    fileName: msg.audio_url,                     // 音频 URL 作为文件名显示
+                    fileInfo: msg.audio_duration ? `${msg.audio_duration}s` : undefined,
                 }))
 
                 // 如果没有消息，显示欢迎消息
@@ -146,34 +172,47 @@ function ChatFlow() {
         if (fileInputRef.current) {
             fileInputRef.current.value = ''
         }
+        setRefreshSidebar(prev => prev + 1); // 刷新侧边栏
     }, [])
 
     // 加载历史任务（保留兼容性）
     useEffect(() => {
         const fetchHistory = async () => {
+            if (!activeProfileId) return;
             try {
-                const res = await api.getUserTasks(1)
-                if (res.code === 200 && res.data) {
-                    setRecentTasks(res.data.tasks || [])
-                }
-            } catch {
-                // 静默失败
-            }
-        }
+                const res = await api.getProfileTasks(activeProfileId, { page: 1, page_size: 10 });
+                if (res.code === 200) setRecentTasks(res.data.tasks);
+            } catch { /* ignore */ }
+        };
         fetchHistoryRef.current = fetchHistory
     }, [])
 
     // 页面自动滚动
     useEffect(() => {
-        if (messagesEndRef.current) {
-            messagesEndRef.current.scrollTop = messagesEndRef.current.scrollHeight
+        const container = messagesEndRef.current;
+        if (!container) return;
+        container.addEventListener('scroll', handleScroll);
+        return () => container.removeEventListener('scroll', handleScroll);
+    }, []);
+    useEffect(() => {
+        if (autoScroll && messagesEndRef.current) {
+            messagesEndRef.current.scrollTop = messagesEndRef.current.scrollHeight;
         }
-    }, [messages])
+    }, [messages, autoScroll]);
 
     // 处理WebSocket状态更新
     useEffect(() => {
         if (taskStatus && currentTaskId) {
+            // 如果 currentTaskId 已经被清除（取消），不再处理
+            if (!currentTaskId) return;
+            // 根据任务状态更新 processing 状态
+            if (['pending', 'planning', 'executing'].includes(taskStatus.status)) {
+                setIsProcessing(true);
+            } else {
+                setIsProcessing(false);
+            }
             // 更新消息中的思考过程
+            // 仅更新思考过程，不覆盖正文
             setMessages((prev) => {
                 const lastAiMsgIndex = prev.findLastIndex(m => m.type === 'ai')
                 if (lastAiMsgIndex === -1) return prev
@@ -182,7 +221,7 @@ function ChatFlow() {
                     if (index === lastAiMsgIndex) {
                         return {
                             ...msg,
-                            content: taskStatus.message || taskStatus.current_subtask || msg.content,
+                            // content: taskStatus.message || taskStatus.current_subtask || msg.content,
                             thinkingProcess: taskStatus.thinking_process || msg.thinkingProcess,
                         }
                     }
@@ -205,10 +244,27 @@ function ChatFlow() {
                     pollingIntervalRef.current = null
                 }
                 setIsProcessing(false)
-                showError(t('chat.failed'))
+                // showError(t('chat.failed'))
+                // 修改最后一条 AI 消息的内容为错误文案
+                setMessages((prev) => {
+                    const lastAiIdx = prev.findLastIndex(m => m.type === 'ai')
+                    if (lastAiIdx === -1) return prev
+                    return prev.map((msg, idx) =>
+                        idx === lastAiIdx ? { ...msg, content: t('chat.failed') } : msg
+                    )
+                })
             }
         }
     }, [taskStatus, currentTaskId, t])
+
+    // 当 WebSocket 连接成功时，停止轮询（降级方案自动停止）
+    useEffect(() => {
+        if (isConnected && currentTaskId && pollingIntervalRef.current) {
+            console.log('[ChatFlow] WebSocket connected, stopping polling for task', currentTaskId)
+            clearInterval(pollingIntervalRef.current)
+            pollingIntervalRef.current = null
+        }
+    }, [isConnected, currentTaskId])
 
     // 组件卸载时清理轮询
     useEffect(() => {
@@ -228,7 +284,6 @@ function ChatFlow() {
                 setMessages((prev) => {
                     const lastAiMsgIndex = prev.findLastIndex(m => m.type === 'ai')
                     if (lastAiMsgIndex === -1) return prev
-
                     return prev.map((msg, index) => {
                         if (index === lastAiMsgIndex) {
                             return {
@@ -250,6 +305,77 @@ function ChatFlow() {
         }
     }
 
+    const fetchTaskInfo = async (taskId: string) => {
+        try {
+            const res = await api.getTask(taskId)
+            if (res.code === 200 && res.data) {
+                const task = res.data
+                // 设置会话 ID
+                if (task.conversation_id) {
+                    setCurrentConversationId(task.conversation_id)
+                    // 加载会话消息，补全对话历史
+                    loadConversation(task.conversation_id)
+                }
+                // 设置用户消息（从任务的 user_request）
+                setMessages([])
+                setCurrentTaskId(taskId)
+
+                // 设置参数
+                // if (task.ringtone_params) {
+                //     if (task.ringtone_params.instrument) setInstrument(task.ringtone_params.instrument)
+                //     if (task.ringtone_params.tempo) setTempo(String(task.ringtone_params.tempo))
+                //     if (task.ringtone_params.duration) setDuration(String(task.ringtone_params.duration))
+                //     if (task.ringtone_params.filename) setFilename(task.ringtone_params.filename)
+                // }
+
+                // 添加用户消息（从 task.user_request）
+                const userMsg: Message = {
+                    id: nextId(),
+                    type: 'user',
+                    content: task.user_request,
+                    userFile: task.source_value || undefined, // 或者从文件服务获取文件名
+                }
+                setMessages([userMsg])
+
+                // 添加处理中消息（如果任务未完成）
+                if (task.status !== 'completed' && task.status !== 'failed') {
+                    // 恢复任务且任务未完成时，设为处理中状态
+                    setIsProcessing(true);
+                    const processingMsg: Message = {
+                        id: nextId(),
+                        type: 'ai',
+                        taskId: taskId,
+                        deepThinking: t('chat.deepThinking'),
+                        content: t('chat.taskCreated'),
+                        thinkingProcess: [],
+                    }
+                    setMessages((prev) => [...prev, processingMsg])
+                    pollTaskStatus(taskId, processingMsg.id)
+                } else if (task.status === 'completed') {
+                    // 已完成任务，显示结果
+                    const completedMsg: Message = {
+                        id: nextId(),
+                        type: 'ai',
+                        content: t('chat.completed'),
+                        fileName: task.final_audio_url,
+                        fileInfo: task.audio_duration ? `${task.audio_duration}s` : undefined,
+                    }
+                    setMessages((prev) => [...prev, completedMsg])
+                } else if (task.status === 'failed') {
+                    const failedMsg: Message = {
+                        id: nextId(),
+                        type: 'ai',
+                        content: t('chat.failed'),
+                    }
+                    setMessages((prev) => [...prev, failedMsg])
+                }
+            }
+        } catch (err) {
+            console.error('Failed to fetch task info:', err)
+            showToast('加载任务失败')
+        }
+    }
+
     // 发送消息
     const handleSend = async () => {
         if (!inputValue.trim()) return
@@ -265,6 +391,8 @@ function ChatFlow() {
         if (tempo.trim()) params.tempo = parseInt(tempo, 10)
         if (duration.trim()) params.duration = parseInt(duration, 10)
         if (filename && filename.trim() !== '') params.filename = filename
+        // 保存上传文件的原始文件名
+        if (uploadedFileName) params.original_filename = uploadedFileName;
 
         // 添加用户消息
         const newUserMessage: Message = {
@@ -286,15 +414,16 @@ function ChatFlow() {
             })
 
             if (res.code === 200) {
-                setIsProcessing(true)
-                setCurrentTaskId(res.data.task_id)
-
-                // 如果创建了新会话，保存会话ID
-                if (res.data.conversation_id && !currentConversationId) {
-                    setCurrentConversationId(res.data.conversation_id)
+                setIsProcessing(true);
+                const newConvId = res.data.conversation_id;
+                if (!currentConversationId) {
+                    // 新建会话，跳转到新会话 URL
+                    navigate(`/chat/c/${newConvId}`, { replace: true });
+                    setCurrentConversationId(newConvId);
+                } else {
+                    // 已有会话，只更新状态，不改变 URL
+                    setCurrentTaskId(res.data.task_id);
                 }
-
-                fetchHistoryRef.current?.()
 
                 // 添加处理中消息
                 const processingMsg: Message = {
@@ -309,12 +438,28 @@ function ChatFlow() {
                 // 如果WebSocket未连接或不是当前任务，使用轮询
                 if (!isConnected || currentTaskId !== res.data.task_id) {
                     pollTaskStatus(res.data.task_id, processingMsg.id)
+                } else {
+                    // WebSocket 已连接，确保清除可能残留的轮询
+                    if (pollingIntervalRef.current) {
+                        clearInterval(pollingIntervalRef.current)
+                        pollingIntervalRef.current = null
+                    }
                 }
+                setRefreshSidebar(prev => prev + 1);
             } else {
                 showError(res.message || t('chat.createFailed'))
             }
         } catch {
-            showError(t('chat.networkError'))
+            setMessages((prev) => {
+                const lastAi = prev.findLastIndex(m => m.type === 'ai')
+                if (lastAi !== -1) {
+                    return prev.map((msg, idx) =>
+                        idx === lastAi ? { ...msg, content: t('chat.networkError') } : msg
+                    )
+                }
+                // 不存在 AI 消息时才新增
+                return [...prev, { id: nextId(), type: 'ai', content: t('chat.networkError') }]
+            })
         }
     }
 
@@ -398,66 +543,36 @@ function ChatFlow() {
     }
 
     // 处理路由状态变化
+    // 只从 URL/state 解析 ID
     useEffect(() => {
-        const state = location.state as any || {}
-        const newChat = state.newChat as boolean | undefined
-        const conversationId = state.conversationId as string | undefined
-        const taskId = state.taskId as string | undefined
-        const userMessage = state.userMessage as string | undefined
-        const userFileId = state.audioFileId as string | undefined
-        const params = state.params || {}
-        const userFilename = state.filename as string | undefined
-
-        // 处理新建空会话
-        if (newChat&& currentConversationId !== null) {
-            handleNewConversation()
-            // 清除 location.state 避免重复触发
-            if (location.state && (location.state as any).newChat) {
-                window.history.replaceState({}, '', location.pathname)
-            }
-            return
-        }
-
-        // 处理加载指定会话
+        const conversationId = urlConversationId || location.state?.conversationId;
+        const taskId = location.state?.taskId;
         if (conversationId) {
-            setCurrentConversationId(conversationId)
-            loadConversation(conversationId)
-            return
+            setCurrentConversationId(conversationId);
+            // 清除可能残留的任务 ID
+            setCurrentTaskId(null);
+        } else if (taskId) {
+            // 如果只有 taskId（理论上不应发生），可以恢复
+            setCurrentTaskId(taskId);
+            setCurrentConversationId(null);
+        } else {
+            // 无任何 ID，显示欢迎页
+            handleNewConversation();
         }
+    }, [urlConversationId, location.state]);
 
-        // 处理任务ID（旧逻辑兼容）
-        if (taskId && userMessage) {
-            setMessages([])
-            setCurrentTaskId(taskId)
-
-            if (userFilename) setUploadedFileName(userFilename)
-            if (params.instrument) setInstrument(params.instrument)
-            if (params.tempo) setTempo(String(params.tempo))
-            if (params.duration) setDuration(String(params.duration))
-            if (params.filename) setFilename(params.filename)
-
-            // 添加用户消息
-            const userMsg: Message = {
-                id: nextId(),
-                type: 'user',
-                content: userMessage,
-                userFile: userFilename || undefined,
-            }
-            setMessages([userMsg])
-
-            // 添加处理中消息
-            const processingMsg: Message = {
-                id: nextId(),
-                type: 'ai',
-                taskId: taskId,
-                deepThinking: t('chat.deepThinking'),
-                content: t('chat.taskCreated'),
-            }
-            setMessages((prev) => [...prev, processingMsg])
-
-            pollTaskStatus(taskId, processingMsg.id)
+// 单独 effect 加载数据
+    useEffect(() => {
+        if (currentConversationId) {
+            loadConversation(currentConversationId);
+            // 可选：调用 active_task 接口恢复任务
+            fetchActiveTask(currentConversationId).then(taskId => {
+                if (taskId) setCurrentTaskId(taskId);
+            });
+        } else if (currentTaskId && !currentConversationId) {
+            fetchTaskInfo(currentTaskId);
         }
-    }, [location.state, loadConversation, handleNewConversation, t])
+    }, [currentConversationId, currentTaskId]);
 
     // 文件选择
     const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -531,14 +646,21 @@ function ChatFlow() {
     const handleCancel = async () => {
         if (!currentTaskId) return
 
+        // 立即清除状态，防止后续更新
+        setIsProcessing(false)
+        const cancelledTaskId = currentTaskId
+        setCurrentTaskId(null)
+
         if (pollingIntervalRef.current) {
             clearInterval(pollingIntervalRef.current)
             pollingIntervalRef.current = null
         }
 
-        await api.cancelTask(currentTaskId)
-        setCurrentTaskId(null)
-        setIsProcessing(false)
+        try {
+            await api.cancelTask(cancelledTaskId)
+        } catch (err) {
+            console.error('Cancel task error:', err)
+        }
     }
 
     // 拖拽相关
@@ -591,10 +713,63 @@ function ChatFlow() {
         }
     }, [isDragging])
 
+    const fetchActiveTask = async (conversationId: string) => {
+        try {
+            const res = await fetch(`/api/v1/conversations/${conversationId}/active_task`);
+            const data = await res.json();
+            if (data.code === 200 && data.data?.task_id) {
+                setCurrentTaskId(data.data.task_id);
+                // 如果需要，可以恢复轮询/WebSocket
+                restoreTask(data.data.task_id);
+            }
+        } catch (err) {
+            console.error('Failed to fetch active task', err);
+        }
+    };
+
+    // 处理Profile切换
+    const handleProfileChanged = useCallback(async () => {
+        try {
+            // 1. 重新获取当前活跃的 Profile
+            const res = await profileApi.getActive();
+            if (res.code === 200 && res.data) {
+                setActiveProfileId(res.data.profile_id);
+            }
+
+            // 2. 清空当前会话状态，回到欢迎页
+            setCurrentConversationId(null);
+            setCurrentConversation(null);
+            setMessages([]);
+            setCurrentTaskId(null);
+            setInputValue('');
+            setAudioFileId(null);
+            setUploadedFileName(null);
+            setUploadSuccess(null);
+            setUploadError(null);
+            setInstrument('');
+            setDuration('');
+            setTempo('');
+            setFilename('Untitled_Track');
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+
+            // 3. 清除 URL 中的会话 ID，避免重新加载旧会话
+            navigate('/chat', { replace: true });
+
+            // 4. 刷新侧边栏
+            setRefreshSidebar(prev => prev + 1);
+        } catch (err) {
+            console.error('Failed to refresh after profile change:', err);
+            showToast('切换档案失败，请刷新页面重试');
+        }
+    }, [navigate]);
+
     return (
         <div className="flex flex-col h-screen bg-white text-gray-800 font-sans page-enter">
             <TopBar
                 onNewChat={() => handleNewConversation()}
+                onProfileChanged={handleProfileChanged}
             />
 
             <div className="flex flex-1 overflow-hidden">
@@ -611,6 +786,8 @@ function ChatFlow() {
                     onRefresh={async () => {
                         if (fetchHistoryRef.current) await fetchHistoryRef.current()
                     }}
+                    refreshTrigger={refreshSidebar}
+                    profileId={activeProfileId}
                 />
 
                 {/* 主内容区 */}

@@ -36,7 +36,7 @@ export interface CreateTaskResponse {
 // 任务详情
 export interface Task {
     id: string
-    user_id: number
+    profile_id: number
     parent_task_id?: string
     user_request: string
     source_type: SourceType
@@ -49,6 +49,7 @@ export interface Task {
     thread_id?: string
     final_audio_url?: string
     audio_duration?: number
+    conversation_id?: string
     created_at: string
     updated_at: string
     error_message?: string
@@ -107,7 +108,7 @@ export interface TaskListItem {
 // 偏好
 export interface Preference {
     id: number
-    user_id: number
+    profile_id: number
     key: string
     value: unknown
 }

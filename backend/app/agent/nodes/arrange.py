@@ -13,7 +13,7 @@ from ..callbacks import ThinkingCallbackHandler
 import mido
 settings = get_settings()
 
-async def arrange_node(state: AgentState, db: Session, tools) -> None:
+async def arrange_node(state: AgentState) -> dict:
     """
     节点5: 乐器改编
 
@@ -68,4 +68,5 @@ async def arrange_node(state: AgentState, db: Session, tools) -> None:
         mido.MidiFile(output_path)
     except Exception as e:
         raise RuntimeError(f"改编后的 MIDI 无效: {e}")
-    state["arranged_midi_path"] = output_path
+    
+    return {"arranged_midi_path": output_path}

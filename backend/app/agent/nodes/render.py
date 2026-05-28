@@ -10,7 +10,7 @@ from app.agent.thinking_utils import record_thought
 
 settings = get_settings()
 
-async def render_node(state: AgentState, db: Session, tools) -> None:
+async def render_node(state: AgentState) -> dict:
     """
     节点6: 渲染音频
 
@@ -146,10 +146,12 @@ async def render_node(state: AgentState, db: Session, tools) -> None:
     except Exception as e:
         record_thought(task_id, "render", f"音量增强失败(不影响结果): {e}")
         # 即使增益失败，之前的 mp3 仍然可用（已有截取后的音频）
-
-    # ---- 更新状态 ----
-    state["final_audio_path"] = mp3_path
-    state["audio_duration"] = actual_duration
-    state["final_audio_url"] = f"/static/ringtones/{task_id}/{Path(mp3_path).name}"
-
     record_thought(task_id, "render", f"渲染完成，最终文件: {mp3_path}, 时长: {actual_duration}s")
+
+    final_url = f"/static/ringtones/{task_id}/{Path(mp3_path).name}"
+
+    return {
+        "final_audio_path": mp3_path,
+        "audio_duration": actual_duration,
+        "final_audio_url": final_url,
+    }

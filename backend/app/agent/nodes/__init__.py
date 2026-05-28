@@ -5,6 +5,7 @@ from .generate_midi import generate_midi_node
 from .arrange import arrange_node
 from .render import render_node
 from .check_quality import check_quality_node
+from .reflect import reflect_node
 from app.agent.state import TaskStep
 
 NODE_HANDLERS = {
