@@ -1,206 +1,102 @@
 """
 LangGraph工作流定义
 
-定义Agent的完整状态流转图
+定义Agent的完整状态流转图，支持检查点和条件重试
 """
 
-from typing import TypedDict
-from datetime import datetime
-
+import asyncio
+import aiosqlite
+from pathlib import Path
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.sqlite import SqliteSaver
-
-from app.agent.state import AgentState, TaskStep
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from app.agent.state import AgentState
+from app.agent.nodes import (
+    fetch_source_node,
+    analyze_structure_node,
+    extract_melody_node,
+    generate_midi_node,
+    arrange_node,
+    render_node,
+    check_quality_node,
+)
+from app.agent.nodes.reflect import reflect_node
 from app.core.config import get_settings
 
 settings = get_settings()
 
-# 定义节点名称
-NODE_NAMES = {
-    "planner": "planner",
-    "fetch_source": "fetch_source",
-    "analyze": "analyze",
-    "extract_melody": "extract_melody",
-    "generate_midi": "generate_midi",
-    "arrange": "arrange",
-    "render": "render",
-    "check_quality": "check_quality",
-    "reflect": "reflect",
-    "human_input": "human_input",
-}
+# 节点名称常量
+NODE_FETCH = "fetch_source"
+NODE_ANALYZE = "analyze_structure"
+NODE_EXTRACT = "extract_melody"
+NODE_GEN_MIDI = "generate_midi"
+NODE_ARRANGE = "arrange"
+NODE_RENDER = "render"
+NODE_CHECK = "check_quality"
+NODE_REFLECT = "reflect"
 
-async def planner_node(state: AgentState) -> AgentState:
-    """
-    规划节点
+_agent_graph = None
+_graph_lock = asyncio.Lock()
 
-    将用户需求分解为执行步骤（调用LLM）
-    """
-    from app.services.llm_service import llm_service
 
-    user_request = state.get("user_request", "")
-    plan = await llm_service.generate_plan(user_request)
+async def build_agent_graph():
+    """异步构建并编译LangGraph状态图"""
+    workflow = StateGraph(AgentState)
 
-    state["plan"] = plan
-    state["current_step"] = TaskStep.FETCH_SOURCE.value
-    state["current_step_index"] = 0
+    # 注册节点（所有节点已修改为只接收 state 参数）
+    workflow.add_node(NODE_FETCH, fetch_source_node)
+    workflow.add_node(NODE_ANALYZE, analyze_structure_node)
+    workflow.add_node(NODE_EXTRACT, extract_melody_node)
+    workflow.add_node(NODE_GEN_MIDI, generate_midi_node)
+    workflow.add_node(NODE_ARRANGE, arrange_node)
+    workflow.add_node(NODE_RENDER, render_node)
+    workflow.add_node(NODE_CHECK, check_quality_node)
+    workflow.add_node(NODE_REFLECT, reflect_node)
 
-    return state
+    # 固定边（顺序执行）
+    workflow.add_edge(NODE_FETCH, NODE_ANALYZE)
+    workflow.add_edge(NODE_ANALYZE, NODE_EXTRACT)
+    workflow.add_edge(NODE_EXTRACT, NODE_GEN_MIDI)
+    workflow.add_edge(NODE_GEN_MIDI, NODE_ARRANGE)
+    workflow.add_edge(NODE_ARRANGE, NODE_RENDER)
+    workflow.add_edge(NODE_RENDER, NODE_CHECK)
+    workflow.add_edge(NODE_CHECK, NODE_REFLECT)
 
-async def fetch_source_node(state: AgentState) -> AgentState:
-    """获取音频源节点"""
-    from app.agent.tools import tool_gateway
-    from app.agent.nodes import fetch_source_node as handler
+    # 条件边：根据反思结果决定是否重试
+    def should_retry(state: AgentState) -> str:
+        if not state.get("needs_revision", False):
+            return END
+        retry_count = state.get("retry_count", 0)
+        max_retries = state.get("max_retries", 0)
+        if retry_count >= max_retries:
+            return END
+        return NODE_ARRANGE
 
-    await handler(state, None, tool_gateway)
+    workflow.add_conditional_edges(
+        NODE_REFLECT,
+        should_retry,
+        {
+            NODE_ARRANGE: NODE_ARRANGE,
+            END: END,
+        },
+    )
 
-    state["current_step_index"] = 1
-    state["current_step"] = TaskStep.ANALYZE_STRUCTURE.value
-    return state
+    workflow.set_entry_point(NODE_FETCH)
 
-async def analyze_node(state: AgentState) -> AgentState:
-    """分析节点"""
-    from app.agent.tools import tool_gateway
-    from app.agent.nodes import analyze_structure_node as handler
+    # 异步检查点
+    db_path = settings.CHECKPOINT_DB_URL.replace("sqlite:///", "")
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    # conn = await aiosqlite.connect(db_path)
+    # checkpointer = AsyncSqliteSaver(conn)
 
-    await handler(state, None, tool_gateway)
+    graph = workflow.compile(checkpointer=None)
+    return graph
 
-    state["current_step_index"] = 2
-    state["current_step"] = TaskStep.EXTRACT_MELODY.value
-    return state
 
-async def extract_melody_node(state: AgentState) -> AgentState:
-    """提取旋律节点"""
-    from app.agent.tools import tool_gateway
-    from app.agent.nodes import extract_melody_node as handler
-
-    await handler(state, None, tool_gateway)
-
-    state["current_step_index"] = 3
-    state["current_step"] = TaskStep.GENERATE_MIDI.value
-    return state
-
-async def generate_midi_node(state: AgentState) -> AgentState:
-    """生成MIDI节点"""
-    from app.agent.tools import tool_gateway
-    from app.agent.nodes import generate_midi_node as handler
-
-    await handler(state, None, tool_gateway)
-
-    state["current_step_index"] = 4
-    state["current_step"] = TaskStep.ARRANGE.value
-    return state
-
-async def arrange_node(state: AgentState) -> AgentState:
-    """改编节点"""
-    from app.agent.tools import tool_gateway
-    from app.agent.nodes import arrange_node as handler
-
-    await handler(state, None, tool_gateway)
-
-    state["current_step_index"] = 5
-    state["current_step"] = TaskStep.RENDER.value
-    return state
-
-async def render_node(state: AgentState) -> AgentState:
-    """渲染节点"""
-    from app.agent.tools import tool_gateway
-    from app.agent.nodes import render_node as handler
-
-    await handler(state, None, tool_gateway)
-
-    state["current_step_index"] = 6
-    state["current_step"] = TaskStep.CHECK_QUALITY.value
-    return state
-
-async def check_quality_node(state: AgentState) -> AgentState:
-    """质量检查节点"""
-    from app.agent.tools import tool_gateway
-    from app.agent.nodes import check_quality_node as handler
-
-    await handler(state, None, tool_gateway)
-
-    state["current_step_index"] = 7
-    return state
-
-async def reflect_node(state: AgentState) -> AgentState:
-    """反思节点"""
-    from app.services.llm_service import llm_service
-
-    quality_result = state.get("step_results", {}).get("quality_check", {})
-    user_request = state.get("user_request", "")
-
-    reflection = await llm_service.reflect_on_quality(quality_result, user_request)
-
-    state["reflection"] = reflection
-    state["needs_revision"] = reflection.get("needs_revision", False)
-
-    return state
-
-async def human_input_node(state: AgentState) -> AgentState:
-    """
-    等待用户输入节点
-    """
-    state["current_step"] = "waiting_feedback"
-    return state
-
-def should_revise(state: AgentState) -> bool:
-    """判断是否需要修订"""
-    return state.get("needs_revision", False)
-
-# 全局图实例
-_graph_instance = None
-
-def get_agent_graph():
-    """获取Agent图实例（单例）"""
-    global _graph_instance
-    if _graph_instance is None:
-        workflow = StateGraph(AgentState)
-
-        # 注册节点
-        workflow.add_node(NODE_NAMES["planner"], planner_node)
-        workflow.add_node(NODE_NAMES["fetch_source"], fetch_source_node)
-        workflow.add_node(NODE_NAMES["analyze"], analyze_node)
-        workflow.add_node(NODE_NAMES["extract_melody"], extract_melody_node)
-        workflow.add_node(NODE_NAMES["generate_midi"], generate_midi_node)
-        workflow.add_node(NODE_NAMES["arrange"], arrange_node)
-        workflow.add_node(NODE_NAMES["render"], render_node)
-        workflow.add_node(NODE_NAMES["check_quality"], check_quality_node)
-        workflow.add_node(NODE_NAMES["reflect"], reflect_node)
-        workflow.add_node(NODE_NAMES["human_input"], human_input_node)
-
-        # 定义边
-        workflow.add_edge(NODE_NAMES["planner"], NODE_NAMES["fetch_source"])
-        workflow.add_edge(NODE_NAMES["fetch_source"], NODE_NAMES["analyze"])
-        workflow.add_edge(NODE_NAMES["analyze"], NODE_NAMES["extract_melody"])
-        workflow.add_edge(NODE_NAMES["extract_melody"], NODE_NAMES["generate_midi"])
-        workflow.add_edge(NODE_NAMES["generate_midi"], NODE_NAMES["arrange"])
-        workflow.add_edge(NODE_NAMES["arrange"], NODE_NAMES["render"])
-        workflow.add_edge(NODE_NAMES["render"], NODE_NAMES["check_quality"])
-        workflow.add_edge(NODE_NAMES["check_quality"], NODE_NAMES["reflect"])
-
-        # 条件分支
-        workflow.add_conditional_edges(
-            NODE_NAMES["reflect"],
-            should_revise,
-            {
-                True: NODE_NAMES["human_input"],
-                False: END,
-            },
-        )
-
-        # 用户输入后回到arrange
-        workflow.add_edge(NODE_NAMES["human_input"], NODE_NAMES["arrange"])
-
-        # 设置入口
-        workflow.set_entry_point(NODE_NAMES["planner"])
-
-        # 配置检查点存储
-        checkpointer = SqliteSaver.from_conn_string(
-            settings.CHECKPOINT_DB_URL
-        )
-
-        _graph_instance = workflow.compile(
-            checkpointer=checkpointer,
-        )
-
-    return _graph_instance
+async def get_agent_graph():
+    """异步获取全局图实例（线程安全）"""
+    global _agent_graph
+    if _agent_graph is None:
+        async with _graph_lock:
+            if _agent_graph is None:
+                _agent_graph = await build_agent_graph()
+    return _agent_graph

@@ -5,6 +5,16 @@ import enum
 
 Base = declarative_base()
 
+class ConversationStatus(enum.Enum):
+    """会话状态枚举"""
+    active = "active"
+    completed = "completed"
+
+class MessageRole(enum.Enum):
+    """消息角色枚举"""
+    user = "user"
+    assistant = "assistant"
+
 class TaskStatus(enum.Enum):
     """任务状态枚举"""
     pending = "pending"
@@ -15,24 +25,26 @@ class TaskStatus(enum.Enum):
     failed = "failed"
     cancelled = "cancelled"
 
-class User(Base):
-    """用户表"""
-    __tablename__ = "users"
+class Profile(Base):
+    """Profile 表（用于多配置切换）"""
+    __tablename__ = "profiles"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    username = Column(String(64), unique=True, nullable=False, index=True)
+    name = Column(String(64), nullable=False)
+    is_active = Column(Integer, default=0)  # 0=非活跃, 1=活跃
+    preferences_data = Column(Text, nullable=True)  # 偏好配置的 JSON 字符串
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # 关联
-    tasks = relationship("Task", back_populates="user", cascade="all, delete-orphan")
-    preferences = relationship("Preference", back_populates="user", cascade="all, delete-orphan")
+    tasks = relationship("Task", back_populates="profile", cascade="all, delete-orphan")
 
 class Task(Base):
     """任务表"""
     __tablename__ = "tasks"
 
     id = Column(String(36), primary_key=True)  # UUID
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)  # Profile外键
     parent_task_id = Column(String(36), ForeignKey("tasks.id"), nullable=True)
 
     # 用户输入
@@ -68,9 +80,10 @@ class Task(Base):
     error_message = Column(Text)
 
     # 关联
-    user = relationship("User", back_populates="tasks")
+    profile = relationship("Profile")
     parent_task = relationship("Task", remote_side=[id], backref="subtasks")
     feedbacks = relationship("Feedback", back_populates="task", cascade="all, delete-orphan")
+    conversation_messages = relationship("ConversationMessage", back_populates="task")
 
 class Feedback(Base):
     """反馈表"""
@@ -89,9 +102,43 @@ class Preference(Base):
     __tablename__ = "preferences"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=False)
     key = Column(String(64), nullable=False)
     value = Column(JSON, nullable=False)  # 如 ["cello"] 或 {"bpm": 120}
 
     # 关联
-    user = relationship("User", back_populates="preferences")
+    # profile = relationship("Profile", back_populates="preferences")
+
+class Conversation(Base):
+    """会话表"""
+    __tablename__ = "conversations"
+
+    id = Column(String(36), primary_key=True)  # UUID
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=False)
+    title = Column(String(200))
+    status = Column(Enum(ConversationStatus), default=ConversationStatus.active, nullable=False)
+
+    # 时间戳
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # 关联
+    profile = relationship("Profile")
+    messages = relationship("ConversationMessage", back_populates="conversation", cascade="all, delete-orphan")
+
+class ConversationMessage(Base):
+    """会话消息表"""
+    __tablename__ = "conversation_messages"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    conversation_id = Column(String(36), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
+    role = Column(Enum(MessageRole), nullable=False)
+    content = Column(Text, nullable=False)
+    task_id = Column(String(36), ForeignKey("tasks.id"), nullable=True)
+
+    # 时间戳
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # 关联
+    conversation = relationship("Conversation", back_populates="messages")
+    task = relationship("Task", back_populates="conversation_messages")

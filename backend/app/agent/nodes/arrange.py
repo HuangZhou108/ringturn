@@ -13,18 +13,18 @@ from ..callbacks import ThinkingCallbackHandler
 import mido
 settings = get_settings()
 
-async def arrange_node(state: AgentState, db: Session, tools) -> None:
+async def arrange_node(state: AgentState) -> dict:
     """
     节点5: 乐器改编
 
     根据用户需求更换乐器、调整风格
     """
-    midi_path = state["midi_path"].replace("\\", "/")
+    midi_path = state["midi_path"]
     target_instrument = state.get("instrument", "piano")
     user_tempo = state.get("tempo")
     task_id = state["task_id"]
     task_dir = Path(settings.RINGTONES_DIR) / task_id
-    output_path = str(task_dir / "arrange_arranged.mid").replace("\\", "/")
+    output_path = str(task_dir / "arrange_arranged.mid")
 
     step_tools = [change_instrument_tool, change_tempo_tool, quantize_midi_tool]
     system_prompt = f"""你是一个音乐改编专家。你需要严格按照以下步骤操作：：
@@ -68,4 +68,5 @@ async def arrange_node(state: AgentState, db: Session, tools) -> None:
         mido.MidiFile(output_path)
     except Exception as e:
         raise RuntimeError(f"改编后的 MIDI 无效: {e}")
-    state["arranged_midi_path"] = output_path
+    
+    return {"arranged_midi_path": output_path}

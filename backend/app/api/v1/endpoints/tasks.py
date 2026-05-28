@@ -4,9 +4,10 @@ from typing import Optional
 from datetime import datetime
 import uuid
 import json
+import asyncio
 
 from app.db.session import get_db, SessionLocal
-from app.models import Task as TaskModel, TaskStatus, User, Feedback
+from app.models import Task as TaskModel, TaskStatus, Feedback, Conversation, ConversationMessage, ConversationStatus, MessageRole, Profile
 from app.schemas import (
     TaskCreate,
     TaskCreateResponse,
@@ -21,24 +22,15 @@ from app.schemas import (
 )
 from app.services.file_service import file_service
 from app.agent.agent_executor import AgentExecutor
+from app.api.v1.endpoints.profiles import get_active_profile as get_active_profile_from_db
 from app.core.exceptions import (
     TaskNotFoundException,
-    UserNotFoundException,
+    ProfileNotFoundException,
     TaskCannotBeCancelledException,
     AppException,
 )
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
-
-def get_or_create_default_user(db: Session) -> User:
-    """获取或创建默认用户"""
-    user = db.query(User).filter(User.username == "default").first()
-    if not user:
-        user = User(id=1, username="default")
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    return user
 
 @router.post("")
 async def create_task(
@@ -50,26 +42,97 @@ async def create_task(
     创建任务（开始生成铃声）
 
     异步触发Agent执行，立即返回task_id
+    同时创建或关联会话（历史会话功能）
     """
     try:
-        # 获取或创建默认用户
-        user = get_or_create_default_user(db)
-        user_id = user.id
+        # 获取当前活跃的Profile
+        profile = db.query(Profile).filter(Profile.is_active == 1).first()
+        profile_id = profile.id if profile else None
+
+        # 解析Profile偏好
+        profile_preferences = {}
+        if profile and profile.preferences_data:
+            try:
+                profile_preferences = json.loads(profile.preferences_data)
+            except json.JSONDecodeError:
+                profile_preferences = {}
 
         # 生成任务ID
         task_id = str(uuid.uuid4())
 
-        # 从 params 中提取已知参数，未提供则使用默认值
+        # 处理会话关联
+        conversation_id = request.conversation_id
+        if not conversation_id:
+            # 如果没有提供会话ID，创建新会话
+            conversation_id = str(uuid.uuid4())
+            title = request.user_request[:50] + "..." if len(request.user_request) > 50 else request.user_request
+            conversation = Conversation(
+                id=conversation_id,
+                profile_id=profile_id,
+                title=title,
+                status=ConversationStatus.active,
+            )
+            db.add(conversation)
+
+            # 创建第一条用户消息
+            first_message = ConversationMessage(
+                conversation_id=conversation_id,
+                role=MessageRole.user,
+                content=request.user_request,
+                task_id=task_id,
+            )
+            db.add(first_message)
+            assistant_message = ConversationMessage(
+                conversation_id=conversation_id,
+                role=MessageRole.assistant,
+                content="正在处理您的请求...",   # 占位内容
+                task_id=task_id,
+            )
+            db.add(assistant_message)
+        else:
+            # 验证会话存在
+            conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+            if not conversation:
+                return {
+                    "code": 400,
+                    "data": {},
+                    "message": f"会话 {conversation_id} 不存在",
+                }
+
+            # 添加用户消息到会话
+            user_message = ConversationMessage(
+                conversation_id=conversation_id,
+                role=MessageRole.user,
+                content=request.user_request,
+                task_id=task_id,
+            )
+            db.add(user_message)
+            assistant_message = ConversationMessage(
+                conversation_id=conversation_id,
+                role=MessageRole.assistant,
+                content="正在处理您的请求...",   # 占位内容
+                task_id=task_id,
+            )
+            db.add(assistant_message)
+
+        # 从 params 中提取已知参数，未提供则使用Profile偏好，最后使用默认值
         params = request.params or {}
-        instrument = params.get("instrument", "Acoustic Piano")
-        duration = params.get("duration", 30)
-        tempo = params.get("tempo", 120)
+        
+        # 优先级：用户请求 > Profile偏好 > 默认值
+        instrument = params.get("instrument", profile_preferences.get("default_instrument", "Acoustic Piano"))
+        duration = params.get("duration", profile_preferences.get("default_duration", 30))
+        tempo = params.get("tempo", profile_preferences.get("default_tempo", 120))
         filename = params.get("filename", "Untitled_Track")
+        
+        # 如果auto_apply开启，可以记录偏好到Profile（可选）
+        auto_apply = profile_preferences.get("auto_apply", True)
+        disliked_instruments = profile_preferences.get("disliked_instruments", [])
+        liked_instruments = profile_preferences.get("liked_instruments", [])
         ringtone_params = {
-        "instrument": instrument,
-        "duration": duration,
-        "tempo": tempo,
-        "filename": filename,
+            "instrument": instrument,
+            "duration": duration,
+            "tempo": tempo,
+            "filename": filename,
         }
         # 如果将来有额外参数，一并保留
         for k, v in params.items():
@@ -79,7 +142,7 @@ async def create_task(
         # 创建任务记录
         task = TaskModel(
             id=task_id,
-            user_id=user_id,
+            profile_id=profile_id,
             user_request=request.user_request,
             source_type=request.source_type,
             source_value=request.source_value,  # 文件ID或链接（字符串）
@@ -96,6 +159,7 @@ async def create_task(
             "code": 200,
             "data": {
                 "task_id": task_id,
+                "conversation_id": conversation_id,
                 "status": task.status.value,
                 "created_at": task.created_at.isoformat() if task.created_at else None,
             },
@@ -117,6 +181,13 @@ async def get_task(
     task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
     if not task:
         raise TaskNotFoundException(task_id)
+    
+    # 查找该任务关联的会话ID（通过第一条用户消息）
+    user_message = db.query(ConversationMessage).filter(
+        ConversationMessage.task_id == task_id,
+        ConversationMessage.role == MessageRole.user
+    ).first()
+    conversation_id = user_message.conversation_id if user_message else None
 
     return {
         "code": 200,
@@ -129,6 +200,7 @@ async def get_task(
             "final_audio_url": task.final_audio_url,
             "audio_duration": task.audio_duration,
             "plan": task.plan,
+            "conversation_id": conversation_id,
             "created_at": task.created_at.isoformat() if task.created_at else None,
             "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         },
@@ -207,6 +279,7 @@ async def submit_feedback(
 ):
     """
     提交反馈（创建子任务优化）
+    同时将反馈追加到对应的会话中
     """
     parent_task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
     if not parent_task:
@@ -216,7 +289,7 @@ async def submit_feedback(
     new_task_id = str(uuid.uuid4())
     child_task = TaskModel(
         id=new_task_id,
-        user_id=parent_task.user_id,
+        profile_id=parent_task.profile_id,
         parent_task_id=task_id,
         user_request=f"[优化] {parent_task.user_request} - 反馈: {request.feedback}",
         status=TaskStatus.pending,
@@ -229,6 +302,31 @@ async def submit_feedback(
         content=request.feedback,
     )
     db.add(feedback)
+
+    # 查找该任务关联的会话，并追加反馈消息
+    # 通过查找该任务创建时的用户消息来获取会话ID
+    user_message = db.query(ConversationMessage).filter(
+        ConversationMessage.task_id == task_id,
+        ConversationMessage.role == MessageRole.user
+    ).first()
+
+    if user_message:
+        # 添加用户反馈消息
+        feedback_msg = ConversationMessage(
+            conversation_id=user_message.conversation_id,
+            role=MessageRole.user,
+            content=f"[优化反馈] {request.feedback}",
+            task_id=new_task_id,
+        )
+        db.add(feedback_msg)
+
+        # 更新会话的更新时间
+        conversation = db.query(Conversation).filter(
+            Conversation.id == user_message.conversation_id
+        ).first()
+        if conversation:
+            conversation.updated_at = datetime.utcnow()
+
     db.commit()
 
     return {
@@ -282,53 +380,22 @@ async def run_agent_task(task_id: str):
     import threading
     
     def run_in_thread():
-        db = SessionLocal(expire_on_commit=False)
-        try:
-            # 更新状态为planning
+        with SessionLocal(expire_on_commit=False) as db:  # SQLAlchemy 2.x 支持上下文
             task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
             if not task:
-                print(f"[ERROR] Task {task_id} not found")
                 return
             task.status = TaskStatus.planning
             db.commit()
 
-            # 初始化Agent执行器
             agent_executor = AgentExecutor(task_id=task_id, db=db)
-
-            # 创建新的事件循环给这个线程用
-            import asyncio
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                # 执行任务
                 result = loop.run_until_complete(agent_executor.execute())
             finally:
                 loop.close()
-
-            # 更新任务状态为completed
-            task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
-            if task:
-                task.status = TaskStatus.completed
-                task.final_audio_url = result["audio_url"]
-                task.audio_duration = result["duration"]
-                task.current_subtask = None
-                task.subtask_progress = 1.0
-                db.commit()
-                print(f"[SUCCESS] Task {task_id} completed")
-
-        except Exception as e:
-            print(f"[ERROR] Task {task_id} failed: {e}")
-            import traceback
-            traceback.print_exc()
-            # 更新任务状态为failed
-            task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
-            if task:
-                task.status = TaskStatus.failed
-                task.error_message = str(e)
-                db.commit()
-        finally:
-            db.close()
-    
+                agent_executor.close()  # 显式关闭内部会话（如果 db 是外部传入，则不会重复关闭）
+                
     # 在独立线程中运行，完全不阻塞主应用
     thread = threading.Thread(target=run_in_thread, daemon=True)
     thread.start()

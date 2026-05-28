@@ -2,12 +2,14 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
+import ProfileInfo from './ProfileInfo';
 
 interface TopBarProps {
     title?: string;               // 左侧标题，默认使用 t('header.chatFlow')
     showNewChat?: boolean;        // 是否显示“新建”按钮，默认 true
     onNewChat?: () => void;       // 新建按钮点击回调，若不传则内部 navigate('/')
     newChatLabel?: string;        // 自定义新建按钮文本
+    onProfileChanged?: () => void;// Profile切换后的回调
 }
 
 export default function TopBar({
@@ -15,16 +17,18 @@ export default function TopBar({
                                    showNewChat = true,
                                    onNewChat,
                                    newChatLabel,
+                                   onProfileChanged,
                                }: TopBarProps) {
     const { t, i18n } = useTranslation();
     const navigate = useNavigate();
     const [showLang, setShowLang] = useState(false);
+    const [showProfileModal, setShowProfileModal] = useState(false);
 
     const handleNewChat = () => {
         if (onNewChat) {
             onNewChat();
         } else {
-            navigate('/');
+            navigate('/chat');
         }
     };
 
@@ -78,12 +82,20 @@ export default function TopBar({
                 </div>
 
                 {/* 用户头像 */}
-                <div className="w-8 h-8 bg-[#e6e9e9] rounded-full flex items-center justify-center">
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <button
+                    onClick={() => setShowProfileModal(true)}
+                    className="w-8 h-8 bg-[#e6e9e9] rounded-full flex items-center justify-center focus:outline-none hover:ring-2 hover:ring-[#00639d] transition"
+                >                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M3.8501 15.1001C4.7002 14.45 5.6499 13.9375 6.7002 13.5625C7.75 13.1875 8.8501 13 10 13C11.1499 13 12.25 13.1875 13.2998 13.5625C14.3501 13.9375 15.2998 14.45 16.1499 15.1001C16.7334 14.4167 17.1875 13.6418 17.5127 12.7751C17.8374 11.9084 18 10.9834 18 10C18 7.78345 17.2207 5.896 15.6626 4.33765C14.1045 2.7793 12.2168 2 10 2C7.7832 2 5.896 2.7793 4.3374 4.33765C2.7793 5.896 2 7.78345 2 10C2 10.9834 2.1626 11.9084 2.4873 12.7751C2.8125 13.6418 3.2666 14.4167 3.8501 15.1001ZM10 11C9.0166 11 8.1875 10.6626 7.5127 9.98755C6.8374 9.3125 6.5 8.4834 6.5 7.5C6.5 6.51685 6.8374 5.6875 7.5127 5.01245C8.1875 4.33765 9.0166 4 10 4C10.9834 4 11.8125 4.33765 12.4873 5.01245C13.1626 5.6875 13.5 6.51685 13.5 7.5C13.5 8.4834 13.1626 9.3125 12.4873 9.98755C11.8125 10.6626 10.9834 11 10 11Z" fill="#475569"/>
                     </svg>
-                </div>
+                </button>
             </div>
+            {/* Profile 弹窗 */}
+            <ProfileInfo
+                isOpen={showProfileModal}
+                onClose={() => setShowProfileModal(false)}
+                onProfileChanged={onProfileChanged}
+            />
         </header>
     );
 }

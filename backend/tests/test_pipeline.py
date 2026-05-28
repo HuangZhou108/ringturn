@@ -130,8 +130,8 @@ async def test_validate_midi_file(tmp_path):
 
     result = await validate_midi_file(str(midi_path))
 
-    assert "is_valid" in result
-    assert result["is_valid"] is True
+    assert isinstance(result, bool)
+    assert result is True
 
 
 # ============================

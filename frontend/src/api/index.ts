@@ -1,5 +1,7 @@
 import type { ApiResponse, CreateTaskRequest, CreateTaskResponse,
-    Task, TaskStatusInfo, TaskResult, TaskCancelResult,TaskListResponse, UploadResult } from '../types'
+    Task, TaskStatusInfo, TaskResult, TaskCancelResult,TaskListResponse, UploadResult,
+    ConversationListItem, ConversationDetail, ConversationMessage, Profile,
+    ProfilePreferences, ProfileTasksResponse} from '../types'
 
 const BASE_URL = '/api/v1'
 
@@ -42,14 +44,6 @@ export const api = {
     cancelTask: (taskId: string) =>
         request<TaskCancelResult>(`/tasks/${taskId}`, { method: 'DELETE' }),
 
-    // 获取用户历史任务列表
-    getUserTasks: (userId: number, params?: { page?: number; page_size?: number; status?: string }) => {
-        const query = new URLSearchParams()
-        if (params?.page) query.append('page', String(params.page))
-        if (params?.page_size) query.append('page_size', String(params.page_size))
-        if (params?.status) query.append('status', params.status)
-        return request<TaskListResponse>(`/users/${userId}/tasks?${query.toString()}`)
-    },
 
     // 上传音频文件
     uploadFile: async (file: File, metadata?: { title?: string; artist?: string }) => {
@@ -87,6 +81,85 @@ export const api = {
             window.open(fileUrl, '_blank')
         }
     },
+    // 获取会话列表
+    getConversations: (params?: { page?: number; page_size?: number; status?: string }) => {
+        const query = new URLSearchParams()
+        if (params?.page) query.append('page', String(params.page))
+        if (params?.page_size) query.append('page_size', String(params.page_size))
+        if (params?.status) query.append('status', params.status)
+        return request<{ total: number; page: number; page_size: number; conversations: ConversationListItem[] }>(`/conversations?${query.toString()}`)
+    },
+
+    // 获取会话详情
+    getConversation: (conversationId: string) =>
+        request<ConversationDetail>(`/conversations/${conversationId}`),
+
+    // 删除会话
+    deleteConversation: (conversationId: string) =>
+        request<{ conversation_id: string }>(`/conversations/${conversationId}`, { method: 'DELETE' }),
+
+    // 更新会话标题
+    updateConversation: (conversationId: string, title: string) =>
+        request<{ conversation_id: string; title: string }>(`/conversations/${conversationId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ title }),
+        }),
+
+    // 添加消息到会话
+    addMessage: (conversationId: string, data: { role: 'user' | 'assistant'; content: string; task_id?: string }) =>
+        request<ConversationMessage>(`/conversations/${conversationId}/messages`, {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
+
+    // 标记会话完成
+    completeConversation: (conversationId: string) =>
+        request<{ conversation_id: string; status: string }>(`/conversations/${conversationId}/complete`, {
+            method: 'POST',
+        }),
+
+    // 创建 Profile
+    createProfile: (name: string) =>
+        request<Profile>(`/profiles`, {
+            method: 'POST',
+            body: JSON.stringify({ name }),
+        }),
+
+    // 获取所有 Profile 列表
+    getProfiles: () =>
+        request<Profile[]>(`/profiles`),
+
+    // 获取当前活跃的 Profile
+    getActiveProfile: () =>
+        request<Profile>(`/profiles/active`),
+
+    // 切换活跃 Profile
+    activateProfile: (profileId: number) =>
+        request<Profile>(`/profiles/${profileId}/activate`, { method: 'PUT' }),
+
+    // 更新 Profile 名称
+    updateProfile: (profileId: number, name: string) =>
+        request<Profile>(`/profiles/${profileId}`, {
+            method: 'PUT',
+            body: JSON.stringify({ name }),
+        }),
+
+    // 删除 Profile
+    deleteProfile: (profileId: number) =>
+        request<null>(`/profiles/${profileId}`, { method: 'DELETE' }),
+
+    // 获取 Profile 的任务列表
+    getProfileTasks: (profileId: number, params?: { page?: number; page_size?: number; status?: string }) => {
+        const query = new URLSearchParams()
+        if (params?.page) query.append('page', String(params.page))
+        if (params?.page_size) query.append('page_size', String(params.page_size))
+        if (params?.status) query.append('status', params.status)
+        return request<ProfileTasksResponse>(`/profiles/${profileId}/tasks?${query.toString()}`)
+    },
+
+    // 获取 Profile 的所有偏好
+    getProfilePreferences: (profileId: number) =>
+        request<ProfilePreferences>(`/profiles/${profileId}/preferences`),
 }
 
 export type { ApiResponse }

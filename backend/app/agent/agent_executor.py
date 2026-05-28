@@ -1,69 +1,78 @@
 """
 Agent执行器
 
-负责协调整个Agent工作流
+协调 LangGraph 图执行，管理状态初始化、计划生成和结果同步
 """
 
 import asyncio
 from datetime import datetime
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
-
 from app.agent.state import AgentState, TaskStep
-from app.agent.nodes import NODE_HANDLERS
-from app.db.session import SessionLocal
+from app.agent.graph import get_agent_graph
 from app.models import Task as TaskModel, TaskStatus
-from .thinking_utils import record_thought
-from app.agent.tools import tool_gateway
+from app.agent.thinking_utils import record_thought
+from app.models import Task as TaskModel, TaskStatus, Conversation, ConversationMessage, MessageRole, ConversationStatus
 
 class RingtoneParams:
-    """铃声参数"""
     def __init__(self, task: TaskModel):
         params = task.ringtone_params or {}
-        
         self.instrument = params.get("instrument", "Acoustic Piano")
         self.duration = params.get("duration", 30)
         self.tempo = params.get("tempo", 120)
         self.filename = params.get("filename", "ringtone")
-        # 文件ID（从 source_value 获取，当有上传文件时）
         self.file_id = task.source_value
-        # 额外保存所有原始参数，供语义解析使用
+        self.max_retries = params.get("max_retries", 0)  # 用户可配置重试次数
         self.raw_params = params
 
 class AgentExecutor:
-    """Agent执行器"""
-
-    def __init__(self, task_id: str, db: Session = None):
+    def __init__(self, task_id: str, db: Session = None, conversation_id: str = None):
         self.task_id = task_id
-        self.db = db or SessionLocal(expire_on_commit=False)
+        self.db = db if db is not None else SessionLocal(expire_on_commit=False)
+        self._owns_db = db is None  # 标记是否自己创建的会话
+        self.conversation_id = conversation_id
 
         # 获取任务
         self.task = self.db.query(TaskModel).filter(TaskModel.id == task_id).first()
         if not self.task:
             raise ValueError(f"任务不存在: {task_id}")
 
+        # 如果没有传入 conversation_id，尝试从数据库中查找
+        if not self.conversation_id:
+            user_message = self.db.query(ConversationMessage).filter(
+                ConversationMessage.task_id == task_id,
+                ConversationMessage.role == MessageRole.user
+            ).first()
+            if user_message:
+                self.conversation_id = user_message.conversation_id
+
         # 解析铃声参数
         self.ringtone_params = RingtoneParams(self.task)
-
-        # 初始化状态
         self.state = self._init_state()
+        self.graph = None   # 延迟加载
+
+        # 查找该任务对应的 assistant 消息（应该存在）
+        self.assistant_message = None
+        if self.conversation_id:
+            self.assistant_message = self.db.query(ConversationMessage).filter(
+                ConversationMessage.task_id == task_id,
+                ConversationMessage.role == MessageRole.assistant
+            ).first()
 
     def _init_state(self) -> AgentState:
-        """初始化Agent状态"""
-        state: AgentState = {
+        """初始化 Agent 状态"""
+        return {
             "task_id": self.task.id,
-            "user_id": self.task.user_id,
+            "profile_id": self.task.profile_id,
             "user_request": self.task.user_request,
             "source_type": self.task.source_type,
             "source_value": self.task.source_value,
-            # 铃声参数
             "instrument": self.ringtone_params.instrument,
             "duration": self.ringtone_params.duration,
             "tempo": self.ringtone_params.tempo,
             "filename": self.ringtone_params.filename,
-            # 文件ID（用于获取上传的音频文件）
             "file_id": self.ringtone_params.file_id,
-            # 中间产物
+            "max_retries": self.ringtone_params.max_retries,
             "audio_path": None,
             "analysis_result": None,
             "melody_data": None,
@@ -85,126 +94,38 @@ class AgentExecutor:
             "created_at": self.task.created_at,
             "updated_at": datetime.utcnow(),
         }
-        return state
-
-    async def execute(self) -> dict:
-        """
-        执行任务
-
-        Returns:
-            dict: 执行结果
-        """
-        try:
-            # 1. 规划阶段
-            await self._update_task_status(TaskStatus.planning)
-            await self._plan()
-
-            # 2. 执行阶段
-            await self._update_task_status(TaskStatus.executing)
-            await self._execute_steps()
-
-            # 3. 完成
-            await self._update_task_status(TaskStatus.completed)
-            return {
-                "success": True,
-                "audio_url": self.task.final_audio_url,
-                "duration": self.task.audio_duration,
-            }
-
-        except Exception as e:
-            if self.task.status == TaskStatus.cancelled:
-                return {"success": False, "reason": "cancelled"}
-            await self._update_task_status(TaskStatus.failed)
-            self.task.error_message = str(e)
-            self.db.commit()
-            raise
-
-    async def execute_optimization(self, feedback: str) -> dict:
-        """
-        执行优化任务（基于用户反馈）
-
-        Args:
-            feedback: 用户反馈内容
-
-        Returns:
-            dict: 执行结果
-        """
-        # 添加反馈到历史
-        self._add_thinking_step("优化", f"收到用户反馈: {feedback[:50]}...")
-        self.state["feedback_history"].append({
-            "feedback": feedback,
-            "timestamp": datetime.utcnow().isoformat(),
-        })
-
-        # 解析反馈并调整计划
-        # 使用LLM辅助解析
-        parsed = await tool_gateway.parse_user_request(
-            f"基于反馈调整: {feedback}"
-        )
-
-        # 更新编排参数
-        if parsed.get("instruments"):
-            self.state["arrangement_params"] = parsed
-
-        # 直接执行arrange和render步骤（不重复分析）
-        self.state["current_step"] = TaskStep.ARRANGE.value
-        self.state["current_step_index"] = 4
-
-        try:
-            await self._update_task_status(TaskStatus.executing)
-
-            # 重新执行改编步骤
-            await self._execute_step(TaskStep.ARRANGE.value)
-            await self._execute_step(TaskStep.RENDER.value)
-            await self._execute_step(TaskStep.CHECK_QUALITY.value)
-
-            # 检查反思结果
-            if self.state.get("needs_revision"):
-                # 再次失败，更新错误信息
-                self.task.error_message = "多次优化后质量仍不达标"
-                self.db.commit()
-
-            await self._update_task_status(TaskStatus.completed)
-            return {
-                "success": True,
-                "audio_url": self.task.final_audio_url,
-                "duration": self.task.audio_duration,
-            }
-
-        except Exception as e:
-            await self._update_task_status(TaskStatus.failed)
-            self.task.error_message = str(e)
-            self.db.commit()
-            raise
 
     async def _plan(self) -> None:
-        """
-        规划阶段
-
-        使用LLM将用户需求分解为执行步骤
-        """
+        """规划阶段：生成执行计划（仅用于展示，不影响图路由）"""
         from app.services.llm_service import llm_service
 
-        user_request = self.state.get("user_request", "")
+        user_request = self.state["user_request"]
         ringtone_params = self.ringtone_params.raw_params
-
-        # 构造参数提示块
         param_desc = ""
         if ringtone_params:
             param_desc = "\n用户指定了以下参数：\n"
             for k, v in ringtone_params.items():
                 param_desc += f"- {k}: {v}\n"
 
-        full_prompt = f"{user_request}\n{param_desc}\n请根据用户需求和参数约束生成执行计划。用户输入文字内容需求优先级高于参数。"
-
-        # 调用LLM生成计划
+        full_prompt = f"{user_request}\n{param_desc}\n请根据用户需求和参数约束生成执行计划。"
         self._add_thinking_step("规划", f"分析用户需求: {user_request[:50]}...")
         plan = await llm_service.generate_plan(full_prompt)
-        self._add_thinking_step("规划", f"生成执行计划: {' → '.join(plan)}")
 
-        self.state["plan"] = plan
-        self.task.plan = plan
-        self.db.commit()
+        # 生成自然语言思考
+        thoughts_prompt = (
+            f"用户想要将一首歌曲改编为手机铃声。需求：{user_request}。"
+            f"参数：{param_desc if param_desc else '无'}。"
+            "请你用简短的自然语言描述一下你会如何改编，比如选择什么乐器、调整速度、截取片段等。"
+        )
+        try:
+            thinking_msg = await llm_service.chat(
+                [{"role": "user", "content": thoughts_prompt}],
+                temperature=0.7,
+                max_tokens=200,
+            )
+            self._add_thinking_step("规划", thinking_msg)
+        except Exception:
+            self._add_thinking_step("规划", "根据用户需求自动生成改编计划。")
 
         normalized_plan = []
         for item in plan:
@@ -214,171 +135,127 @@ class AgentExecutor:
                 normalized_plan.append(item)
         self.state["plan"] = normalized_plan
         self.task.plan = normalized_plan
-
-    async def _execute_steps(self) -> None:
-        """
-        执行所有步骤
-        """
-        plan = self.state["plan"]
-        total_steps = len(plan)
-
-        for idx, step_name in enumerate(plan):
-            # 检查任务是否已被取消
-            self.db.refresh(self.task)
-            if self.task.status == TaskStatus.cancelled:
-                return  # 直接结束执行
-            self.state["current_step_index"] = idx
-            self.state["current_step"] = step_name
-
-            try:
-                # 更新子步骤状态
-                self.task.current_subtask = step_name
-                self.task.subtask_progress = int((idx + 1) / total_steps * 90)
-                self.db.commit()
-
-                # 执行当前步骤
-                await self._execute_step(step_name)
-
-                # 记录结果
-                self.state["step_results"][step_name] = "completed"
-
-                # 检查反思结果
-                if step_name == TaskStep.CHECK_QUALITY.value:
-                    max_retries = 2
-                    retry_count = 0
-                    while self.state.get("needs_revision") and retry_count < max_retries:
-                        retry_count += 1
-                        self._add_thinking_step("retry", f"质量不达标，第{retry_count}次重试")
-                        # 根据反思建议调整参数（从 reflection 中提取）
-                        reflection = self.state.get("reflection", {})
-                        adjustments = reflection.get("adjustments", {})
-                        if adjustments.get("tempo_delta"):
-                            new_tempo = self.state["tempo"] + adjustments["tempo_delta"]
-                            self.state["tempo"] = max(60, min(200, new_tempo))
-                        # 重新执行 arrange 和 render
-                        await self._execute_step(TaskStep.ARRANGE.value)
-                        await self._execute_step(TaskStep.RENDER.value)
-                        await self._execute_step(TaskStep.CHECK_QUALITY.value)
-
-            except Exception as e:
-                # 记录错误
-                self.state["error"] = str(e)
-                self.state["step_results"][step_name] = f"failed: {str(e)}"
-                self.task.error_message = str(e)
-                self.db.commit()
-                raise
-
-        # 全部完成，同步结果到task
-        self.task.subtask_progress = 100
-        self.task.final_audio_url = self.state.get("final_audio_url")
-        self.task.audio_duration = self.state.get("audio_duration")
         self.db.commit()
 
-    # async def _execute_step(self, step: str) -> None:
-    #     """
-    #     执行单个步骤
+    async def execute(self) -> dict:
+        """执行任务：调用 LangGraph 图"""
+        try:
+            # 检查是否已取消
+            if self.task.status == TaskStatus.cancelled:
+                return {"success": False, "reason": "cancelled"}
 
-    #     Args:
-    #         step: 步骤名称
-    #     """
-    #     # 新增：步骤前工具可用性检查
-    #     from app.agent.tools import tool_gateway
-    #     step_tool_map = {
-    #         "analyze_structure": "librosa",   # 或 chordmini
-    #         "extract_melody": "basic_pitch",
-    #         "render": "fluidsynth",
-    #     }
-    #     if step in step_tool_map:
-    #         try:
-    #             await tool_gateway.ensure_tool_available(step_tool_map[step])
-    #         except RuntimeError as e:
-    #             raise RuntimeError(f"步骤 {step} 所需工具不可用: {e}")
+            await self._update_task_status(TaskStatus.planning)
+            await self._plan()
 
-    #     handler = NODE_HANDLERS.get(step)
-    #     if not handler:
-    #         raise ValueError(f"未知步骤: {step}")
+            await self._update_task_status(TaskStatus.executing)
+            # 异步获取图实例
+            self.graph = await get_agent_graph()
+            config = {"configurable": {"thread_id": self.task_id}}
+            final_state = await self.graph.ainvoke(self.state, config=config)
 
-    #     try:
-    #         # 记录思考过程：开始执行
-    #         self._add_thinking_step(step, f"开始执行步骤：{step}")
+            # 同步结果到数据库
+            self.task.final_audio_url = final_state.get("final_audio_url")
+            self.task.audio_duration = final_state.get("audio_duration")
+            # self.task.thinking_process = final_state.get("thinking_process", [])
+            await self._update_task_status(TaskStatus.completed)
 
-    #         await handler(self.state, self.db, tool_gateway)
+            # 记录完成消息
+            self._update_assistant_message(
+                f"任务已完成！\n生成铃声：{self.task.final_audio_url}\n时长：{self.task.audio_duration}秒"
+            )
+            self._complete_conversation()
 
-    #         # 记录节点内的思考过程（如果存在）
-    #         if self.state.get("_thinking"):
-    #             self._add_thinking_step(step, self.state["_thinking"])
-    #             del self.state["_thinking"]
+            return {
+                "success": True,
+                "audio_url": self.task.final_audio_url,
+                "duration": self.task.audio_duration,
+            }
 
-    #         # 记录思考过程：完成
-    #         self._add_thinking_step(step, f"步骤 {step} 执行完成")
+        except Exception as e:
+            self.db.refresh(self.task)
+            if self.task.status == TaskStatus.cancelled:
+                return {"success": False, "reason": "cancelled"}
+            await self._update_task_status(TaskStatus.failed)
+            self.task.error_message = str(e)
+            self.db.commit()
 
-    #     except Exception as e:
-    #         # 即使失败也要记录思考过程
-    #         self._add_thinking_step(step, f"步骤 {step} 执行失败: {str(e)}")
-    #         raise
-
-    #     self.db.commit()
-
-    async def _execute_step(self, step: str) -> None:
-        handler = NODE_HANDLERS.get(step)
-        if not handler:
-            raise ValueError(f"未知步骤: {step}")
-        max_attempts = 3
-        last_error = None
-        for attempt in range(max_attempts):
-            try:
-                self._add_thinking_step(step, f"开始执行步骤：{step} (第{attempt+1}次尝试)")
-                await handler(self.state, self.db, None)
-                self._add_thinking_step(step, f"步骤 {step} 执行完成")
-                return
-            except Exception as e:
-                last_error = e
-                if attempt < max_attempts - 1:
-                    # 将错误信息反馈给状态，供 handler 内部的重试逻辑使用
-                    self.state["last_error"] = str(e)
-                    self._add_thinking_step(step, f"步骤 {step} 失败: {e}，准备重试")
-                    # handler 的设计应该能够利用 last_error 调整行为
-                    continue
-                self._add_thinking_step(step, f"步骤 {step} 执行最终失败: {e}")
-                raise
+            # 记录错误消息到会话
+            self._update_assistant_message(f"任务执行失败：{str(e)}")
+            self._complete_conversation()
+            raise
+        finally:
+            self.close()  # 确保执行完毕后关闭会话
 
     async def _update_task_status(self, status: TaskStatus) -> None:
-        """更新任务状态"""
         self.task.status = status
         self.task.updated_at = datetime.utcnow()
         self.db.commit()
 
     def _add_thinking_step(self, step: str, content: str) -> None:
-        """添加思考步骤"""
-        # 创建新的列表对象，避免 SQLAlchemy 追踪问题
-        # 从数据库重新加载最新数据，避免覆盖回调写入的内容
         self.db.refresh(self.task)
-        current_steps = list(self.task.thinking_process or [])
-        current_steps.append({
+        steps = list(self.task.thinking_process or [])
+        steps.append({
             "step": step,
             "content": content,
             "timestamp": datetime.utcnow().isoformat(),
         })
-        self.task.thinking_process = current_steps
+        self.task.thinking_process = steps
         self.db.commit()
 
+    def _add_assistant_message(self, content: str) -> None:
+        """记录助手消息到会话"""
+        if not self.conversation_id:
+            return
+
+        try:
+            message = ConversationMessage(
+                conversation_id=self.conversation_id,
+                role=MessageRole.assistant,
+                content=content,
+                task_id=self.task_id,
+            )
+            self.db.add(message)
+
+            # 更新会话的更新时间
+            conversation = self.db.query(Conversation).filter(
+                Conversation.id == self.conversation_id
+            ).first()
+            if conversation:
+                conversation.updated_at = datetime.utcnow()
+
+            self.db.commit()
+        except Exception as e:
+            # 记录消息失败不影响主流程
+            print(f"[WARNING] Failed to add assistant message: {e}")
+
+    def _update_assistant_message(self, content: str) -> None:
+        """更新已有的 assistant 消息内容"""
+        if not self.assistant_message:
+            return
+        self.assistant_message.content = content
+        self.db.commit()
+
+    def _complete_conversation(self) -> None:
+        """将会话标记为已完成"""
+        if not self.conversation_id:
+            return
+
+        try:
+            conversation = self.db.query(Conversation).filter(
+                Conversation.id == self.conversation_id
+            ).first()
+            if conversation and conversation.status == ConversationStatus.active:
+                conversation.status = ConversationStatus.completed
+                self.db.commit()
+        except Exception as e:
+            print(f"[WARNING] Failed to complete conversation: {e}")
+
+    def close(self):
+        """显式关闭会话"""
+        if self._owns_db and self.db:
+            self.db.close()
+            self.db = None
+
     def __del__(self):
-        """清理资源"""
         if hasattr(self, 'db') and self.db:
             self.db.close()
-
-async def run_agent_task(task_id: str) -> None:
-    """
-    运行Agent任务
-
-    独立的异步任务函数
-
-    Args:
-        task_id: 任务ID
-    """
-    executor = AgentExecutor(task_id)
-    try:
-        await executor.execute()
-    except Exception as e:
-        print(f"[ERROR] Task {task_id} failed: {e}")
-        raise

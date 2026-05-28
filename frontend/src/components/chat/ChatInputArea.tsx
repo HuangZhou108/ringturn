@@ -279,7 +279,14 @@ export default function ChatInputArea({
                     <div className="flex flex-row-reverse items-center gap-4 px-1">
                         {/* 附件按钮 */}
                         <button
-                            onClick={() => fileInputRef.current?.click()}
+                            onClick={() => {
+                                if (!fileInputRef.current) {
+                                    console.error('[ChatInputArea] fileInputRef is null!')
+                                    return
+                                }
+                                console.log('[ChatInputArea] Upload button clicked, fileInputRef:', fileInputRef.current)
+                                fileInputRef.current.click()
+                            }}
                             className="flex items-center justify-center w-11 h-11"
                         >
                             {AttachmentIcon}

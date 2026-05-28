@@ -52,7 +52,7 @@ function Home() {
             });
 
             if (res.code === 200) {
-                navigate('/chat', {
+                navigate(`/chat/c/${res.data.conversation_id}`, {
                     state: {
                         taskId: res.data.task_id,
                         userMessage: inputValue.trim(),
