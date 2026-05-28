@@ -73,6 +73,7 @@ function ChatFlow() {
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const [autoScroll, setAutoScroll] = useState(true); // 处理自动滚动
     const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+    const [refreshSidebar, setRefreshSidebar] = useState(0); // 刷新侧边栏
     // 使用 ref 保存路由状态，避免重新渲染时丢失
     const locationStateRef = useRef(location.state as any)
 
@@ -160,6 +161,7 @@ function ChatFlow() {
         if (fileInputRef.current) {
             fileInputRef.current.value = ''
         }
+        setRefreshSidebar(prev => prev + 1); // 刷新侧边栏
     }, [])
 
     // 加载历史任务（保留兼容性）
@@ -381,6 +383,8 @@ function ChatFlow() {
         if (tempo.trim()) params.tempo = parseInt(tempo, 10)
         if (duration.trim()) params.duration = parseInt(duration, 10)
         if (filename && filename.trim() !== '') params.filename = filename
+        // 保存上传文件的原始文件名
+        if (uploadedFileName) params.original_filename = uploadedFileName;
 
         // 添加用户消息
         const newUserMessage: Message = {
@@ -433,6 +437,7 @@ function ChatFlow() {
                         pollingIntervalRef.current = null
                     }
                 }
+                setRefreshSidebar(prev => prev + 1);
             } else {
                 showError(res.message || t('chat.createFailed'))
             }
@@ -734,6 +739,7 @@ function ChatFlow() {
                     onRefresh={async () => {
                         if (fetchHistoryRef.current) await fetchHistoryRef.current()
                     }}
+                    refreshTrigger={refreshSidebar}
                 />
 
                 {/* 主内容区 */}

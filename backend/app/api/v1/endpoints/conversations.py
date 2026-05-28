@@ -201,12 +201,10 @@ async def get_conversation(
                 thinking_process = task.thinking_process  # 直接取 JSON 字段
                 audio_url = task.final_audio_url
                 audio_duration = task.audio_duration
-            elif msg.role == MessageRole.user and msg.task_id:
-                task = db.query(TaskModel).filter(TaskModel.id == msg.task_id).first()
-                if task and task.source_type == 'upload' and task.source_value:
-                    # 尝试获取原始文件名（如果有上传记录）
-                    # 简化：从文件服务获取文件名，或直接使用 task.source_value + 默认显示
-                    file_name = f"音频文件 ({task.source_value[:8]}...)"  # 占位符
+        elif msg.role == MessageRole.user and msg.task_id:
+            task = db.query(TaskModel).filter(TaskModel.id == msg.task_id).first()
+            if task and task.ringtone_params:
+                file_name = task.ringtone_params.get("original_filename")
 
         message_list.append({
             "id": msg.id,
