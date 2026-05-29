@@ -7,9 +7,11 @@ from app.agent.atomic_tools.rendering.fluidsynth_render import render_midi_with_
 from app.agent.atomic_tools.rendering.convert_to_mp3 import convert_wav_to_mp3
 from app.agent.atomic_tools.rendering.smart_clip import smart_clip_audio
 from app.agent.thinking_utils import record_thought
+from app.agent.utils import clean_state
 
 settings = get_settings()
 
+@clean_state
 async def render_node(state: AgentState) -> dict:
     """
     节点6: 渲染音频

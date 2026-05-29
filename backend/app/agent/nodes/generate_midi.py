@@ -3,10 +3,12 @@ from sqlalchemy.orm import Session
 from app.agent.state import AgentState
 from app.core.config import get_settings
 from app.agent.atomic_tools.midi.create_from_notes import create_midi_from_notes
+from app.agent.utils import clean_state
 import mido
 import shutil
 settings = get_settings()
 
+@clean_state
 async def generate_midi_node(state: AgentState) -> dict:
     """
     节点4: 生成MIDI

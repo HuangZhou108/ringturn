@@ -7,8 +7,9 @@ from app.agent.state import AgentState
 from app.agent.atomic_tools.quality import evaluate_overall_quality_tool
 from ..callbacks import ThinkingCallbackHandler
 from app.agent.thinking_utils import record_thought
-from app.agent.utils import convert_numpy_to_native
+from app.agent.utils import clean_state, extract_json_from_response
 
+@clean_state
 async def check_quality_node(state: AgentState) -> dict:
     """
     节点7: 质量检查
@@ -57,7 +58,7 @@ async def check_quality_node(state: AgentState) -> dict:
 
     if tool_called:
         try:
-            quality = json.loads(resp["messages"][-1].content)
+            quality = extract_json_from_response(resp["messages"][-1].content)
         except:
             print("[WARN] 质量检查 JSON 解析失败，使用默认值")
             quality = default_quality
@@ -98,8 +99,8 @@ async def check_quality_node(state: AgentState) -> dict:
     else:
         record_thought(task_id, "check_quality", "质量检查通过，无需重试")
 
-    step_results = convert_numpy_to_native(step_results)
-    quality = convert_numpy_to_native(quality)   # 可选，已包含在 step_results 中
+    # step_results = convert_numpy_to_native(step_results)
+    # quality = convert_numpy_to_native(quality)   # 可选，已包含在 step_results 中
     return {
         "needs_revision": needs_revision,
         "reflection": reflection,

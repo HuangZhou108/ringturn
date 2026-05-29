@@ -2,7 +2,9 @@ from pathlib import Path
 from app.agent.state import AgentState
 from app.services.file_service import file_service
 from app.agent.thinking_utils import record_thought
+from app.agent.utils import clean_state
 
+@clean_state
 async def fetch_source_node(state: AgentState) -> dict:
     """
     节点1: 获取音频源

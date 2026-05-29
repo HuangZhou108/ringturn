@@ -13,6 +13,8 @@ from app.agent.graph import get_agent_graph
 from app.models import Task as TaskModel, TaskStatus
 from app.agent.thinking_utils import record_thought
 from app.models import Task as TaskModel, TaskStatus, Conversation, ConversationMessage, MessageRole, ConversationStatus
+import threading
+from asyncio import Task as AsyncioTask
 
 class RingtoneParams:
     def __init__(self, task: TaskModel):
@@ -31,6 +33,8 @@ class AgentExecutor:
         self.db = db if db is not None else SessionLocal(expire_on_commit=False)
         self._owns_db = db is None  # 标记是否自己创建的会话
         self.conversation_id = conversation_id
+        self._active_task: Optional[AsyncioTask] = None
+        self._cancel_event = asyncio.Event()   # 用于通知内部协程取消
 
         # 获取任务
         self.task = self.db.query(TaskModel).filter(TaskModel.id == task_id).first()
@@ -151,7 +155,17 @@ class AgentExecutor:
             # 异步获取图实例
             self.graph = await get_agent_graph()
             config = {"configurable": {"thread_id": self.task_id}}
-            final_state = await self.graph.ainvoke(self.state, config=config)
+            # final_state = await self.graph.ainvoke(self.state, config=config)
+
+            # 创建 asyncio 任务
+            self._active_task = asyncio.create_task(
+                self.graph.ainvoke(self.state, config=config)
+            )
+            final_state = await self._active_task
+
+            # 检查是否在运行中被取消
+            if self._cancel_event.is_set():
+                raise asyncio.CancelledError()
 
             # 同步结果到数据库
             self.task.final_audio_url = final_state.get("final_audio_url")
@@ -171,7 +185,15 @@ class AgentExecutor:
                 "duration": self.task.audio_duration,
             }
 
+        except asyncio.CancelledError:
+            await self._update_task_status(TaskStatus.cancelled)
+            self.task.error_message = "任务已被用户取消"
+            self.db.commit()
+            return {"success": False, "reason": "cancelled"}
         except Exception as e:
+            if self._cancel_event.is_set():
+                await self._update_task_status(TaskStatus.cancelled)
+                return {"success": False, "reason": "cancelled"}
             self.db.refresh(self.task)
             if self.task.status == TaskStatus.cancelled:
                 return {"success": False, "reason": "cancelled"}
@@ -259,3 +281,17 @@ class AgentExecutor:
     def __del__(self):
         if hasattr(self, 'db') and self.db:
             self.db.close()
+
+    async def cancel(self):
+        """取消正在执行的任务"""
+        self._cancel_event.set()
+        if self.assistant_message:
+            self.assistant_message.content = "任务已取消"
+            self.db.commit()
+        if self._active_task and not self._active_task.done():
+            self._active_task.cancel()
+            # 等待任务真正取消
+            try:
+                await self._active_task
+            except asyncio.CancelledError:
+                pass

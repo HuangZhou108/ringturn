@@ -9,10 +9,12 @@ from app.core.config import get_settings
 from app.agent.atomic_tools.arrangement import (
     change_instrument_tool, change_tempo_tool, quantize_midi_tool
 )
+from app.agent.utils import clean_state
 from ..callbacks import ThinkingCallbackHandler
 import mido
 settings = get_settings()
 
+@clean_state
 async def arrange_node(state: AgentState) -> dict:
     """
     节点5: 乐器改编

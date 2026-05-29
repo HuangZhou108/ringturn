@@ -31,6 +31,9 @@ from app.core.exceptions import (
 )
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+# 一个全局集合，保持对后台任务的引用，防止被 GC
+_background_tasks = set()
+_running_tasks: dict[str, AgentExecutor] = {}
 
 @router.post("")
 async def create_task(
@@ -355,47 +358,61 @@ async def cancel_task(
             "data": None,
             "message": "任务已完成，无法取消。",
         }
+    
+    # 查找对应的助手消息
+    assistant_message = db.query(ConversationMessage).filter(
+        ConversationMessage.task_id == task_id,
+        ConversationMessage.role == MessageRole.assistant
+    ).first()
 
-    previous_status = task.status.value
-    task.status = TaskStatus.cancelled
-    db.commit()
+    # 如果任务正在运行，调用 executor 的 cancel
+    executor = _running_tasks.get(task_id)
+    if executor:
+        await executor.cancel()
+    else:
+        # 如果尚未开始运行或已结束但状态未更新，直接改数据库状态
+        task.status = TaskStatus.cancelled
+        db.commit()
+        # 更新助手消息
+        if assistant_message:
+            assistant_message.content = "任务已取消"
+            db.commit()
 
     return {
         "code": 200,
         "data": {
             "task_id": task.id,
-            "previous_status": previous_status,
-            "current_status": task.status.value,
+            "previous_status": task.status.value,
+            "current_status": TaskStatus.cancelled.value,
         },
         "message": "任务已取消。",
     }
 
 async def run_agent_task(task_id: str):
     """
-    在后台运行Agent任务（使用独立线程，避免阻塞）
+    在后台运行Agent任务
 
     Args:
         task_id: 任务ID
     """
-    import threading
-    
-    def run_in_thread():
-        with SessionLocal(expire_on_commit=False) as db:  # SQLAlchemy 2.x 支持上下文
-            task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
-            if not task:
-                return
-            task.status = TaskStatus.planning
-            db.commit()
+    with SessionLocal(expire_on_commit=False) as db:  # SQLAlchemy 2.x 支持上下文
+        task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+        if not task:
+            return
+        task.status = TaskStatus.planning
+        db.commit()
 
-            agent_executor = AgentExecutor(task_id=task_id, db=db)
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                result = loop.run_until_complete(agent_executor.execute())
-            finally:
-                loop.close()
-                agent_executor.close()  # 显式关闭内部会话（如果 db 是外部传入，则不会重复关闭）
-                
-    # 在独立线程中运行，完全不阻塞主应用
-    thread = threading.Thread(target=run_in_thread, daemon=True)
-    thread.start()
+        agent_executor = AgentExecutor(task_id=task_id, db=db)
+        _running_tasks[task_id] = agent_executor
+        # 创建异步任务，并保存引用
+        async_task = asyncio.create_task(agent_executor.execute())
+        _background_tasks.add(async_task)
+        try:
+            await async_task
+        except Exception as e:
+            print(f"[ERROR] Agent task {task_id} failed: {e}")
+        finally:
+            _background_tasks.discard(async_task)
+            agent_executor.close()  # 显式关闭内部会话（如果 db 是外部传入，则不会重复关闭）
+            if task_id in _running_tasks:
+                del _running_tasks[task_id]
