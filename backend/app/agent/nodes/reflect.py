@@ -7,8 +7,9 @@
 from app.agent.state import AgentState
 from app.services.llm_service import llm_service
 from app.agent.thinking_utils import record_thought
+from app.agent.utils import clean_state
 
-
+@clean_state
 async def reflect_node(state: AgentState) -> dict:
     """
     反思节点：判断质量是否达标，是否需要重新改编

@@ -14,8 +14,9 @@ from app.agent.atomic_tools.melody import (
     separate_vocals_tool,
 )
 from ..callbacks import ThinkingCallbackHandler
-from app.agent.utils import convert_numpy_to_native
+from app.agent.utils import clean_state, extract_json_from_response
 
+@clean_state
 async def extract_melody_node(state: AgentState) -> dict:
     """
     节点3: 提取主旋律
@@ -80,7 +81,7 @@ async def extract_melody_node(state: AgentState) -> dict:
     )
     # 解析结果
     try:
-        melody_data = json.loads(resp["messages"][-1].content)
+        melody_data = extract_json_from_response(resp["messages"][-1].content)
         print(f"[extract_melody] LLM 返回 melody_data: {melody_data}")
     except Exception as e:
         print(f"[WARN] JSON 解析失败: {e}，启用降级逻辑")
@@ -109,5 +110,5 @@ async def extract_melody_node(state: AgentState) -> dict:
             melody_data["midi_path"] = ""  # 后续 generate_midi 会重建
 
     # state["melody_data"] = melody_data
-    melody_data = convert_numpy_to_native(melody_data)
+    # melody_data = convert_numpy_to_native(melody_data)
     return {"melody_data": melody_data}

@@ -10,8 +10,9 @@ from app.agent.atomic_tools.analysis import (
     detect_instruments_tool
 )
 from ..callbacks import ThinkingCallbackHandler
-from app.agent.utils import convert_numpy_to_native
+from app.agent.utils import clean_state, extract_json_from_response
 
+@clean_state
 async def analyze_structure_node(state: AgentState) -> dict:
     """
     节点2: 分析音乐结构
@@ -77,7 +78,7 @@ async def analyze_structure_node(state: AgentState) -> dict:
         # for i, msg in enumerate(final_response.get('messages', [])):
         #     print(f"[NODE DEBUG] msg[{i}] type={type(msg).__name__}, content={str(msg.content)[:100]}")
         last_msg = final_response["messages"][-1].content
-        analysis_result = json.loads(last_msg)
+        analysis_result = extract_json_from_response(last_msg)
     except Exception as e:
         # 降级：使用默认值
         print(f"[WARN] analyze_structure_node 子Agent失败: {e}，使用默认分析结果")
@@ -97,5 +98,5 @@ async def analyze_structure_node(state: AgentState) -> dict:
     state["analysis_result"]["duration"] = librosa.get_duration(y=y, sr=sr)
     # sections 可以单独使用 detect_sections_tool，但为了简化，此处省略
 
-    analysis_result = convert_numpy_to_native(analysis_result)
+    # analysis_result = convert_numpy_to_native(analysis_result)
     return {"analysis_result": analysis_result}

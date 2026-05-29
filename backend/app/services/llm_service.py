@@ -67,6 +67,9 @@ class LLMService:
         last_error = None
 
         for attempt in range(MAX_RETRIES):
+            # 检查当前任务是否被取消
+            if asyncio.current_task() and asyncio.current_task().cancelled():
+                raise asyncio.CancelledError()
             try:
                 print(f"[LLM REQUEST] model={model}, base_url={self.client.base_url}")
                 print(f"[LLM REQUEST] messages={messages}")
@@ -79,7 +82,8 @@ class LLMService:
                 )
                 print(f"[LLM RESPONSE] {response}")
                 return response.choices[0].message.content
-
+            except asyncio.CancelledError:
+                raise
             except RateLimitError as e:
                 last_error = e
                 # 计算指数退避延迟

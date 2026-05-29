@@ -85,10 +85,10 @@ async def build_agent_graph():
     # 异步检查点
     db_path = settings.CHECKPOINT_DB_URL.replace("sqlite:///", "")
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    # conn = await aiosqlite.connect(db_path)
-    # checkpointer = AsyncSqliteSaver(conn)
+    conn = await aiosqlite.connect(db_path)
+    checkpointer = AsyncSqliteSaver(conn)
 
-    graph = workflow.compile(checkpointer=None)
+    graph = workflow.compile(checkpointer=checkpointer)
     return graph
 
 
