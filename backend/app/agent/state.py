@@ -3,6 +3,16 @@ from langgraph.graph.message import add_messages
 from datetime import datetime
 from enum import Enum
 
+def merge_dicts(left: dict, right: dict) -> dict:
+    """后者胜出的归约器，用于合并多个并行节点的更新。"""
+    if left is None:
+        left = {}
+    if right is None:
+        right = {}
+    merged = left.copy()
+    merged.update(right)
+    return merged
+
 class TaskStep(str, Enum):
     """子步骤枚举"""
     FETCH_SOURCE = "fetch_source"
@@ -37,7 +47,7 @@ class AgentState(TypedDict, total=False):
     filename: str
 
     # 分析结果
-    analysis_result: dict | None
+    analysis_result: Annotated[dict | None, merge_dicts]
     melody_data: dict | None
     midi_path: str | None
 

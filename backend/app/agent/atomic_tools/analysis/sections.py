@@ -4,49 +4,46 @@ import numpy as np
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-async def detect_sections(audio_path: str, max_sections: int = 4) -> list[dict]:
-    """
-    按能量变化粗略划分段落。
-
-    Args:
-        audio_path: 音频文件路径
-        max_sections: 最大段落数
-
-    Returns:
-        list[dict]: 每个段落包含 start, end, type (intro/verse/chorus/outro)
-
-    使用场景：
-        - 确定铃声截取的最佳起点
-        - 生成结构分析报告
-    """
+async def detect_sections(audio_path: str) -> dict:
     y, sr = librosa.load(audio_path, sr=22050)
     duration = librosa.get_duration(y=y, sr=sr)
-    
-    # 按能量变化分界
-    rms = librosa.feature.rms(y=y)[0]
-    frame_times = librosa.times_like(rms, sr=sr)
-    changes = np.diff(rms)
-    peak_frames = np.argsort(np.abs(changes))[-max_sections:]
-    cut_times = sorted([frame_times[f] for f in peak_frames if 0 < frame_times[f] < duration])
-    cut_times = [0.0] + cut_times + [duration]
-    
-    section_types = ["intro", "verse", "chorus", "outro"]
+    # 使用梅尔频谱的突变检测简单划分段落
+    mel_spec = librosa.feature.melspectrogram(y=y, sr=sr)
+    # 计算每一帧的能量
+    energy = np.sum(mel_spec, axis=0)
+    # 找出能量变化的拐点作为段落边界
+    diff = np.diff(energy)
+    threshold = np.std(diff) * 1.5
+    boundaries = np.where(np.abs(diff) > threshold)[0]
+    # 转换为时间
+    frames_to_time = librosa.frames_to_time(boundaries, sr=sr)
+    times = sorted(frames_to_time)
+    # 添加0和duration
+    cut_times = [0.0] + [t for t in times if 0 < t < duration] + [duration]
+    # 给段落类型（简单模式：intro, verse, chorus, outro 循环）
+    types = ["intro", "verse", "chorus", "outro"]
     sections = []
-    for i in range(min(len(cut_times)-1, len(section_types))):
+    for i in range(len(cut_times)-1):
+        typ = types[i % len(types)] if i < len(types) else "verse"
+        # 粗略能量等级（0~1）
+        energy_level = float(np.mean(energy[int(cut_times[i]*sr/512):int(cut_times[i+1]*sr/512)])) if len(energy) > 0 else 0.5
         sections.append({
-            "start": float(cut_times[i]),
-            "end": float(cut_times[i+1]),
-            "type": section_types[i % len(section_types)]
+            "start": cut_times[i],
+            "end": cut_times[i+1],
+            "type": typ,
+            "energy_level": energy_level
         })
-    return sections
+    # 能量曲线简化为每0.5秒一个点
+    hop_length = int(0.5 * sr / 512)  # 每0.5秒
+    energy_curve = [{"time": float(t), "energy": float(e)} for t, e in zip(librosa.times_like(energy, sr=sr), energy) if t < duration]
+    return {"sections": sections, "energy_curve": energy_curve}
 
-class DetectSectionsInput(BaseModel):
-    audio_path: str = Field(description="音频文件的绝对路径")
-    max_sections: int = Field(default=4, description="最多划分的段落数")
+class SectionsInput(BaseModel):
+    audio_path: str = Field(description="音频文件路径")
 
 detect_sections_tool = StructuredTool.from_function(
     coroutine=detect_sections,
     name="detect_sections",
-    description="将音频划分为多个段落（intro, verse, chorus, outro），返回每个段落的起止时间。",
-    args_schema=DetectSectionsInput,
+    description="检测段落边界、段落类型、能量曲线",
+    args_schema=SectionsInput
 )
