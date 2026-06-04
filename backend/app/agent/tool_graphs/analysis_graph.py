@@ -1,7 +1,9 @@
 # backend/app/agent/tool_graphs/analysis_graph.py
+import numpy as np
 import asyncio
 from langgraph.graph import StateGraph, END
 from app.agent.state import AgentState
+from app.services.yamnet_service import get_yamnet
 from app.agent.atomic_tools.analysis import (
     get_metadata_tool,
     detect_tempo_beats_tool,
@@ -26,12 +28,98 @@ from app.agent.thinking_utils import record_thought
 # ------------------------------------------------------------
 node_metadata = wrap_tool(get_metadata_tool.coroutine, "metadata")
 node_tempo = wrap_tool(detect_tempo_beats_tool.coroutine, "tempo_beats")
-node_sections = wrap_tool(detect_sections_tool.coroutine, "sections")
+# node_sections = wrap_tool(detect_sections_tool.coroutine, "sections")
 node_harmony = wrap_tool(analyze_harmony_tool.coroutine, "harmony")
 node_instruments = wrap_tool(detect_instruments_tool.coroutine, "instruments")
 node_vocal = wrap_tool(detect_vocal_tool.coroutine, "vocal")
 node_loudness = wrap_tool(analyze_loudness_tool.coroutine, "loudness")
 node_spectral = wrap_tool(analyze_spectral_tool.coroutine, "spectral")
+
+# 改进的 sections 节点（不使用原来的包装，因为参数不同）
+async def node_sections(state: AgentState) -> dict:
+    audio_path = state["audio_path"]
+    result = await detect_sections_tool.coroutine(audio_path=audio_path)
+    if "analysis_result" not in state:
+        state["analysis_result"] = {}
+    state["analysis_result"]["sections"] = result
+    return {"analysis_result": state["analysis_result"]}
+
+# ---------- YAMNet 节点 ----------
+async def node_yamnet(state: AgentState) -> dict:
+    audio_path = state["audio_path"]
+    yamnet = get_yamnet()
+    scores = yamnet.predict(audio_path)  # shape (521,)
+    print("Top 5 scores:", sorted(zip(yamnet.labels, scores), key=lambda x: -x[1])[:5])
+    labels = yamnet.labels
+
+    # 取前 10 个最高分的标签及其分数
+    top_indices = np.argsort(scores)[::-1][:10]
+    raw_predictions = [
+        {"label": labels[idx], "score": float(scores[idx])}
+        for idx in top_indices if scores[idx] > 0.01  # 可调阈值
+    ]
+
+    # 硬编码映射（保留用于兼容，但主要靠 raw_predictions）
+    instrument_map = {
+        "Piano": "piano",
+        "Guitar": "guitar",
+        "Drum": "drums",
+        "Bass": "bass",
+        "Violin": "violin",
+        "Cello": "cello",
+        "Flute": "flute",
+        "Saxophone": "saxophone",
+        "Trumpet": "trumpet",
+        "Synthesizer": "synthesizer",
+        "Singing": "vocals",
+    }
+    instruments = []
+    for yamnet_name, our_name in instrument_map.items():
+        try:
+            idx = labels.index(yamnet_name)
+            prob = float(scores[idx])
+            if prob > 0.3:
+                instruments.append({"name": our_name, "confidence": prob})
+        except ValueError:
+            continue
+
+    # 人声检测
+    has_vocal = any(i["name"] == "vocals" for i in instruments)
+    vocal_confidence = next((i["confidence"] for i in instruments if i["name"] == "vocals"), 0.0)
+
+    # 风格检测（映射到我们的分类）
+    genre_map = {
+        "Pop music": "pop",
+        "Rock music": "rock",
+        "Classical music": "classical",
+        "Jazz": "jazz",
+        "Electronic music": "electronic",
+        "Hip hop music": "hiphop",
+    }
+    genre = "pop"  # 默认
+    for yamnet_genre, our_genre in genre_map.items():
+        try:
+            idx = labels.index(yamnet_genre)
+            if scores[idx] > 0.3:
+                genre = our_genre
+                break
+        except ValueError:
+            continue
+
+    result = {
+        "instruments": instruments,
+        "lead_instrument": instruments[0]["name"] if instruments else "unknown",
+        "accompaniment_style": "arpeggiated chords" if len(instruments) > 2 else "block chords",
+        "has_vocal": has_vocal,
+        "vocal_count": 1 if has_vocal else 0,  # 简化，未来可根据时序改进
+        "genre": genre,
+        "confidence": {i["name"]: i["confidence"] for i in instruments},
+        "raw_predictions": raw_predictions,
+    }
+    if "analysis_result" not in state:
+        state["analysis_result"] = {}
+    state["analysis_result"]["yamnet"] = result
+    return {"analysis_result": state["analysis_result"]}
 
 # 需要额外参数的节点
 def get_bpm_from_state(state: AgentState):
@@ -130,9 +218,13 @@ async def node_merge(state: AgentState) -> dict:
     # 可以添加默认值填充逻辑
     analysis = state.get("analysis_result", {})
     # 保证关键字段存在
-    if analysis.get("tempo_beats") is None:
-        analysis["tempo_beats"] = {"bpm": 120, "beat_times": [], "downbeat_times": [], "time_signature": "4/4"}
-    # 其他...
+    analysis.setdefault("metadata", {})
+    analysis.setdefault("tempo_beats", {})
+    analysis.setdefault("tempo_variation", {})
+    analysis.setdefault("loudness", {})
+    analysis.setdefault("spectral", {})
+    analysis.setdefault("sections", {})
+    analysis.setdefault("yamnet", {})
     return {"analysis_result": analysis}
 
 # ------------------------------------------------------------
@@ -161,121 +253,25 @@ async def build_analysis_graph() -> StateGraph:
 
     # 添加节点
     workflow.add_node("metadata", node_metadata)
+    workflow.add_node("yamnet", node_yamnet)
     workflow.add_node("tempo", node_tempo)
-    workflow.add_node("sections", node_sections)
-    workflow.add_node("harmony", node_harmony)
-    workflow.add_node("instruments", node_instruments)
-    workflow.add_node("vocal", node_vocal)
+    workflow.add_node("tempo_var", node_tempo_var)
     workflow.add_node("loudness", node_loudness)
     workflow.add_node("spectral", node_spectral)
-    workflow.add_node("melody", node_melody)
-    workflow.add_node("tempo_var", node_tempo_var)
-    workflow.add_node("decide_optional", decide_optional_node)
-    workflow.add_node("infer_mood", node_infer_mood)
-    workflow.add_node("detect_effects", node_detect_effects)
+    workflow.add_node("sections", node_sections)
     workflow.add_node("merge", node_merge)
 
     # 设置入口
     workflow.set_entry_point("metadata")
+    workflow.add_edge("metadata", "yamnet")
 
-    # 阶段1 -> 阶段2（并行节点）
-    parallel_nodes = ["tempo", "sections", "harmony", "instruments", "vocal", "loudness", "spectral"]
-    for node in parallel_nodes:
-        workflow.add_edge("metadata", node)
+    # yamnet 之后并行执行其他所有分析
+    for node in ["tempo", "tempo_var", "loudness", "spectral", "sections"]:
+        workflow.add_edge("yamnet", node)
 
-    # 阶段2 -> 阶段3（部分依赖）
-    workflow.add_edge("tempo", "melody")
-    workflow.add_edge("sections", "melody")
-    workflow.add_edge("tempo", "tempo_var")
-    # 确保所有阶段2的节点都完成才能进入 decide_optional（需要收集所有输出）
-    # 方法：为每个阶段2节点添加边到 decide_optional
-    for node in parallel_nodes:
-        workflow.add_edge(node, "decide_optional")
-    workflow.add_edge("melody", "decide_optional")
-    workflow.add_edge("tempo_var", "decide_optional")
-
-    # 条件边
-    workflow.add_conditional_edges(
-        "decide_optional",
-        route_optional,
-        {
-            "both": "infer_mood",   # 会同时执行两个，需要并行处理
-            "mood_only": "infer_mood",
-            "effects_only": "detect_effects",
-            "none": "merge",
-        }
-    )
-
-    # 处理 both 情况：infer_mood 和 detect_effects 并行，然后都指向 merge
-    # 需要添加并行路由：可以使用一个虚拟节点或直接添加两条边
-    # 这里简单处理：在 both 时，先执行 infer_mood，再执行 detect_effects，最后 merge
-    # 更好的实现是使用 LangGraph 的 Send API，但为了简化，我们顺序执行（按需可改进）
-    # 修改条件边：如果 both，则先到 infer_mood，然后 infer_mood 之后再到 detect_effects，再到 merge
-    # 更清晰：在 both 分支上，添加一个中间节点 parallel_gate
-    # 我将在下面添加一个 parallel_gate 节点来处理并行
-    # 重新设计：添加一个节点 "parallel_gate"，当 both 时，调用该节点，内部并行执行两个工具
-    # 但由于 LangGraph 原生支持多边，可以这样：
-    # workflow.add_edge("infer_mood", "detect_effects")
-    # workflow.add_edge("detect_effects", "merge")
-    # 这样顺序执行，也可以接受。
-    # 为简单，我选择顺序执行 both: 先 mood 后 effects。
-    # 但为了更高效，可使用 asyncio.gather 在节点内部。见下：
-
-    # 覆盖 both 分支的处理：添加一个自定义节点
-    # 待增加到思考过程
-    async def parallel_optional_node(state: AgentState) -> dict:
-        # 并行执行两个工具
-        audio_path = state["audio_path"]
-        user_request = state.get("user_request", "")
-        analysis = state.get("analysis_result", {})
-        features = {
-            "instruments": analysis.get("instruments", {}).get("instruments"),
-            "has_vocal": analysis.get("vocal", {}).get("has_vocal"),
-            "bpm": analysis.get("tempo_beats", {}).get("bpm"),
-            "key": analysis.get("harmony", {}).get("key")
-        }
-        mood_task = infer_mood_style_tool.func(audio_path=audio_path, user_request=user_request, features=features)
-        effects_task = detect_special_effects_tool.func(audio_path=audio_path)
-        mood_res, effects_res = await asyncio.gather(mood_task, effects_task, return_exceptions=True)
-        if "analysis_result" not in state:
-            state["analysis_result"] = {}
-        if not isinstance(mood_res, Exception):
-            state["analysis_result"]["mood_style"] = mood_res
-        if not isinstance(effects_res, Exception):
-            state["analysis_result"]["special_effects"] = effects_res
-        return {"analysis_result": state["analysis_result"]}
-
-    workflow.add_node("parallel_optional", parallel_optional_node)
-
-    # 修改条件边
-    def route_optional_v2(state: AgentState) -> str:
-        decisions = state.get("optional_decisions", {})
-        mood = decisions.get("should_infer_mood", False)
-        effects = decisions.get("should_detect_effects", False)
-        if mood and effects:
-            return "parallel"
-        elif mood:
-            return "mood"
-        elif effects:
-            return "effects"
-        else:
-            return "none"
-
-    workflow.add_conditional_edges(
-        "decide_optional",
-        route_optional_v2,
-        {
-            "parallel": "parallel_optional",
-            "mood": "infer_mood",
-            "effects": "detect_effects",
-            "none": "merge",
-        }
-    )
-    workflow.add_edge("parallel_optional", "merge")
-    workflow.add_edge("infer_mood", "merge")
-    workflow.add_edge("detect_effects", "merge")
-
-    # 设置结束
+    # 所有并行节点汇聚到 merge
+    for node in ["tempo", "tempo_var", "loudness", "spectral", "sections"]:
+        workflow.add_edge(node, "merge")
     workflow.add_edge("merge", END)
 
     return workflow.compile()

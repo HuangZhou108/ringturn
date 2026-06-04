@@ -59,8 +59,10 @@ checkpoints.db
 *.cp
 
 # Model files (large, download separately)
-# models/
+models/
 soundfonts/*.sf2
+*.tflite
+*.csv
 
 # OS
 .DS_Store
@@ -80,4 +82,4 @@ htmlcov/
 
 soundfonts/
 
-debug_melody.py
+local_tests/
