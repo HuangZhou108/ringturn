@@ -19,6 +19,9 @@ from .tempo_variation import detect_tempo_variation_tool
 from .mood_style import infer_mood_style_tool
 from .special_effects import detect_special_effects_tool
 
+from .yamnet import analyze_yamnet_tool
+from .mert import analyze_mert_tool
+
 __all__ = [
     "get_bpm_tool",
     "extract_chord_progression_tool",
@@ -40,4 +43,6 @@ __all__ = [
     "detect_tempo_variation_tool",
     "infer_mood_style_tool",
     "detect_special_effects_tool",
+    "analyze_yamnet_tool",
+    "analyze_mert_tool",
 ]

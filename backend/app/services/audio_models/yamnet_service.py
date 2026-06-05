@@ -3,7 +3,7 @@ import librosa
 from pathlib import Path
 import urllib.request
 import tensorflow as tf
-from app.services.download_yamnet import download_yamnet
+from backend.app.services.audio_models.download_yamnet import download_yamnet
 
 class YAMNetService:
     _instance = None

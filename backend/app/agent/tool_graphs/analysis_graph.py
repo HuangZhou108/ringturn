@@ -3,7 +3,6 @@ import numpy as np
 import asyncio
 from langgraph.graph import StateGraph, END
 from app.agent.state import AgentState
-from app.services.yamnet_service import get_yamnet
 from app.agent.atomic_tools.analysis import (
     get_metadata_tool,
     detect_tempo_beats_tool,
@@ -17,6 +16,7 @@ from app.agent.atomic_tools.analysis import (
     detect_tempo_variation_tool,
     infer_mood_style_tool,
     detect_special_effects_tool,
+    analyze_yamnet_tool,
 )
 from app.services.llm_service import llm_service
 from .base import wrap_tool, wrap_tool_with_params
@@ -46,76 +46,17 @@ async def node_sections(state: AgentState) -> dict:
 
 # ---------- YAMNet 节点 ----------
 async def node_yamnet(state: AgentState) -> dict:
-    audio_path = state["audio_path"]
-    yamnet = get_yamnet()
-    scores = yamnet.predict(audio_path)  # shape (521,)
-    print("Top 5 scores:", sorted(zip(yamnet.labels, scores), key=lambda x: -x[1])[:5])
-    labels = yamnet.labels
-
-    # 取前 10 个最高分的标签及其分数
-    top_indices = np.argsort(scores)[::-1][:10]
-    raw_predictions = [
-        {"label": labels[idx], "score": float(scores[idx])}
-        for idx in top_indices if scores[idx] > 0.01  # 可调阈值
-    ]
-
-    # 硬编码映射（保留用于兼容，但主要靠 raw_predictions）
-    instrument_map = {
-        "Piano": "piano",
-        "Guitar": "guitar",
-        "Drum": "drums",
-        "Bass": "bass",
-        "Violin": "violin",
-        "Cello": "cello",
-        "Flute": "flute",
-        "Saxophone": "saxophone",
-        "Trumpet": "trumpet",
-        "Synthesizer": "synthesizer",
-        "Singing": "vocals",
-    }
-    instruments = []
-    for yamnet_name, our_name in instrument_map.items():
-        try:
-            idx = labels.index(yamnet_name)
-            prob = float(scores[idx])
-            if prob > 0.3:
-                instruments.append({"name": our_name, "confidence": prob})
-        except ValueError:
-            continue
-
-    # 人声检测
-    has_vocal = any(i["name"] == "vocals" for i in instruments)
-    vocal_confidence = next((i["confidence"] for i in instruments if i["name"] == "vocals"), 0.0)
-
-    # 风格检测（映射到我们的分类）
-    genre_map = {
-        "Pop music": "pop",
-        "Rock music": "rock",
-        "Classical music": "classical",
-        "Jazz": "jazz",
-        "Electronic music": "electronic",
-        "Hip hop music": "hiphop",
-    }
-    genre = "pop"  # 默认
-    for yamnet_genre, our_genre in genre_map.items():
-        try:
-            idx = labels.index(yamnet_genre)
-            if scores[idx] > 0.3:
-                genre = our_genre
-                break
-        except ValueError:
-            continue
-
-    result = {
-        "instruments": instruments,
-        "lead_instrument": instruments[0]["name"] if instruments else "unknown",
-        "accompaniment_style": "arpeggiated chords" if len(instruments) > 2 else "block chords",
-        "has_vocal": has_vocal,
-        "vocal_count": 1 if has_vocal else 0,  # 简化，未来可根据时序改进
-        "genre": genre,
-        "confidence": {i["name"]: i["confidence"] for i in instruments},
-        "raw_predictions": raw_predictions,
-    }
+    audio_path = state.get("audio_path")
+    if not audio_path:
+        raise ValueError("state 中缺少 audio_path")
+    
+    # 可选的参数配置，可以从 state 或配置中读取
+    result = await analyze_yamnet_tool.coroutine(
+        audio_path=audio_path,
+        top_k=10,
+        instrument_threshold=0.3
+    )
+    
     if "analysis_result" not in state:
         state["analysis_result"] = {}
     state["analysis_result"]["yamnet"] = result
