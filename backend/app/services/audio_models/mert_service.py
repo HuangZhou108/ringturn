@@ -5,9 +5,41 @@ MERT 音频特征提取服务
 import torch
 import librosa
 import numpy as np
-from transformers import AutoModel, Wav2Vec2FeatureExtractor
+import os
+# from transformers import AutoModel, Wav2Vec2FeatureExtractor
 from pathlib import Path
 from typing import Optional, Dict, Any
+
+# 定义模型源列表（按优先级排序，可使用环境变量覆盖）
+DEFAULT_SOURCES = [
+    {
+        "name": "modelscope",
+        "url": "https://www.modelscope.cn/models/m-a-p/MERT-v1-95M",
+        "model_id": "m-a-p/MERT-v1-95M",
+        "backend": "modelscope",
+        "description": "ModelScope 国内镜像"
+    },
+    {
+        "name": "modelscope_330m",
+        "url": "https://www.modelscope.cn/models/m-a-p/MERT-v1-330M",
+        "model_id": "m-a-p/MERT-v1-330M",
+        "backend": "modelscope",
+        "description": "ModelScope 330M 版本"
+    },
+    {
+        "name": "huggingface",
+        "url": "https://huggingface.co/m-a-p/MERT-v1-95M",
+        "model_id": "m-a-p/MERT-v1-95M",
+        "backend": "huggingface",
+        "description": "Hugging Face 官方源"
+    },
+    {
+        "name": "local",
+        "path": "./models/MERT-v1-95M",
+        "backend": "local",
+        "description": "本地模型文件夹"
+    }
+]
 
 class MERTService:
     """MERT 模型单例服务，提取音频特征及情绪/风格向量"""
@@ -23,14 +55,118 @@ class MERTService:
     def __init__(self):
         if self._initialized:
             return
+        
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model_name = "m-a-p/MERT-v1-95M"   # 也可用 330M 版本
-        print(f"Loading MERT model {self.model_name} on {self.device}...")
-        self.model = AutoModel.from_pretrained(self.model_name, trust_remote_code=True).to(self.device)
-        self.processor = Wav2Vec2FeatureExtractor.from_pretrained(self.model_name, trust_remote_code=True)
+        self.model = None
+        self.processor = None
+        
+        # 尝试从多个源加载模型
+        self._load_model_from_sources()
+        
+        if self.model is None:
+            raise RuntimeError("无法从任何源加载 MERT 模型，请检查网络或手动下载模型到 ./models/ 目录")
+        
         self.model.eval()
         self._initialized = True
-        print("MERT model loaded.")
+        print(f"MERT model loaded successfully on {self.device}")
+    
+    def _load_model_from_sources(self):
+        """按顺序尝试从不同源加载模型"""
+        from transformers import AutoModel, Wav2Vec2FeatureExtractor
+        
+        # 获取用户指定的优先源（环境变量）
+        preferred_source = os.environ.get("MERT_MODEL_SOURCE", "").lower()
+        
+        # 重新排序：如果指定了优先源，将其移到最前面
+        sources = list(DEFAULT_SOURCES)
+        if preferred_source:
+            for i, src in enumerate(sources):
+                if src["name"] == preferred_source:
+                    sources.insert(0, sources.pop(i))
+                    break
+        
+        for source in sources:
+            try:
+                print(f"尝试从 {source['description']} 加载 MERT 模型...")
+                
+                if source["backend"] == "modelscope":
+                    # ModelScope 加载方式
+                    from modelscope.models import Model
+                    from modelscope.pipelines import pipeline
+                    from modelscope.preprocessors import Preprocessor
+                    
+                    # 使用 ModelScope 的 AutoModel（与 transformers 兼容）
+                    model_id = source["model_id"]
+                    # 设置缓存目录
+                    cache_dir = os.environ.get("MODELSCOPE_CACHE", "./models/modelscope")
+                    
+                    self.model = AutoModel.from_pretrained(
+                        model_id,
+                        trust_remote_code=True,
+                        cache_dir=cache_dir,
+                        resume_download=True,
+                    ).to(self.device)
+                    
+                    self.processor = Wav2Vec2FeatureExtractor.from_pretrained(
+                        model_id,
+                        trust_remote_code=True,
+                        cache_dir=cache_dir,
+                    )
+                    
+                elif source["backend"] == "huggingface":
+                    # 标准 Hugging Face 方式
+                    model_id = source["model_id"]
+                    # 设置 Hugging Face 镜像（如果环境变量存在）
+                    hf_endpoint = os.environ.get("HF_ENDPOINT")
+                    if hf_endpoint:
+                        print(f"使用 HF_ENDPOINT={hf_endpoint}")
+                    
+                    self.model = AutoModel.from_pretrained(
+                        model_id,
+                        trust_remote_code=True,
+                        resume_download=True,
+                        low_cpu_mem_usage=True,
+                    ).to(self.device)
+                    
+                    self.processor = Wav2Vec2FeatureExtractor.from_pretrained(
+                        model_id,
+                        trust_remote_code=True,
+                    )
+                    
+                elif source["backend"] == "local":
+                    # 本地路径
+                    local_path = source["path"]
+                    if not Path(local_path).exists():
+                        print(f"本地模型路径不存在: {local_path}")
+                        continue
+                    
+                    self.model = AutoModel.from_pretrained(
+                        local_path,
+                        trust_remote_code=True,
+                    ).to(self.device)
+                    
+                    self.processor = Wav2Vec2FeatureExtractor.from_pretrained(
+                        local_path,
+                        trust_remote_code=True,
+                    )
+                
+                # 如果成功加载，跳出循环
+                if self.model is not None:
+                    print(f"成功从 {source['description']} 加载模型")
+                    return
+                    
+            except ImportError as e:
+                if source["backend"] == "modelscope":
+                    print(f"ModelScope 未安装: {e}。请运行 `pip install modelscope` 以使用该源。")
+                else:
+                    print(f"从 {source['description']} 加载失败: {e}")
+                continue
+            except Exception as e:
+                print(f"从 {source['description']} 加载失败: {e}")
+                continue
+        
+        # 所有源都失败
+        print("所有 MERT 加载源均失败")
 
     def extract_features(self, audio_path: str, layer_pooling: str = "mean") -> np.ndarray:
         """

@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from backend.app.services.audio_models.yamnet_service import get_yamnet
+from app.services.audio_models.yamnet_service import get_yamnet
 
 
 class AnalyzeYamnetInput(BaseModel):

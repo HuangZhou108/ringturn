@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional, List
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from backend.app.services.audio_models.mert_service import get_mert
+from app.services.audio_models.mert_service import get_mert
 
 
 class AnalyzeMertInput(BaseModel):

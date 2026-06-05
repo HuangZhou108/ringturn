@@ -46,11 +46,10 @@ basic-pitch
 setuptools<70
 demucs
 torchcodec
-# tensorflow
+# tensorflow==.15.1
 # tensorflow-cpu==2.13.0
 # keras==2.15.0
 # onnxruntime
-
 # Dev dependencies
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
@@ -61,4 +60,5 @@ isort>=5.13.0
 langchain-openai>=0.1.0
 
 # models
-# transformers
+transformers
+modelscope

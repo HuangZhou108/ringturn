@@ -52,6 +52,7 @@ class AgentState(TypedDict, total=False):
     midi_path: str | None
 
     # 改编参数
+    arrange_temp_path: str | None
     arrangement_params: dict | None
     arranged_midi_path: str | None
 
