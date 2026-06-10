@@ -72,7 +72,7 @@ class MERTService:
     
     def _load_model_from_sources(self):
         """按顺序尝试从不同源加载模型"""
-        from transformers import AutoModel, Wav2Vec2FeatureExtractor
+        from transformers import AutoModel, AutoFeatureExtractor
         
         # 获取用户指定的优先源（环境变量）
         preferred_source = os.environ.get("MERT_MODEL_SOURCE", "").lower()
@@ -107,7 +107,7 @@ class MERTService:
                         resume_download=True,
                     ).to(self.device)
                     
-                    self.processor = Wav2Vec2FeatureExtractor.from_pretrained(
+                    self.processor = AutoFeatureExtractor.from_pretrained(
                         model_id,
                         trust_remote_code=True,
                         cache_dir=cache_dir,
@@ -128,7 +128,7 @@ class MERTService:
                         low_cpu_mem_usage=True,
                     ).to(self.device)
                     
-                    self.processor = Wav2Vec2FeatureExtractor.from_pretrained(
+                    self.processor = AutoFeatureExtractor.from_pretrained(
                         model_id,
                         trust_remote_code=True,
                     )
@@ -145,7 +145,7 @@ class MERTService:
                         trust_remote_code=True,
                     ).to(self.device)
                     
-                    self.processor = Wav2Vec2FeatureExtractor.from_pretrained(
+                    self.processor = AutoFeatureExtractor.from_pretrained(
                         local_path,
                         trust_remote_code=True,
                     )
