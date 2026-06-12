@@ -17,6 +17,10 @@ from app.agent.atomic_tools.analysis import (
     infer_mood_style_tool,
     detect_special_effects_tool,
     analyze_yamnet_tool,
+    classify_vocal_presence,
+    classify_piano_presence,
+    classify_guitar_presence,
+    separate_sources_demucs,
 )
 from app.services.llm_service import llm_service
 from .base import wrap_tool, wrap_tool_with_params
@@ -82,7 +86,87 @@ node_tempo_var = wrap_tool_with_params(
 )
 
 # ------------------------------------------------------------
-# 2. LLM 决策节点
+# 2. 新增节点：CLAP 分类（使用导出的工具函数）
+# ------------------------------------------------------------
+async def node_clap_classify(state: AgentState) -> dict:
+    audio_path = state.get("audio_path")
+    if not audio_path:
+        raise ValueError("state 中缺少 audio_path")
+    task_id = state.get("task_id")
+
+    # 调用三个二分类工具
+    vocal_res = await classify_vocal_presence(audio_path)
+    piano_res = await classify_piano_presence(audio_path)
+    guitar_res = await classify_guitar_presence(audio_path)
+
+    has_vocal = "singing" in vocal_res["predicted_label"].lower()
+    has_piano = "prominent" in piano_res["predicted_label"].lower()
+    has_guitar = "prominent" in guitar_res["predicted_label"].lower()
+
+    if task_id:
+        record_thought(task_id, "analysis", f"CLAP 分类: 人声={has_vocal}, 钢琴={has_piano}, 吉他={has_guitar}")
+
+    return {
+        "has_vocal": has_vocal,
+        "has_piano": has_piano,
+        "has_guitar": has_guitar,
+    }
+
+
+async def node_decide_separation(state: AgentState) -> dict:
+    has_vocal = state.get("has_vocal", False)
+    # 当前策略：有人声则进行 4 轨分离
+    if has_vocal:
+        return {"should_separate": True, "demucs_stems": "4"}
+    else:
+        return {"should_separate": False, "demucs_stems": None}
+
+
+async def node_separate_demucs(state: AgentState) -> dict:
+    audio_path = state.get("audio_path")
+    stems = state.get("demucs_stems")
+    task_id = state.get("task_id")
+
+    if not stems:
+        return {"demucs_separated": False}
+
+    try:
+        # 调用导出的分离函数
+        result = await separate_sources_demucs(
+            audio_path=audio_path,
+            stems=stems,
+            model="htdemucs_6s"
+        )
+        vocals_path = result.get("vocals_path")
+        other_path = result.get("other_path")   # 4 轨模式下的伴奏混合轨道
+        if not vocals_path or not other_path:
+            raise RuntimeError("Demucs 分离未生成所需轨道")
+
+        if task_id:
+            record_thought(task_id, "analysis", f"Demucs 分离成功，伴奏轨道: {other_path}")
+
+        # 将伴奏轨道作为后续分析的音频源
+        return {
+            "demucs_separated": True,
+            "vocals_path": vocals_path,
+            "accompaniment_path": other_path,
+            "audio_path": other_path,      # 覆盖原 audio_path，后续分析使用伴奏
+            "demucs_stems": stems,
+        }
+    except Exception as e:
+        if task_id:
+            record_thought(task_id, "analysis", f"Demucs 分离失败: {e}，降级使用原始音频")
+        return {"demucs_separated": False}
+
+
+def route_after_separation(state: AgentState) -> str:
+    if state.get("demucs_separated", False):
+        return "separated"
+    else:
+        return "no_separate"
+
+# ------------------------------------------------------------
+# 3. LLM 决策节点
 # ------------------------------------------------------------
 async def decide_optional_node(state: AgentState) -> dict:
     user_request = state.get("user_request", "")
@@ -169,7 +253,7 @@ async def node_merge(state: AgentState) -> dict:
     return {"analysis_result": analysis}
 
 # ------------------------------------------------------------
-# 3. 构建图
+# 4. 构建图
 # ------------------------------------------------------------
 async def build_analysis_graph() -> StateGraph:
     # (调试输出)检查工具正确性
@@ -194,6 +278,9 @@ async def build_analysis_graph() -> StateGraph:
 
     # 添加节点
     workflow.add_node("metadata", node_metadata)
+    workflow.add_node("clap_classify", node_clap_classify)
+    workflow.add_node("decide_separation", node_decide_separation)
+    workflow.add_node("separate_demucs", node_separate_demucs)
     workflow.add_node("yamnet", node_yamnet)
     workflow.add_node("tempo", node_tempo)
     workflow.add_node("tempo_var", node_tempo_var)
@@ -204,13 +291,36 @@ async def build_analysis_graph() -> StateGraph:
 
     # 设置入口
     workflow.set_entry_point("metadata")
-    workflow.add_edge("metadata", "yamnet")
+    workflow.add_edge("metadata", "clap_classify")
+    workflow.add_edge("clap_classify", "decide_separation")
 
-    # yamnet 之后并行执行其他所有分析
-    for node in ["tempo", "tempo_var", "loudness", "spectral", "sections"]:
-        workflow.add_edge("yamnet", node)
+    # 条件分支：是否需要分离
+    workflow.add_conditional_edges(
+        "decide_separation",
+        lambda state: "separate" if state.get("should_separate") else "no_separate",
+        {
+            "separate": "separate_demucs",
+            "no_separate": "yamnet",
+        }
+    )
 
-    # 所有并行节点汇聚到 merge
+    # 分离后路由：无论成功或失败，都进入 yamnet（分离失败时会在节点内降级）
+    workflow.add_conditional_edges(
+        "separate_demucs",
+        route_after_separation,
+        {
+            "separated": "yamnet",
+            "no_separate": "yamnet",
+        }
+    )
+
+    # 后续并行分析
+    workflow.add_edge("yamnet", "tempo")
+    workflow.add_edge("yamnet", "tempo_var")
+    workflow.add_edge("yamnet", "loudness")
+    workflow.add_edge("yamnet", "spectral")
+    workflow.add_edge("yamnet", "sections")
+
     for node in ["tempo", "tempo_var", "loudness", "spectral", "sections"]:
         workflow.add_edge(node, "merge")
     workflow.add_edge("merge", END)

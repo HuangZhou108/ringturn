@@ -10,6 +10,7 @@ CLAP 音频理解原子工具
 """
 
 import os
+import contextlib
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -72,11 +73,12 @@ async def analyze_clap_zero_shot(
     model = laion_clap.CLAP_Module(enable_fusion=True)
     # load_ckpt 会自动检查 LAION_CLAP_CACHE 目录下是否有模型文件
     # 如果没有，则会下载到该目录
-    try:
-        model.load_ckpt(ckpt=ckpt_file)
-    except Exception as e:
-        raise RuntimeError(f"CLAP 模型加载失败: {e}\n请确保存在完整模型文件，或网络通畅。")
-
+    with open(os.devnull, 'w') as devnull, contextlib.redirect_stdout(devnull):
+        try:
+            model.load_ckpt(ckpt=ckpt_file)
+        except Exception as e:
+            raise RuntimeError(f"CLAP 模型加载失败: {e}")
+        
     # 加载音频
     audio_embed = model.get_audio_embedding_from_filelist([audio_path], use_tensor=True)
 
@@ -190,3 +192,181 @@ clap_caption_tool = StructuredTool.from_function(
     ),
     args_schema=CLAPCaptionInput,
 )
+
+async def classify_task_type(
+    audio_path: str,
+    labels: List[str] = None,
+) -> Dict[str, Any]:
+    """
+    使用 CLAP 对音频进行二分类：主旋律主导 vs 复杂配器。
+    
+    返回结果包含：
+        - predicted_label: 预测的标签
+        - confidence: 该标签的置信度
+        - all_scores: 所有标签的得分
+    """
+    if labels is None:
+        labels = ["simple melody dominant, one clear melody, few instruments, simple arrangement", "multiple overlapping melodies, many instruments, dense polyphonic texture"]
+    
+    # 复用已有的零样本分类逻辑，但直接计算所有标签的相似度
+    try:
+        import laion_clap
+        import torch
+    except Exception as e:
+        raise RuntimeError(f"CLAP 相关模块导入失败: {e}")
+    
+    # 本地权重路径（与 analyze_clap_zero_shot 保持一致）
+    local_cache_dir = Path(__file__).parent.parent.parent.parent.parent / "models" / "clap"
+    local_cache_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_file = local_cache_dir / "630k-audioset-fusion-best.pt"
+    if not ckpt_file.exists():
+        raise RuntimeError(f"权重文件不存在: {ckpt_file}")
+    
+    model = laion_clap.CLAP_Module(enable_fusion=True)
+    try:
+        model.load_ckpt(ckpt=str(ckpt_file))
+    except Exception as e:
+        raise RuntimeError(f"CLAP 模型加载失败: {e}")
+    model.eval()
+    
+    # 获取音频嵌入
+    audio_embed = model.get_audio_embedding_from_filelist([audio_path], use_tensor=True)  # (1, embed_dim)
+    
+    # 获取文本嵌入
+    text_embeds = model.get_text_embedding(labels, use_tensor=True)  # (n_labels, embed_dim)
+    
+    # 计算余弦相似度并确保维度正确
+    from torch.nn.functional import cosine_similarity
+    sim = cosine_similarity(audio_embed, text_embeds)  # 期望 (1, n_labels)
+    
+    # 防御：如果 sim 是 1 维，则添加 batch 维度
+    if sim.dim() == 1:
+        sim = sim.unsqueeze(0)
+    
+    probs = torch.softmax(sim, dim=1).squeeze(0)  # (n_labels,)
+    
+    best_idx = torch.argmax(probs).item()
+    predicted_label = labels[best_idx]
+    confidence = float(probs[best_idx])
+    
+    all_scores = {label: float(probs[i]) for i, label in enumerate(labels)}
+    
+    return {
+        "predicted_label": predicted_label,
+        "confidence": confidence,
+        "all_scores": all_scores,
+        "labels_used": labels,
+    }
+
+# ========== 新增二分类工具 ==========
+
+async def classify_vocal_presence(
+    audio_path: str,
+    labels: List[str] = None,
+) -> Dict[str, Any]:
+    """
+    使用 CLAP 进行人声二分类：有人声 vs 无人声。
+    
+    返回结果包含：
+        - predicted_label: 预测的标签（"有清晰人声" / "无清晰人声"）
+        - confidence: 该标签的置信度
+        - all_scores: 所有标签的得分
+    """
+    if labels is None:
+        labels = [
+            "singing, vocals, human vocal",
+            "no vocal, only instruments"
+        ]
+    return await _clap_binary_classify(audio_path, labels)
+
+
+async def classify_piano_presence(
+    audio_path: str,
+    labels: List[str] = None,
+) -> Dict[str, Any]:
+    """
+    使用 CLAP 进行钢琴重要旋律二分类：钢琴为主旋律 vs 钢琴不重要。
+    
+    返回结果包含：
+        - predicted_label: 预测的标签（"钢琴为主旋律" / "钢琴不重要"）
+        - confidence: 该标签的置信度
+        - all_scores: 所有标签的得分
+    """
+    if labels is None:
+        labels = [
+            "prominent piano melody, piano is a main instrument, clear piano part",
+            "no piano, or piano not important, piano is background or absent"
+        ]
+    return await _clap_binary_classify(audio_path, labels)
+
+
+async def classify_guitar_presence(
+    audio_path: str,
+    labels: List[str] = None,
+) -> Dict[str, Any]:
+    """
+    使用 CLAP 进行吉他重要旋律二分类：吉他为主旋律 vs 吉他不重要。
+    
+    返回结果包含：
+        - predicted_label: 预测的标签（"吉他为主旋律" / "吉他不重要"）
+        - confidence: 该标签的置信度
+        - all_scores: 所有标签的得分
+    """
+    if labels is None:
+        labels = [
+            "prominent guitar melody, guitar is a main instrument, clear guitar part",
+            "no guitar, or guitar not important, guitar is background or absent"
+        ]
+    return await _clap_binary_classify(audio_path, labels)
+
+
+async def _clap_binary_classify(audio_path: str, labels: List[str]) -> Dict[str, Any]:
+    """
+    内部通用二分类函数，复用模型加载和推理逻辑。
+    """
+    try:
+        import laion_clap
+        import torch
+    except ImportError as e:
+        raise RuntimeError(f"CLAP 相关模块导入失败: {e}")
+    
+    # 本地权重路径（与原有函数保持一致）
+    local_cache_dir = Path(__file__).parent.parent.parent.parent.parent / "models" / "clap"
+    local_cache_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_file = local_cache_dir / "630k-audioset-fusion-best.pt"
+    if not ckpt_file.exists():
+        raise RuntimeError(f"权重文件不存在: {ckpt_file}")
+    
+    model = laion_clap.CLAP_Module(enable_fusion=True)
+    with open(os.devnull, 'w') as devnull, contextlib.redirect_stdout(devnull):
+        try:
+            model.load_ckpt(ckpt=str(ckpt_file))
+        except Exception as e:
+            raise RuntimeError(f"CLAP 模型加载失败: {e}")
+    model.eval()
+    
+    # 获取音频嵌入
+    audio_embed = model.get_audio_embedding_from_filelist([audio_path], use_tensor=True)  # (1, embed_dim)
+    
+    # 获取文本嵌入
+    text_embeds = model.get_text_embedding(labels, use_tensor=True)  # (n_labels, embed_dim)
+    
+    # 计算余弦相似度
+    from torch.nn.functional import cosine_similarity
+    sim = cosine_similarity(audio_embed, text_embeds)  # (1, n_labels)
+    if sim.dim() == 1:
+        sim = sim.unsqueeze(0)
+    
+    probs = torch.softmax(sim, dim=1).squeeze(0)  # (n_labels,)
+    best_idx = torch.argmax(probs).item()
+    predicted_label = labels[best_idx]
+    confidence = float(probs[best_idx])
+    
+    all_scores = {label: float(probs[i]) for i, label in enumerate(labels)}
+    
+    return {
+        "predicted_label": predicted_label,
+        "confidence": confidence,
+        "all_scores": all_scores,
+        "labels_used": labels,
+    }

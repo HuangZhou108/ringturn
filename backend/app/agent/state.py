@@ -46,6 +46,11 @@ class AgentState(TypedDict, total=False):
     tempo: int
     filename: str
 
+    # Demucs 分离结果（由 analysis 节点填充）
+    demucs_separated: bool              # 是否执行了分离
+    vocals_path: str | None             # 人声轨道路径（如果有分离）
+    accompaniment_path: str | None      # 伴奏轨道路径（other.wav，如果有分离）
+    demucs_stems: str | None            # 使用的分离模式（'4' 或 None）
     # 分析结果
     analysis_result: Annotated[dict | None, merge_dicts]
     melody_data: dict | None

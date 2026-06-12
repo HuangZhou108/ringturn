@@ -52,6 +52,7 @@ async def separate_sources_demucs(
             - accompaniment_path: 伴奏轨道路径（所有非人声轨道混合）
     """
     # 确保 demucs 可用
+    import shutil
     demucs_path = shutil.which("demucs")
     if not demucs_path:
         raise RuntimeError("Demucs not found. Please install with: pip install demucs")

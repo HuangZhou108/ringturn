@@ -22,6 +22,13 @@ from .special_effects import detect_special_effects_tool
 from .yamnet import analyze_yamnet_tool
 from .mert import analyze_mert_tool
 
+from .clap_analyze import (
+    classify_vocal_presence,
+    classify_piano_presence,
+    classify_guitar_presence,
+)
+from .demucs_separate import separate_sources_demucs
+
 __all__ = [
     "get_bpm_tool",
     "extract_chord_progression_tool",
@@ -45,4 +52,9 @@ __all__ = [
     "detect_special_effects_tool",
     "analyze_yamnet_tool",
     "analyze_mert_tool",
+
+    "classify_vocal_presence",
+    "classify_piano_presence",
+    "classify_guitar_presence",
+    "separate_sources_demucs",
 ]

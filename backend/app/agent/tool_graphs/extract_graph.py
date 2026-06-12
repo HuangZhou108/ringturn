@@ -2,8 +2,11 @@
 旋律提取工具链图
 
 将原有子 Agent 的流程固化到 LangGraph 中：
-1. 分离人声（可选，但原逻辑要求必须分离）
+1. 分离人声在analysis已处理。
 2. 使用 Basic Pitch 提取旋律
+   根据用户指定的 duration（目标铃声时长）判断是否需要双轨提取：
+      - 如果 duration > 30 秒，则同时提取人声轨道和伴奏轨道的旋律，合并后作为 melody_data
+      - 否则只提取人声轨道（如果存在）或原始音频
 3. 若 Basic Pitch 失败或返回空，降级使用 librosa 提取
 4. 过滤短音符
 5. 量化音符（若有 BPM 信息）
@@ -28,6 +31,37 @@ from app.agent.utils import clean_state
 
 # ---------- 节点定义 ----------
 
+async def node_prepare_extract_source(state: AgentState) -> Dict[str, Any]:
+    """
+    根据分离标志和用户目标时长决定提取源和策略。
+    """
+    demucs_separated = state.get("demucs_separated", False)
+    vocals_path = state.get("vocals_path")
+    accompaniment_path = state.get("accompaniment_path")
+    original_audio_path = state.get("audio_path")
+    # 用户指定的目标时长（秒），默认为 30
+    target_duration = state.get("duration", 30)
+
+    # 初始默认：使用原始音频
+    source_for_melody = original_audio_path
+    use_vocal_and_accompaniment = False
+
+    if demucs_separated and vocals_path and accompaniment_path:
+        # 根据目标时长判断是否需要双轨提取
+        if target_duration > 30:
+            use_vocal_and_accompaniment = True
+        else:
+            # 只提取人声轨道
+            source_for_melody = vocals_path
+
+    return {
+        "source_for_melody": source_for_melody,
+        "use_vocal_and_accompaniment": use_vocal_and_accompaniment,
+        "vocals_path": vocals_path,
+        "accompaniment_path": accompaniment_path,
+    }
+
+# 人声分离节点，已不再使用
 async def node_separate_vocals(state: AgentState) -> Dict[str, Any]:
     """分离人声，得到 vocals 文件路径，存入 state['vocals_path']"""
     audio_path = state.get("audio_path")
@@ -47,22 +81,50 @@ async def node_separate_vocals(state: AgentState) -> Dict[str, Any]:
 
 
 async def node_basic_pitch(state: AgentState) -> Dict[str, Any]:
-    """使用 Basic Pitch 提取旋律，结果存入 state['melody_data']"""
-    audio_path = state.get("vocals_path") or state.get("audio_path")
+    """
+    使用 Basic Pitch 提取旋律。
+    如果是双轨模式，分别提取人声和伴奏，然后合并音符。
+    """
     task_id = state.get("task_id")
-    if not audio_path:
-        raise ValueError("无法获取音频路径")
+    use_both = state.get("use_vocal_and_accompaniment", False)
 
-    record_thought(task_id, "extract_melody", "开始 Basic Pitch 提取旋律...")
-    try:
-        melody_data = await extract_melody_basic_pitch(audio_path)
-        record_thought(task_id, "extract_melody", f"Basic Pitch 提取完成，音符数: {len(melody_data.get('melody_notes', []))}")
-        # print(f"[DEBUG basic_pitch] returning melody_data keys: {melody_data.keys() if melody_data else None}")
+    if use_both:
+        vocals_path = state.get("vocals_path")
+        accompaniment_path = state.get("accompaniment_path")
+        record_thought(task_id, "extract_melody", "双轨模式：分别提取人声和伴奏旋律")
+
+        # 提取人声旋律
+        vocal_melody = await extract_melody_basic_pitch(vocals_path)
+        # 提取伴奏旋律
+        accomp_melody = await extract_melody_basic_pitch(accompaniment_path)
+
+        # 合并音符列表
+        merged_notes = vocal_melody.get("melody_notes", []) + accomp_melody.get("melody_notes", [])
+        # 按开始时间排序
+        merged_notes.sort(key=lambda x: x["start"])
+        # 合并后的置信度取平均
+        conf = (vocal_melody.get("confidence", 0.8) + accomp_melody.get("confidence", 0.8)) / 2
+        # MIDI 路径：使用原始音频目录下的合并文件
+        original_path = state.get("audio_path", "")
+        if original_path:
+            midi_path = str(Path(original_path).with_suffix("")) + "_merged.mid"
+        else:
+            midi_path = "merged.mid"
+        Path(midi_path).parent.mkdir(parents=True, exist_ok=True)
+
+        melody_data = {
+            "melody_notes": merged_notes,
+            "confidence": conf,
+            "midi_path": midi_path,
+        }
         return {"melody_data": melody_data}
-    except Exception as e:
-        record_thought(task_id, "extract_melody", f"Basic Pitch 失败: {e}")
-        return {"melody_data": None, "basic_pitch_failed": True}
-
+    else:
+        source = state.get("source_for_melody")
+        if not source:
+            raise ValueError("未找到待提取旋律的音频源")
+        record_thought(task_id, "extract_melody", f"单轨模式：提取 {source} 的旋律")
+        melody_data = await extract_melody_basic_pitch(source)
+        return {"melody_data": melody_data}
 
 async def node_check_basic_pitch_result(state: AgentState) -> Dict[str, Any]:
     """检查 Basic Pitch 结果是否有效，若无效则标记需要降级"""
@@ -76,12 +138,18 @@ async def node_check_basic_pitch_result(state: AgentState) -> Dict[str, Any]:
 
 
 async def node_librosa_fallback(state: AgentState) -> Dict[str, Any]:
-    """降级：使用 librosa 提取旋律"""
-    audio_path = state.get("vocals_path") or state.get("audio_path")
+    """降级：使用 librosa 提取旋律（双轨模式下降级到只提取人声）"""
     task_id = state.get("task_id")
-    record_thought(task_id, "extract_melody", "Basic Pitch 无效，降级使用 librosa 提取...")
-    melody_data = await extract_melody_librosa(audio_path)
-    record_thought(task_id, "extract_melody", f"librosa 提取完成，音符数: {len(melody_data.get('melody_notes', []))}")
+    use_both = state.get("use_vocal_and_accompaniment", False)
+
+    if use_both:
+        vocals_path = state.get("vocals_path")
+        record_thought(task_id, "extract_melody", "Basic Pitch 双轨失败，降级为仅使用 librosa 提取人声旋律")
+        melody_data = await extract_melody_librosa(vocals_path)
+    else:
+        source = state.get("source_for_melody") or state.get("audio_path")
+        record_thought(task_id, "extract_melody", "Basic Pitch 失败，降级使用 librosa 提取旋律")
+        melody_data = await extract_melody_librosa(source)
     return {"melody_data": melody_data}
 
 
@@ -148,7 +216,7 @@ async def build_extract_graph():
     workflow = StateGraph(AgentState)
 
     # 添加节点
-    workflow.add_node("separate_vocals", node_separate_vocals)
+    workflow.add_node("prepare_source", node_prepare_extract_source)
     workflow.add_node("basic_pitch", node_basic_pitch)
     workflow.add_node("check_result", node_check_basic_pitch_result)
     workflow.add_node("librosa_fallback", node_librosa_fallback)
@@ -157,8 +225,8 @@ async def build_extract_graph():
     workflow.add_node("ensure_midi", node_ensure_midi_path)
 
     # 设置入口
-    workflow.set_entry_point("separate_vocals")
-    workflow.add_edge("separate_vocals", "basic_pitch")
+    workflow.set_entry_point("prepare_source")
+    workflow.add_edge("prepare_source", "basic_pitch")
     workflow.add_edge("basic_pitch", "check_result")
 
     # 条件分支
