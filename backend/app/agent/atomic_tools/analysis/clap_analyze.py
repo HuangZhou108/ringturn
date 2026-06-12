@@ -9,12 +9,15 @@ CLAP 音频理解原子工具
 - 无需训练，开箱即用
 """
 
+import os
+os.environ['HF_HOME'] = 'D:/huggingface_cache'
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 import numpy as np
+from torch.nn.functional import cosine_similarity
 
 
 async def analyze_clap_zero_shot(
@@ -45,22 +48,44 @@ async def analyze_clap_zero_shot(
     try:
         import laion_clap
         import torch
-    except ImportError:
-        raise RuntimeError(
-            "CLAP not found. Please install with: "
-            "git clone https://github.com/LAION-AI/CLAP && cd CLAP && pip install -e ."
-        )
+    except Exception as e:
+        import traceback
+        print("=" * 50)
+        print("导入 laion_clap 或 torch 时发生异常：")
+        traceback.print_exc()
+        print("异常详情：", repr(e))
+        print("=" * 50)
+        raise RuntimeError(f"CLAP 相关模块导入失败: {e}")
 
-    model = laion_clap.CLAP_Module(enable_fusion=False)
-    model.load_ckpt()
+    # 你可以修改这个路径，例如指向你手动下载的文件夹
+    local_cache_dir = Path(__file__).parent.parent.parent.parent.parent / "models" / "clap"
+    local_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # 构造权重文件路径
+    ckpt_file = local_cache_dir / "630k-audioset-fusion-best.pt"
+    if not ckpt_file.exists():
+        raise RuntimeError(f"权重文件不存在: {ckpt_file}")
+
+    # 让 laion_clap 优先使用这个目录
+    # os.environ["LAION_CLAP_CACHE"] = str(local_cache_dir)
+
+    model = laion_clap.CLAP_Module(enable_fusion=True)
+    # load_ckpt 会自动检查 LAION_CLAP_CACHE 目录下是否有模型文件
+    # 如果没有，则会下载到该目录
+    try:
+        model.load_ckpt(ckpt=ckpt_file)
+    except Exception as e:
+        raise RuntimeError(f"CLAP 模型加载失败: {e}\n请确保存在完整模型文件，或网络通畅。")
 
     # 加载音频
-    audio_data = model.load_audio(audio_path, sr=48000)
+    audio_embed = model.get_audio_embedding_from_filelist([audio_path], use_tensor=True)
 
     result = {}
 
     if genre_labels:
-        genre_sim = model.compute_similarity(audio_data, genre_labels)
+        text_embeds = model.get_text_embedding(genre_labels, use_tensor=True)
+        genre_sim = cosine_similarity(audio_embed, text_embeds)   
+        # genre_sim = model.compute_similarity(audio_embed, genre_labels)
         genre_probs = torch.softmax(torch.tensor(genre_sim), dim=0)
         best_idx = torch.argmax(genre_probs).item()
         result["genre"] = {
@@ -72,7 +97,9 @@ async def analyze_clap_zero_shot(
         }
 
     if emotion_labels:
-        emotion_sim = model.compute_similarity(audio_data, emotion_labels)
+        text_embeds = model.get_text_embedding(emotion_labels, use_tensor=True)
+        emotion_sim = cosine_similarity(audio_embed, text_embeds)   
+        # emotion_sim = model.compute_similarity(audio_embed, emotion_labels)
         emotion_probs = torch.softmax(torch.tensor(emotion_sim), dim=0)
         best_idx = torch.argmax(emotion_probs).item()
         result["emotion"] = {
@@ -81,7 +108,9 @@ async def analyze_clap_zero_shot(
         }
 
     if instrument_labels:
-        instr_sim = model.compute_similarity(audio_data, instrument_labels)
+        text_embeds = model.get_text_embedding(instrument_labels, use_tensor=True)
+        instr_sim = cosine_similarity(audio_embed, text_embeds)   
+        # instr_sim = model.compute_similarity(audio_embed, instrument_labels)
         instr_probs = torch.softmax(torch.tensor(instr_sim), dim=0)
         best_idx = torch.argmax(instr_probs).item()
         result["instrument"] = {
