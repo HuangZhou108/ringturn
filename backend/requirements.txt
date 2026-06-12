@@ -64,4 +64,5 @@ transformers
 # modelscope
 # datasets
 laion-clap
+msclap
 torchvision

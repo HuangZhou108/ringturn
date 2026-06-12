@@ -10,7 +10,6 @@ CLAP 音频理解原子工具
 """
 
 import os
-os.environ['HF_HOME'] = 'D:/huggingface_cache'
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -18,6 +17,7 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 import numpy as np
 from torch.nn.functional import cosine_similarity
+from msclap import CLAP
 
 
 async def analyze_clap_zero_shot(
@@ -146,4 +146,47 @@ clap_analyze_tool = StructuredTool.from_function(
         "这是替代 MERT 的最佳选择，适合无法训练分类器的场景。"
     ),
     args_schema=CLAPInput,
+)
+
+async def analyze_clap_caption(
+    audio_path: str,
+) -> Dict[str, Any]:
+    """
+    使用 msclap 的 clapcap 模型为音频生成描述性文本。
+    完全零样本、零训练、零成本。
+    """
+    if not Path(audio_path).exists():
+        raise FileNotFoundError(f"音频文件不存在: {audio_path}")
+
+    # 1. 加载专门用于生成音频描述的 clapcap 模型
+    # 设置 use_cuda=False 强制使用 CPU，符合你的要求
+    model = CLAP(version='clapcap', use_cuda=False)
+
+    # 2. 生成描述
+    # generate_caption 方法接收一个文件路径列表，返回一个描述列表
+    captions = model.generate_caption(audio_files=[audio_path])
+    
+    # 3. 提取生成的描述文本
+    generated_caption = captions[0] if captions else "无法生成描述"
+
+    # 4. 返回结果，保持原有数据结构以便于集成
+    return {
+        "caption": generated_caption,
+        "model": "msclap/clapcap",
+        "status": "success"
+    }
+
+# 更新输入参数，保留 audio_path 作为必填
+class CLAPCaptionInput(BaseModel):
+    audio_path: str = Field(..., description="音频文件的绝对路径")
+
+# 创建新的 LangChain 工具
+clap_caption_tool = StructuredTool.from_function(
+    coroutine=analyze_clap_caption,
+    name="clap_caption",
+    description=(
+        "使用微软 msclap 的 clapcap 模型为音频生成自然语言描述。"
+        "完全零样本，无需任何训练。"
+    ),
+    args_schema=CLAPCaptionInput,
 )
