@@ -21,6 +21,7 @@ from app.agent.atomic_tools.analysis import (
     classify_piano_presence,
     classify_guitar_presence,
     separate_sources_demucs,
+    msaf_analyze_tool,
 )
 from app.services.llm_service import llm_service
 from .base import wrap_tool, wrap_tool_with_params
@@ -39,10 +40,47 @@ node_vocal = wrap_tool(detect_vocal_tool.coroutine, "vocal")
 node_loudness = wrap_tool(analyze_loudness_tool.coroutine, "loudness")
 node_spectral = wrap_tool(analyze_spectral_tool.coroutine, "spectral")
 
-# 改进的 sections 节点（不使用原来的包装，因为参数不同）
+# MSAF 分段节点
+async def node_msaf(state: AgentState) -> dict:
+    """使用 MSAF 框架进行音乐段落结构分析"""
+    audio_path = state.get("audio_path")
+    task_id = state.get("task_id")
+    if not audio_path:
+        raise ValueError("state 中缺少 audio_path")
+    
+    if task_id:
+        record_thought(task_id, "analysis", "开始使用 MSAF 进行音乐结构分段...")
+    
+    try:
+        # 调用 MSAF 工具，使用默认算法 scluster
+        result = await msaf_analyze_tool.coroutine(audio_path=audio_path, algorithm="scluster")
+        if task_id:
+            record_thought(task_id, "analysis", f"MSAF 分段完成，共 {len(result.get('sections', []))} 个段落")
+    except Exception as e:
+        if task_id:
+            record_thought(task_id, "analysis", f"MSAF 分段失败: {e}")
+        result = {"sections": [], "boundaries": [], "labels": []}
+    
+    if "analysis_result" not in state:
+        state["analysis_result"] = {}
+    state["analysis_result"]["msaf_sections"] = result
+    return {"analysis_result": state["analysis_result"]}
+
+# libsora分段节点
 async def node_sections(state: AgentState) -> dict:
-    audio_path = state["audio_path"]
+    """使用 librosa 基于 chroma 自相似矩阵进行段落检测"""
+    audio_path = state.get("audio_path")
+    task_id = state.get("task_id")
+    if not audio_path:
+        raise ValueError("state 中缺少 audio_path")
+    
+    if task_id:
+        record_thought(task_id, "analysis", "开始使用 librosa (chroma SSM) 进行段落检测...")
+    
     result = await detect_sections_tool.coroutine(audio_path=audio_path)
+    if task_id:
+        record_thought(task_id, "analysis", f"librosa 分段完成，共 {len(result.get('sections', []))} 个段落")
+    
     if "analysis_result" not in state:
         state["analysis_result"] = {}
     state["analysis_result"]["sections"] = result
@@ -292,6 +330,7 @@ async def build_analysis_graph() -> StateGraph:
     workflow.add_node("loudness", node_loudness)
     workflow.add_node("spectral", node_spectral)
     workflow.add_node("sections", node_sections)
+    workflow.add_node("msaf", node_msaf)
     workflow.add_node("merge", node_merge)
 
     # 定义 fork 节点（空操作）
@@ -331,9 +370,10 @@ async def build_analysis_graph() -> StateGraph:
     workflow.add_edge("fork", "loudness")
     workflow.add_edge("fork", "spectral")
     workflow.add_edge("fork", "sections")
+    workflow.add_edge("fork", "msaf")  
 
     # 所有分析节点完成后汇聚到 merge
-    for node in ["tempo", "tempo_var", "loudness", "spectral", "sections"]:
+    for node in ["tempo", "tempo_var", "loudness", "spectral", "sections", "msaf"]:
         workflow.add_edge(node, "merge")
     workflow.add_edge("merge", END)
 

@@ -59,11 +59,26 @@ async def analyze_rhythm_madmom(
     downbeat_tracker = DBNDownBeatTrackingProcessor(beats_per_bar=[3, 4], fps=100)
     downbeats = downbeat_tracker(downbeat_proc)
 
+    # 推断节拍号
+    time_signature = "4/4"          # 默认
+    if len(downbeats) >= 2:
+        bar_length = 0
+        # 寻找一个完整的小节（从位置=1到下一个位置=1之间的节拍数）
+        for i, (t, pos) in enumerate(downbeats):
+            if pos == 1 and i > 0:
+                bar_length = i   # 因为索引从0开始，i 就是小节内包含的节拍数
+                break
+        if bar_length == 3:
+            time_signature = "3/4"
+        elif bar_length == 4:
+            time_signature = "4/4"
+        # 其他值（如5）可回退到默认或标记为"unknown"
+
     return {
         "bpm": round(bpm, 2),
         "beat_times": [float(t) for t in beat_times],
         "downbeat_times": [float(t[0]) for t in downbeats],
-        "time_signature": "4/4",  # madmom 不直接输出节拍号，可通过 downbeat 模式推断
+        "time_signature": time_signature,  # madmom 不直接输出节拍号，可通过 downbeat 模式推断
     }
 
 

@@ -39,30 +39,67 @@ async def analyze_structure_msaf(
         import msaf
     except ImportError:
         raise RuntimeError("MSAF not found. Please install with: pip install msaf")
-
+    
     # 加载音频文件并运行结构分割
-    # TODO: MSAF 的分割算法通常需要指定特征提取器
-    # 完整示例见官方文档：https://msaf.readthedocs.io/
+    # MSAF 内部会使用默认特征（PCP + MFCC 混合），无需手动指定特征提取器。
+    # 如需自定义特征（如 'pcp'、'mfcc'）或算法（boundaries_id/labels_id），可参考官方文档：https://msaf.readthedocs.io/
 
-    result = msaf.process(
-        audio_path,
-        boundaries_id=algorithm if algorithm == "olda" else "cnmf",
-        labels_id=algorithm if algorithm in ("scluster", "sf") else "scluster"
-    )
+    # 根据算法选择合适的边界检测器和标签分配器
+    # 最佳实践组合：olda (边界) + scluster (标签)
+    if algorithm == "scluster":
+        boundaries, labels = msaf.process(
+            audio_path,
+            boundaries_id='olda',      # 高精度边界检测
+            labels_id='scluster'       # 谱聚类标记段落
+        )
+    elif algorithm == "cnmf":
+        boundaries, labels = msaf.process(
+            audio_path,
+            boundaries_id='cnmf',
+            labels_id='cnmf'
+        )
+    elif algorithm == "sf":
+        boundaries, labels = msaf.process(
+            audio_path,
+            boundaries_id='sf',
+            labels_id='sf'
+        )
+    elif algorithm == "olda":
+        boundaries, labels = msaf.process(
+            audio_path,
+            boundaries_id='olda',
+            labels_id='scluster'       # olda 本身只做边界，标签仍用 scluster
+        )
+    else:
+        # 降级：使用默认配置
+        boundaries, labels = msaf.process(audio_path)
 
+    # 转换为标准输出格式
     sections = []
-    for i, bound in enumerate(result["boundaries"]):
-        if i + 1 < len(result["boundaries"]):
-            sections.append({
-                "start": result["boundaries"][i],
-                "end": result["boundaries"][i + 1],
-                "label": result["labels"][i] if i < len(result["labels"]) else "unknown"
-            })
+    for i in range(len(boundaries) - 1):
+        sections.append({
+            "start": float(boundaries[i]),
+            "end": float(boundaries[i + 1]),
+            "label": labels[i] if i < len(labels) else "unknown"
+        })
+
+    current_dir = Path(__file__).parent
+    project_root = current_dir.parent.parent.parent.parent
+    estimation_path = project_root / "estimations"
+    features_temp_file = project_root / ".features_msaf_tmp.json"
+
+    import shutil
+    if estimation_path.exists() and estimation_path.is_dir():
+        shutil.rmtree(estimation_path)
+        features_temp_file.unlink()
+        print(f"已删除临时目录: {estimation_path.resolve()}, 临时输出文件: {features_temp_file.resolve()}")
+    else:
+        print(f"MSAF临时目录: {estimation_path}删除失败！")
 
     return {
         "sections": sections,
-        "boundaries": result["boundaries"],
-        "labels": result["labels"],
+        "boundaries": [float(b) for b in boundaries],
+        "labels": list(labels),
     }
 
 

@@ -28,6 +28,7 @@ from .clap_analyze import (
     classify_guitar_presence,
 )
 from .demucs_separate import separate_sources_demucs
+from .msaf_analyze import msaf_analyze_tool
 
 __all__ = [
     "get_bpm_tool",
@@ -57,4 +58,5 @@ __all__ = [
     "classify_piano_presence",
     "classify_guitar_presence",
     "separate_sources_demucs",
+    "msaf_analyze_tool",
 ]
