@@ -12,5 +12,14 @@ async def analyze_structure_node(state: AgentState) -> dict:
     """
     graph = await get_analysis_graph()
     result_state = await graph.ainvoke(state)
-    analysis_result = result_state.get("analysis_result", {})
-    return {"analysis_result": analysis_result}
+    
+    updates = {
+        "analysis_result": result_state.get("analysis_result", {})
+    }
+
+    # 传递分离相关的顶层字段（若存在）
+    for key in ["demucs_separated", "vocals_path", "accompaniment_path", "demucs_stems", "audio_path"]:
+        if key in result_state:
+            updates[key] = result_state[key]
+
+    return updates

@@ -42,6 +42,9 @@ async def node_prepare_extract_source(state: AgentState) -> Dict[str, Any]:
     # 用户指定的目标时长（秒），默认为 30
     target_duration = state.get("duration", 30)
 
+    print(f"[DEBUG] state keys: {state.keys()}")
+    print(f"[DEBUG] audio_path={state.get('audio_path')}, vocals_path={state.get('vocals_path')}, accompaniment_path={state.get('accompaniment_path')}, demucs_separated={state.get('demucs_separated')}")
+
     # 初始默认：使用原始音频
     source_for_melody = original_audio_path
     use_vocal_and_accompaniment = False
@@ -53,6 +56,9 @@ async def node_prepare_extract_source(state: AgentState) -> Dict[str, Any]:
         else:
             # 只提取人声轨道
             source_for_melody = vocals_path
+
+    print(f"[DEBUG] source_for_melody = {source_for_melody}")
+    print(f"[DEBUG] use_vocal_and_accompaniment = {use_vocal_and_accompaniment}")
 
     return {
         "source_for_melody": source_for_melody,
@@ -87,6 +93,7 @@ async def node_basic_pitch(state: AgentState) -> Dict[str, Any]:
     """
     task_id = state.get("task_id")
     use_both = state.get("use_vocal_and_accompaniment", False)
+    print(f"[DEBUG basic_pitch] use_both = {use_both}, source_for_melody = {state.get('source_for_melody')}, vocals_path = {state.get('vocals_path')}")
 
     if use_both:
         vocals_path = state.get("vocals_path")
@@ -121,7 +128,13 @@ async def node_basic_pitch(state: AgentState) -> Dict[str, Any]:
     else:
         source = state.get("source_for_melody")
         if not source:
-            raise ValueError("未找到待提取旋律的音频源")
+            # 降级1：如果有人声轨道，使用人声轨道
+            source = state.get("vocals_path")
+        if not source:
+            # 降级2：使用当前音频路径（可能是伴奏或原始音频）
+            source = state.get("audio_path")
+        if not source:
+            raise ValueError("未找到待提取旋律的音频源，且无可用降级路径")
         record_thought(task_id, "extract_melody", f"单轨模式：提取 {source} 的旋律")
         melody_data = await extract_melody_basic_pitch(source)
         return {"melody_data": melody_data}

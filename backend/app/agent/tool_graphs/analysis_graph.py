@@ -106,15 +106,17 @@ async def node_clap_classify(state: AgentState) -> dict:
     if task_id:
         record_thought(task_id, "analysis", f"CLAP 分类: 人声={has_vocal}, 钢琴={has_piano}, 吉他={has_guitar}")
 
-    return {
-        "has_vocal": has_vocal,
-        "has_piano": has_piano,
-        "has_guitar": has_guitar,
-    }
+    # 存入 analysis_result
+    analysis = state.get("analysis_result", {})
+    analysis["vocal_presence"] = has_vocal
+    analysis["piano_presence"] = has_piano
+    analysis["guitar_presence"] = has_guitar
+    return {"analysis_result": analysis}
 
 
 async def node_decide_separation(state: AgentState) -> dict:
-    has_vocal = state.get("has_vocal", False)
+    has_vocal = state.get("analysis_result", {}).get("vocal_presence", False)
+    print(f"[DEBUG] has_vocal= {has_vocal}")
     # 当前策略：有人声则进行 4 轨分离
     if has_vocal:
         return {"should_separate": True, "demucs_stems": "4"}
@@ -135,7 +137,7 @@ async def node_separate_demucs(state: AgentState) -> dict:
         result = await separate_sources_demucs(
             audio_path=audio_path,
             stems=stems,
-            model="htdemucs_6s"
+            model="htdemucs_ft"
         )
         vocals_path = result.get("vocals_path")
         other_path = result.get("other_path")   # 4 轨模式下的伴奏混合轨道
@@ -143,7 +145,10 @@ async def node_separate_demucs(state: AgentState) -> dict:
             raise RuntimeError("Demucs 分离未生成所需轨道")
 
         if task_id:
-            record_thought(task_id, "analysis", f"Demucs 分离成功，伴奏轨道: {other_path}")
+            record_thought(task_id, "analysis", f"Demucs 分离成功，人声轨道：{vocals_path}, 伴奏轨道: {other_path}")
+        
+        print(f"[DEBUG] Demucs separation result: {result}")
+        print(f"[DEBUG] vocals_path={vocals_path}, other_path={other_path}")
 
         # 将伴奏轨道作为后续分析的音频源
         return {
@@ -281,7 +286,7 @@ async def build_analysis_graph() -> StateGraph:
     workflow.add_node("clap_classify", node_clap_classify)
     workflow.add_node("decide_separation", node_decide_separation)
     workflow.add_node("separate_demucs", node_separate_demucs)
-    workflow.add_node("yamnet", node_yamnet)
+    # workflow.add_node("yamnet", node_yamnet)
     workflow.add_node("tempo", node_tempo)
     workflow.add_node("tempo_var", node_tempo_var)
     workflow.add_node("loudness", node_loudness)
@@ -289,10 +294,16 @@ async def build_analysis_graph() -> StateGraph:
     workflow.add_node("sections", node_sections)
     workflow.add_node("merge", node_merge)
 
+    # 定义 fork 节点（空操作）
+    async def node_fork(state: AgentState) -> dict:
+        return {}
+    workflow.add_node("fork", node_fork)
+
     # 设置入口
     workflow.set_entry_point("metadata")
     workflow.add_edge("metadata", "clap_classify")
     workflow.add_edge("clap_classify", "decide_separation")
+    
 
     # 条件分支：是否需要分离
     workflow.add_conditional_edges(
@@ -300,27 +311,28 @@ async def build_analysis_graph() -> StateGraph:
         lambda state: "separate" if state.get("should_separate") else "no_separate",
         {
             "separate": "separate_demucs",
-            "no_separate": "yamnet",
+            "no_separate": "fork",      # 不分离时直接进入分叉点
         }
     )
 
-    # 分离后路由：无论成功或失败，都进入 yamnet（分离失败时会在节点内降级）
+    # 分离后路由：无论成功或失败，都进入分叉点 fork
+    def after_separation_route(state: AgentState) -> str:
+        return "fork"
+
     workflow.add_conditional_edges(
         "separate_demucs",
-        route_after_separation,
-        {
-            "separated": "yamnet",
-            "no_separate": "yamnet",
-        }
+        after_separation_route,
+        {"fork": "fork"}
     )
 
-    # 后续并行分析
-    workflow.add_edge("yamnet", "tempo")
-    workflow.add_edge("yamnet", "tempo_var")
-    workflow.add_edge("yamnet", "loudness")
-    workflow.add_edge("yamnet", "spectral")
-    workflow.add_edge("yamnet", "sections")
+    # 从分叉点并行执行所有分析节点
+    workflow.add_edge("fork", "tempo")
+    workflow.add_edge("fork", "tempo_var")
+    workflow.add_edge("fork", "loudness")
+    workflow.add_edge("fork", "spectral")
+    workflow.add_edge("fork", "sections")
 
+    # 所有分析节点完成后汇聚到 merge
     for node in ["tempo", "tempo_var", "loudness", "spectral", "sections"]:
         workflow.add_edge(node, "merge")
     workflow.add_edge("merge", END)

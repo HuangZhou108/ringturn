@@ -56,6 +56,10 @@ class AgentState(TypedDict, total=False):
     melody_data: dict | None
     midi_path: str | None
 
+    # 旋律提取
+    use_vocal_and_accompaniment: bool        # 是否双轨提取旋律
+    source_for_melody: str | None            # 单轨模式下的提取源
+
     # 改编参数
     arrange_temp_path: str | None
     arrangement_params: dict | None

@@ -17,7 +17,7 @@ async def extract_melody_node(state: AgentState) -> dict:
     
     user_request = state.get("user_request", "")
 
-    record_thought(task_id, "extract_melody", f"开始提取旋律，音频: {audio_path}")
+    record_thought(task_id, "extract_melody", f"开始提取旋律：")
 
     # 构建临时 state 副本，避免污染原状态
     sub_state = {
