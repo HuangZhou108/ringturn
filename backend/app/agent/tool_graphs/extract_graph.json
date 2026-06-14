@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "name": "extract_melody_subgraph",
+  "entry": "prepare_source",
+  "exit": "ensure_midi",
+  "nodes": [
+    { "id": "prepare_source", "type": "regular" },
+    { "id": "basic_pitch", "type": "regular" },
+    { "id": "check_result", "type": "regular" },
+    { "id": "librosa_fallback", "type": "regular" },
+    { "id": "filter_short", "type": "regular" },
+    { "id": "quantize", "type": "regular" },
+    { "id": "ensure_midi", "type": "regular" }
+  ],
+  "edges": [
+    { "from": "prepare_source", "to": "basic_pitch" },
+    { "from": "basic_pitch", "to": "check_result" }
+  ],
+  "conditional_edges": [
+    {
+      "from": "check_result",
+      "condition": "extract_route_after_check",
+      "mapping": {
+        "filter_short": "filter_short",
+        "librosa_fallback": "librosa_fallback"
+      }
+    }
+  ],
+  "default_edges": [
+    { "from": "librosa_fallback", "to": "filter_short" },
+    { "from": "filter_short", "to": "quantize" },
+    { "from": "quantize", "to": "ensure_midi" }
+  ]
+}

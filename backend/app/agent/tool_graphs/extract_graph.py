@@ -27,10 +27,12 @@ from app.agent.atomic_tools.melody.filter_short_notes import filter_short_notes
 from app.agent.atomic_tools.melody.quantize_notes import quantize_notes
 from app.agent.thinking_utils import record_thought
 from app.agent.utils import clean_state
-
+from app.agent.node_registry import register_node, register_condition, NODE_REGISTRY, CONDITION_REGISTRY
+_EXTRACT_GRAPH_JSON = Path(__file__).parent / "extract_graph.json"
 
 # ---------- 节点定义 ----------
 
+@register_node("prepare_source")
 async def node_prepare_extract_source(state: AgentState) -> Dict[str, Any]:
     """
     根据分离标志和用户目标时长决定提取源和策略。
@@ -86,6 +88,7 @@ async def node_separate_vocals(state: AgentState) -> Dict[str, Any]:
         return {"vocals_path": audio_path}
 
 
+@register_node("basic_pitch")
 async def node_basic_pitch(state: AgentState) -> Dict[str, Any]:
     """
     使用 Basic Pitch 提取旋律。
@@ -139,6 +142,8 @@ async def node_basic_pitch(state: AgentState) -> Dict[str, Any]:
         melody_data = await extract_melody_basic_pitch(source)
         return {"melody_data": melody_data}
 
+
+@register_node("check_result")
 async def node_check_basic_pitch_result(state: AgentState) -> Dict[str, Any]:
     """检查 Basic Pitch 结果是否有效，若无效则标记需要降级"""
     melody_data = state.get("melody_data")
@@ -150,6 +155,7 @@ async def node_check_basic_pitch_result(state: AgentState) -> Dict[str, Any]:
         return {"use_basic_pitch": False, "basic_pitch_failed": True}
 
 
+@register_node("librosa_fallback")
 async def node_librosa_fallback(state: AgentState) -> Dict[str, Any]:
     """降级：使用 librosa 提取旋律（双轨模式下降级到只提取人声）"""
     task_id = state.get("task_id")
@@ -166,6 +172,7 @@ async def node_librosa_fallback(state: AgentState) -> Dict[str, Any]:
     return {"melody_data": melody_data}
 
 
+@register_node("filter_short")
 async def node_filter_short_notes(state: AgentState) -> Dict[str, Any]:
     """过滤时长过短的音符（默认 <0.05 秒）"""
     melody_data = state.get("melody_data")
@@ -180,6 +187,7 @@ async def node_filter_short_notes(state: AgentState) -> Dict[str, Any]:
     return {"melody_data": melody_data}
 
 
+@register_node("quantize")
 async def node_quantize_notes(state: AgentState) -> Dict[str, Any]:
     """量化音符，对齐到节拍网格（需要 BPM）"""
     melody_data = state.get("melody_data")
@@ -198,6 +206,7 @@ async def node_quantize_notes(state: AgentState) -> Dict[str, Any]:
     return {"melody_data": melody_data}
 
 
+@register_node("ensure_midi")
 async def node_ensure_midi_path(state: AgentState) -> Dict[str, Any]:
     """确保 melody_data 中包含有效的 midi_path，若缺失则根据音符重建"""
     melody_data = state.get("melody_data")
@@ -223,49 +232,58 @@ async def node_ensure_midi_path(state: AgentState) -> Dict[str, Any]:
     return {"melody_data": melody_data}
 
 
+# 注册条件路由函数
+@register_condition("extract_route_after_check")
+def extract_route_after_check(state: AgentState) -> str:
+    melody_data = state.get("melody_data")
+    if melody_data and melody_data.get("melody_notes") and len(melody_data["melody_notes"]) > 0:
+        return "filter_short"
+    else:
+        return "librosa_fallback"
+    
+
 # ---------- 构建图 ----------
 
 async def build_extract_graph():
+    """从 JSON 文件动态构建提取旋律子图"""
+    import json
+    with open(_EXTRACT_GRAPH_JSON, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    
     workflow = StateGraph(AgentState)
-
+    
     # 添加节点
-    workflow.add_node("prepare_source", node_prepare_extract_source)
-    workflow.add_node("basic_pitch", node_basic_pitch)
-    workflow.add_node("check_result", node_check_basic_pitch_result)
-    workflow.add_node("librosa_fallback", node_librosa_fallback)
-    workflow.add_node("filter_short", node_filter_short_notes)
-    workflow.add_node("quantize", node_quantize_notes)
-    workflow.add_node("ensure_midi", node_ensure_midi_path)
-
-    # 设置入口
-    workflow.set_entry_point("prepare_source")
-    workflow.add_edge("prepare_source", "basic_pitch")
-    workflow.add_edge("basic_pitch", "check_result")
-
-    # 条件分支
-    def route_after_check(state: AgentState) -> str:
-        melody_data = state.get("melody_data")
-        if melody_data and melody_data.get("melody_notes") and len(melody_data["melody_notes"]) > 0:
-            print("[DEBUG route_after_check] Using Basic Pitch result, going to filter_short")
-            return "filter_short"
-        else:
-            print("[DEBUG route_after_check] Basic Pitch failed or empty, fallback to librosa")
-            return "librosa_fallback"
-
-    workflow.add_conditional_edges(
-        "check_result",
-        route_after_check,
-        {
-            "filter_short": "filter_short",
-            "librosa_fallback": "librosa_fallback",
-        }
-    )
-
-    workflow.add_edge("librosa_fallback", "filter_short")
-    workflow.add_edge("filter_short", "quantize")
-    workflow.add_edge("quantize", "ensure_midi")
-    workflow.add_edge("ensure_midi", END)
-
+    for node_def in config["nodes"]:
+        node_id = node_def["id"]
+        func = NODE_REGISTRY.get(node_id)
+        if not func:
+            raise ValueError(f"Node '{node_id}' not registered in NODE_REGISTRY")
+        workflow.add_node(node_id, func)
+    
+    # 添加普通边
+    for edge in config.get("edges", []):
+        workflow.add_edge(edge["from"], edge["to"])
+    
+    # 添加条件边
+    for cond_edge in config.get("conditional_edges", []):
+        cond_func = CONDITION_REGISTRY.get(cond_edge["condition"])
+        if not cond_func:
+            raise ValueError(f"Condition '{cond_edge['condition']}' not registered")
+        workflow.add_conditional_edges(
+            cond_edge["from"],
+            cond_func,
+            cond_edge["mapping"]
+        )
+    
+    # 添加默认边（无条件的）
+    for edge in config.get("default_edges", []):
+        workflow.add_edge(edge["from"], edge["to"])
+    
+    workflow.set_entry_point(config["entry"])
+    # 注意：exit 对应的节点需要连接到 END，但 JSON 中如果 exit 不为空，需自动添加边
+    if config.get("exit"):
+        workflow.add_edge(config["exit"], END)
+    
     return workflow.compile()
 
 

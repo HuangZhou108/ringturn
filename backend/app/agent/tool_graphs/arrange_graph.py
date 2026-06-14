@@ -16,6 +16,8 @@ from app.agent.atomic_tools.arrangement.change_instrument import change_instrume
 from app.agent.atomic_tools.arrangement.change_tempo import change_tempo
 from app.agent.thinking_utils import record_thought
 from app.agent.utils import clean_state
+from app.agent.node_registry import register_node, register_condition, NODE_REGISTRY, CONDITION_REGISTRY
+_ARRANGE_GRAPH_JSON = Path(__file__).parent / "arrange_graph.json"
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -23,6 +25,7 @@ settings = get_settings()
 
 # ---------- 节点定义 ----------
 
+@register_node("change_instrument")
 async def node_change_instrument(state: AgentState) -> Dict[str, Any]:
     """将乐器更换为目标乐器，输出临时 MIDI 文件"""
     midi_path = state["midi_path"]
@@ -46,6 +49,7 @@ async def node_change_instrument(state: AgentState) -> Dict[str, Any]:
     return {"arrange_temp_path": temp_path}
 
 
+@register_node("change_tempo")
 async def node_change_tempo(state: AgentState) -> Dict[str, Any]:
     """调整速度（若用户指定了 tempo）"""
     temp_path = state.get("arrange_temp_path")
@@ -69,6 +73,7 @@ async def node_change_tempo(state: AgentState) -> Dict[str, Any]:
     return {"arranged_midi_path": final_path}
 
 
+@register_node("finalize")
 async def node_finalize(state: AgentState) -> Dict[str, Any]:
     """当没有 tempo 节点时，直接将临时文件作为最终文件"""
     temp_path = state.get("arrange_temp_path")
@@ -94,27 +99,62 @@ def should_change_tempo(state: AgentState) -> str:
     else:
         return "finalize"
 
+@register_condition("arrange_should_change_tempo")
+def arrange_should_change_tempo(state: AgentState) -> str:
+    return "change_tempo" if state.get("tempo") else "finalize"
 
 # ---------- 构建图 ----------
 
 async def build_arrange_graph():
+    """从 JSON 配置文件动态构建乐器改编子图"""
+    import json
+    with open(_ARRANGE_GRAPH_JSON, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
     workflow = StateGraph(AgentState)
 
-    workflow.add_node("change_instrument", node_change_instrument)
-    workflow.add_node("change_tempo", node_change_tempo)
-    workflow.add_node("finalize", node_finalize)
+    # 添加节点
+    for node_def in config.get("nodes", []):
+        node_id = node_def["id"]
+        func = NODE_REGISTRY.get(node_id)
+        if not func:
+            raise ValueError(f"Node '{node_id}' not registered in NODE_REGISTRY")
+        workflow.add_node(node_id, func)
 
-    workflow.set_entry_point("change_instrument")
-    workflow.add_conditional_edges(
-        "change_instrument",
-        should_change_tempo,
-        {
-            "change_tempo": "change_tempo",
-            "finalize": "finalize",
-        }
-    )
-    workflow.add_edge("change_tempo", END)
-    workflow.add_edge("finalize", END)
+    # 辅助函数：将字符串目标转换为 END 常量
+    def resolve_target(target: str):
+        return END if target == "END" else target
+
+    # 添加普通边
+    for edge in config.get("edges", []):
+        to_node = resolve_target(edge["to"])
+        workflow.add_edge(edge["from"], to_node)
+
+    # 添加条件边
+    for cond_edge in config.get("conditional_edges", []):
+        cond_func = CONDITION_REGISTRY.get(cond_edge["condition"])
+        if not cond_func:
+            raise ValueError(f"Condition '{cond_edge['condition']}' not registered")
+        workflow.add_conditional_edges(
+            cond_edge["from"],
+            cond_func,
+            cond_edge["mapping"]
+        )
+
+    # 添加默认边（无条件的）
+    for edge in config.get("default_edges", []):
+        to_node = resolve_target(edge["to"])
+        workflow.add_edge(edge["from"], to_node)
+        
+    workflow.set_entry_point(config["entry"])
+
+    # 如果 JSON 中指定了 exit 节点（且该节点确实存在），则添加连接到 END 的边
+    exit_node = config.get("exit")
+    if exit_node:
+        # 检查 exit_node 是否是一个真实的节点 ID
+        if any(node["id"] == exit_node for node in config.get("nodes", [])):
+            workflow.add_edge(exit_node, END)
+        # 否则忽略（例如 exit 描述的是条件分支后的状态，不是实际节点）
 
     return workflow.compile()
 

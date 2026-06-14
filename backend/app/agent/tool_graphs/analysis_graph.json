@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "name": "analysis_subgraph",
+  "entry": "metadata",
+  "exit": "merge",
+  "nodes": [
+    { "id": "metadata", "type": "regular" },
+    { "id": "clap_classify", "type": "regular" },
+    { "id": "decide_separation", "type": "regular" },
+    { "id": "separate_demucs", "type": "regular" },
+    { "id": "fork", "type": "regular" },
+    { "id": "tempo", "type": "regular" },
+    { "id": "tempo_var", "type": "regular" },
+    { "id": "loudness", "type": "regular" },
+    { "id": "spectral", "type": "regular" },
+    { "id": "sections", "type": "regular" },
+    { "id": "msaf", "type": "regular" },
+    { "id": "optional_decision", "type": "regular" },
+    { "id": "infer_mood", "type": "regular" },
+    { "id": "detect_effects", "type": "regular" },
+    { "id": "merge", "type": "regular" }
+  ],
+  "edges": [
+    { "from": "metadata", "to": "clap_classify" },
+    { "from": "clap_classify", "to": "decide_separation" },
+    { "from": "tempo", "to": "merge" },
+    { "from": "tempo_var", "to": "merge" },
+    { "from": "loudness", "to": "merge" },
+    { "from": "spectral", "to": "merge" },
+    { "from": "sections", "to": "merge" },
+    { "from": "msaf", "to": "merge" }
+  ],
+  "conditional_edges": [
+    {
+      "from": "decide_separation",
+      "condition": "analysis_route_separation",
+      "mapping": {
+        "separate": "separate_demucs",
+        "no_separate": "fork"
+      }
+    },
+    {
+      "from": "separate_demucs",
+      "condition": "analysis_after_separation",
+      "mapping": {
+        "fork": "fork"
+      }
+    },
+    {
+      "from": "optional_decision",
+      "condition": "analysis_route_optional",
+      "mapping": {
+        "both": "infer_mood",
+        "mood_only": "infer_mood",
+        "effects_only": "detect_effects",
+        "none": "merge"
+      }
+    }
+  ],
+  "default_edges": [
+    { "from": "decide_separation", "to": "fork" },
+    { "from": "fork", "to": "tempo" },
+    { "from": "fork", "to": "tempo_var" },
+    { "from": "fork", "to": "loudness" },
+    { "from": "fork", "to": "spectral" },
+    { "from": "fork", "to": "sections" },
+    { "from": "fork", "to": "msaf" },
+    { "from": "fork", "to": "optional_decision" },
+    { "from": "infer_mood", "to": "merge" },
+    { "from": "detect_effects", "to": "merge" }
+  ]
+}

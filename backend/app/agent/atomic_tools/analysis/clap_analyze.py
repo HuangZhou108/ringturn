@@ -274,7 +274,7 @@ async def classify_vocal_presence(
     """
     if labels is None:
         labels = [
-            "singing, vocals, human vocal",
+            "singing, vocals, human vocal, human voice",
             "no vocal, only instruments"
         ]
     return await _clap_binary_classify(audio_path, labels)

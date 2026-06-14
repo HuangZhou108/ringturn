@@ -1,0 +1,19 @@
+# 导入所有节点和条件（确保装饰器执行注册）
+from app.agent.tool_graphs.nodes.analysis import (
+    metadata_node,
+    tempo_node,
+    tempo_var_node,
+    loudness_node,
+    spectral_node,
+    sections_node,
+    msaf_node,
+    clap_classify_node,
+    decide_separation_node,
+    separate_demucs_node,
+    fork_node,
+    optional_decision_node,
+    infer_mood_node,
+    detect_effects_node,
+    merge_node,
+    conditions,
+)
