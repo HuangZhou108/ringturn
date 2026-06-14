@@ -1,9 +1,12 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
+from typing import Optional, Dict, Any
 
 class FeedbackCreate(BaseModel):
     """创建反馈请求"""
     feedback: str = Field(..., alias="feedback", description="用户反馈内容")
+    parent_task_id: str  # 要针对哪个任务反馈
+    params: Optional[Dict[str, Any]] = Field(default=None, description="要覆盖的铃声参数")
 
     class Config:
         populate_by_name = True

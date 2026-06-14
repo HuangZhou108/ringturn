@@ -27,7 +27,8 @@ async def separate_sources_demucs(
     audio_path: str,
     output_dir: str | None = None,
     model: Literal["htdemucs", "htdemucs_ft", "htdemucs_6s"] = "htdemucs_6s",
-    stems: Literal["vocals", "drums", "bass", "piano", "guitar", "other"] = "6"
+    stems: Literal["vocals", "drums", "bass", "piano", "guitar", "other"] = "6",
+    segment_seconds: int = 20,  # 分割长度（秒），我们从官方推荐的0~20秒开始尝试[reference:0]
 ) -> Dict[str, str]:
     """
     使用 Demucs 分离音频中的多个声部。
@@ -72,6 +73,10 @@ async def separate_sources_demucs(
         # 默认 4 轨分离，不加额外参数
         pass
     # 6 轨分离（htdemucs_6s 模型已内置 6 轨输出）
+
+    # 可减轻内存压力
+    if segment_seconds > 0:
+        cmd.extend(["--segment", str(segment_seconds)])
 
     cmd.append(audio_path)
 

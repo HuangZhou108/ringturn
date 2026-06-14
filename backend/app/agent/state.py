@@ -95,6 +95,7 @@ class AgentState(TypedDict, total=False):
     thread_id: str                     # LangGraph 线程 ID
     human_feedback: str | None         # 用户反馈内容
     waiting_for_feedback: bool         # 是否等待用户输入
+    resume_from_node: str | None       # 反馈起始节点
 
 def get_step_index(step: TaskStep) -> int:
     """获取步骤索引"""

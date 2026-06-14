@@ -86,6 +86,10 @@ class Task(Base):
     feedbacks = relationship("Feedback", back_populates="task", cascade="all, delete-orphan")
     conversation_messages = relationship("ConversationMessage", back_populates="task")
 
+    # 反馈处理
+    resume_from_node = Column(String(50), nullable=True)   # 反馈任务从哪个节点开始
+    intermediate_data = Column(JSON, nullable=True)        # 父任务完成时的中间状态
+
 class Feedback(Base):
     """反馈表"""
     __tablename__ = "feedbacks"

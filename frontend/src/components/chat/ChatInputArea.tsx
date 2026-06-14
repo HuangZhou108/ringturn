@@ -28,6 +28,13 @@ interface ChatInputAreaProps {
     // 任务终止判断
     isProcessing?: boolean;
     onCancel?: () => void;
+    // 反馈任务
+    feedbackMode?: boolean;
+    setFeedbackMode?: (val: boolean) => void;
+    selectedParentTaskId?: string | null;
+    setSelectedParentTaskId?: (id: string | null) => void;
+    availableParentTasks?: { task_id: string; user_request: string }[];
+    loadCompletedTasks?: () => Promise<void>;
 }
 
 export default function ChatInputArea({
@@ -51,6 +58,12 @@ export default function ChatInputArea({
                                           mode = 'chat',
                                           isProcessing,
                                           onCancel,
+                                          feedbackMode = false,
+                                          setFeedbackMode,
+                                          selectedParentTaskId,
+                                          setSelectedParentTaskId,
+                                          availableParentTasks = [],
+                                          loadCompletedTasks,
                                       }: ChatInputAreaProps) {
     const { t } = useTranslation();
     const [showParams, setShowParams] = useState(false); // chat模式下参数面板折叠
@@ -235,6 +248,7 @@ export default function ChatInputArea({
                     />
                 </div>
 
+
                 {/* 输入栏主体 */}
                 <div className="relative flex flex-row-reverse items-center gap-2 bg-white border border-[#e0f2fe] rounded-3xl px-2.5 py-2.5">
                     <button
@@ -255,6 +269,65 @@ export default function ChatInputArea({
                             </svg>
                         )}
                     </button>
+                    {/* ========= 新增：重做按钮区域（位于发送按钮左侧） ========= */}
+                    <div className="relative flex items-center gap-2">
+                        {/* 重做按钮 */}
+                        <button
+                            onClick={async () => {
+                                if (!setFeedbackMode) return;
+                                const newMode = !feedbackMode;
+                                if (newMode && loadCompletedTasks) {
+                                    await loadCompletedTasks();
+                                    setSelectedParentTaskId?.(null);
+                                } else {
+                                    setSelectedParentTaskId?.(null);
+                                }
+                                setFeedbackMode(newMode);
+                            }}
+                            className={`px-4 py-2 rounded-md border transition-all duration-200 font-medium text-sm whitespace-nowrap ${
+                                feedbackMode
+                                    ? 'bg-blue-100 border-blue-300 text-blue-800'
+                                    : 'bg-white border-gray-800 text-gray-800 hover:bg-gray-50'
+                            }`}
+                        >
+                            重做
+                        </button>
+
+                        {/* 反馈模式下的浮动面板（出现在重做按钮上方） */}
+                        {feedbackMode && (
+                            <div className="absolute bottom-full right-0 mb-2 z-20 bg-white rounded-lg shadow-lg border border-gray-200 p-3 min-w-[240px]">
+                                {/* 左侧取消按钮（在面板内部左侧） */}
+                                <div className="flex items-center justify-between mb-2">
+                                    <button
+                                        onClick={() => {
+                                            setFeedbackMode?.(false);
+                                            setSelectedParentTaskId?.(null);
+                                        }}
+                                        className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 transition"
+                                    >
+                                        取消
+                                    </button>
+                                    <span className="text-xs text-gray-400">选择要反馈的任务</span>
+                                </div>
+                                {/* 任务选择下拉框 */}
+                                <select
+                                    value={selectedParentTaskId || ''}
+                                    onChange={(e) => setSelectedParentTaskId?.(e.target.value || null)}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                >
+                                    <option value="">选择任务</option>
+                                    {availableParentTasks.map((task) => (
+                                        <option key={task.task_id} value={task.task_id}>
+                                            {task.user_request.length > 40
+                                                ? task.user_request.substring(0, 40) + '...'
+                                                : task.user_request}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+                    </div>
+                    {/* ========= 重做按钮区域结束 ========= */}
 
                     {/* 文本输入框 */}
                     <div className="flex-1 px-3 py-2.5 min-h-[39px]">
@@ -280,6 +353,10 @@ export default function ChatInputArea({
                         {/* 附件按钮 */}
                         <button
                             onClick={() => {
+                                if (feedbackMode) {
+                                    alert('反馈模式下不可上传文件');
+                                    return;
+                                }
                                 if (!fileInputRef.current) {
                                     console.error('[ChatInputArea] fileInputRef is null!')
                                     return

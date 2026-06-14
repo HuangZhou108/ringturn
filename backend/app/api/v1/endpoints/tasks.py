@@ -274,73 +274,73 @@ async def get_task_result(
         "message": "获取任务结果成功。",
     }
 
-@router.post("/{task_id}/feedback")
-async def submit_feedback(
-    task_id: str,
-    request: FeedbackCreate,
-    db: Session = Depends(get_db),
-):
-    """
-    提交反馈（创建子任务优化）
-    同时将反馈追加到对应的会话中
-    """
-    parent_task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
-    if not parent_task:
-        raise TaskNotFoundException(task_id)
+# @router.post("/{task_id}/feedback")
+# async def submit_feedback(
+#     task_id: str,
+#     request: FeedbackCreate,
+#     db: Session = Depends(get_db),
+# ):
+#     """
+#     提交反馈（创建子任务优化）
+#     同时将反馈追加到对应的会话中
+#     """
+#     parent_task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+#     if not parent_task:
+#         raise TaskNotFoundException(task_id)
 
-    # 创建子任务
-    new_task_id = str(uuid.uuid4())
-    child_task = TaskModel(
-        id=new_task_id,
-        profile_id=parent_task.profile_id,
-        parent_task_id=task_id,
-        user_request=f"[优化] {parent_task.user_request} - 反馈: {request.feedback}",
-        status=TaskStatus.pending,
-    )
-    db.add(child_task)
+#     # 创建子任务
+#     new_task_id = str(uuid.uuid4())
+#     child_task = TaskModel(
+#         id=new_task_id,
+#         profile_id=parent_task.profile_id,
+#         parent_task_id=task_id,
+#         user_request=f"[优化] {parent_task.user_request} - 反馈: {request.feedback}",
+#         status=TaskStatus.pending,
+#     )
+#     db.add(child_task)
 
-    # 同时记录反馈
-    feedback = Feedback(
-        task_id=task_id,
-        content=request.feedback,
-    )
-    db.add(feedback)
+#     # 同时记录反馈
+#     feedback = Feedback(
+#         task_id=task_id,
+#         content=request.feedback,
+#     )
+#     db.add(feedback)
 
-    # 查找该任务关联的会话，并追加反馈消息
-    # 通过查找该任务创建时的用户消息来获取会话ID
-    user_message = db.query(ConversationMessage).filter(
-        ConversationMessage.task_id == task_id,
-        ConversationMessage.role == MessageRole.user
-    ).first()
+#     # 查找该任务关联的会话，并追加反馈消息
+#     # 通过查找该任务创建时的用户消息来获取会话ID
+#     user_message = db.query(ConversationMessage).filter(
+#         ConversationMessage.task_id == task_id,
+#         ConversationMessage.role == MessageRole.user
+#     ).first()
 
-    if user_message:
-        # 添加用户反馈消息
-        feedback_msg = ConversationMessage(
-            conversation_id=user_message.conversation_id,
-            role=MessageRole.user,
-            content=f"[优化反馈] {request.feedback}",
-            task_id=new_task_id,
-        )
-        db.add(feedback_msg)
+#     if user_message:
+#         # 添加用户反馈消息
+#         feedback_msg = ConversationMessage(
+#             conversation_id=user_message.conversation_id,
+#             role=MessageRole.user,
+#             content=f"[优化反馈] {request.feedback}",
+#             task_id=new_task_id,
+#         )
+#         db.add(feedback_msg)
 
-        # 更新会话的更新时间
-        conversation = db.query(Conversation).filter(
-            Conversation.id == user_message.conversation_id
-        ).first()
-        if conversation:
-            conversation.updated_at = datetime.utcnow()
+#         # 更新会话的更新时间
+#         conversation = db.query(Conversation).filter(
+#             Conversation.id == user_message.conversation_id
+#         ).first()
+#         if conversation:
+#             conversation.updated_at = datetime.utcnow()
 
-    db.commit()
+#     db.commit()
 
-    return {
-        "code": 200,
-        "data": {
-            "task_id": new_task_id,
-            "parent_task_id": task_id,
-            "status": child_task.status.value,
-        },
-        "message": "创建子任务成功。",
-    }
+#     return {
+#         "code": 200,
+#         "data": {
+#             "task_id": new_task_id,
+#             "parent_task_id": task_id,
+#             "status": child_task.status.value,
+#         },
+#         "message": "创建子任务成功。",
+#     }
 
 @router.delete("/{task_id}")
 async def cancel_task(
