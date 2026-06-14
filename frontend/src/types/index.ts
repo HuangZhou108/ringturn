@@ -226,3 +226,14 @@ export interface ProfilePreferences {
     default_tempo?: number
     [key: string]: any
 }
+
+export interface GraphConfig {
+    version?: number;
+    name?: string;
+    entry: string;
+    exit?: string;
+    nodes: Array<{ id: string; type?: string }>;
+    edges?: Array<{ from: string; to: string }>;
+    conditional_edges?: Array<{ from: string; condition: string; mapping: Record<string, string> }>;
+    default_edges?: Array<{ from: string; to: string }>;
+}

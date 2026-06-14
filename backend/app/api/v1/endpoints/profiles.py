@@ -19,6 +19,9 @@ from app.schemas.profile import (
     PreferencesExport,
 )
 from app.core.exceptions import AppException
+from app.agent.tool_graphs.analysis_graph import _analysis_graph_cache as analysis_cache
+from app.agent.tool_graphs.extract_graph import _extract_graph_cache as extract_cache
+from app.agent.tool_graphs.arrange_graph import _arrange_graph_cache as arrange_cache
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
@@ -143,6 +146,31 @@ async def get_active_profile(
         "message": "获取成功",
     }
 
+def _clear_profile_cache(profile_id: Optional[int] = None):
+    """
+    清除 Profile 缓存
+    - 若传入 profile_id，仅清除该 Profile 的子图缓存
+    - 若不传参数，清除全局配置缓存（如有）
+    """
+    # 1. 清除指定 Profile 的子图缓存
+    if profile_id is not None:
+        if profile_id in analysis_cache:
+            del analysis_cache[profile_id]
+        if profile_id in extract_cache:
+            del extract_cache[profile_id]
+        if profile_id in arrange_cache:
+            del arrange_cache[profile_id]
+        # 其他子图缓存同理
+    else:
+        # 2. 清除全局配置缓存
+        from app.core.config import get_settings
+        settings = get_settings()
+        if hasattr(settings, 'cache') and settings.cache:
+            settings.cache.clear()
+        # 也可以选择清除所有子图缓存（视业务需求）
+        # analysis_cache.clear()
+        # extract_cache.clear()
+        # arrange_cache.clear()
 
 @router.put("/{profile_id}/activate", response_model=dict)
 async def activate_profile(
@@ -169,6 +197,7 @@ async def activate_profile(
 
     # 清理缓存（扩展点）
     _clear_profile_cache()
+    _clear_profile_cache(profile_id)
 
     return {
         "code": 200,
@@ -179,22 +208,6 @@ async def activate_profile(
         },
         "message": f"已切换到 Profile: {profile.name}",
     }
-
-
-def _clear_profile_cache():
-    """
-    清理Profile相关缓存
-    
-    目前为空实现，未来如果有缓存需求可扩展：
-    - LRU缓存清理
-    - Redis缓存清理
-    - 内存缓存清理
-    """
-    # 清理config中的LRU缓存（如果有相关配置）
-    from app.core.config import get_settings
-    if hasattr(get_settings, 'cache'):
-        get_settings.cache.clear()
-    pass
 
 
 @router.put("/{profile_id}", response_model=dict)
@@ -430,6 +443,7 @@ async def update_tool_preference(
     pref.updated_at = datetime.utcnow()
     db.commit()
     
+    _clear_profile_cache(profile_id)
     return {"code": 200, "data": None, "message": f"{graph_name} graph preference saved"}
 
 @router.get("/{profile_id}/tool-preferences/{graph_name}")

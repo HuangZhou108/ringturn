@@ -1,5 +1,5 @@
 // frontend/src/components/profile_settings/GraphViewer.tsx
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import ReactFlow, {
     type Node,
     type Edge,
@@ -15,19 +15,25 @@ import ReactFlow, {
 } from 'reactflow';
 import dagre from 'dagre';
 import 'reactflow/dist/style.css';
+import { updateToolPreference } from '../../api/profile';
 
 interface GraphViewerProps {
     graphConfig: {
         nodes: { id: string; type?: string }[];
-        edges: { from: string; to: string }[];
+        edges?: { from: string; to: string }[];
         conditional_edges?: { from: string; mapping: Record<string, string> }[];
+        default_edges?: { from: string; to: string }[];
         entry?: string;
-        height?: number | string; // 允许 string 如 "100%"
+        exit?: string;
+        height?: number | string;
     };
+    profileId: number;
+    graphName: string;
     height?: number;
+    onSaveSuccess?: () => void;
 }
 
-// 节点样式（保持原有）
+// 节点样式
 const nodeStyle = (selected: boolean = false) => ({
     background: selected ? '#e0f2fe' : '#f0f9ff',
     border: `1px solid ${selected ? '#0284c7' : '#94a3b8'}`,
@@ -46,32 +52,25 @@ const hoverStyle = {
     cursor: 'pointer',
 };
 
-// 使用 dagre 进行自动布局
+// dagre 布局
 function getLayoutedElements(
-    nodes: { id: string; type?: string }[],
+    nodes: { id: string }[],
     edges: Edge[]
 ): { nodes: Node[]; edges: Edge[] } {
     const dagreGraph = new dagre.graphlib.Graph();
     dagreGraph.setDefaultEdgeLabel(() => ({}));
-    // 设置布局方向：TB = 从上到下，LR = 从左到右（根据执行顺序，TB 更符合数据流方向）
     dagreGraph.setGraph({ rankdir: 'TB', align: 'UL', nodesep: 60, ranksep: 70 });
 
-    // 添加节点，设置宽度和高度
     const nodeWidth = 120;
     const nodeHeight = 50;
     nodes.forEach((node) => {
         dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
     });
-
-    // 添加边
     edges.forEach((edge) => {
         dagreGraph.setEdge(edge.source, edge.target);
     });
-
-    // 执行布局计算
     dagre.layout(dagreGraph);
 
-    // 生成带位置的节点
     const layoutedNodes = nodes.map((node) => {
         const nodeWithPosition = dagreGraph.node(node.id);
         return {
@@ -82,64 +81,236 @@ function getLayoutedElements(
                 y: nodeWithPosition.y - nodeHeight / 2,
             },
             style: nodeStyle(false),
-            ...(node.type ? { type: node.type } : {}),
         };
     });
-
     return { nodes: layoutedNodes, edges };
 }
 
-export default function GraphViewer({ graphConfig, height = 400 }: GraphViewerProps) {
+export default function GraphViewer({ graphConfig, profileId, graphName, height = 400, onSaveSuccess }: GraphViewerProps) {
     const [nodes, setNodes] = useNodesState([]);
     const [edges, setEdges] = useEdgesState([]);
+    const [disabledNodes, setDisabledNodes] = useState<Set<string>>(new Set());
+    const [isValid, setIsValid] = useState(true);
+    const [editMode, setEditMode] = useState(false);
+    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [currentConfig, setCurrentConfig] = useState<any>(null);
+    const [showFullscreen, setShowFullscreen] = useState(false);
+    const initialLoadRef = useRef(false);
 
-    useEffect(() => {
-        if (graphConfig && graphConfig.nodes) {
-            const conditionalEdgeKeys = new Set<string>();
-            graphConfig.conditional_edges?.forEach(ce => {
-                Object.values(ce.mapping).forEach(target => {
-                    conditionalEdgeKeys.add(`${ce.from}->${target}`);
-                });
-            });
+    // 获取所有边的原始定义（不包括重连逻辑）
+    const getAllEdges = useCallback((config: GraphViewerProps['graphConfig']) => {
+        const edges = config.edges || [];
+        const condEdges = (config.conditional_edges || []).flatMap(ce =>
+            Object.values(ce.mapping).map(target => ({ from: ce.from, to: target }))
+        );
+        const defaultEdges = config.default_edges || [];
+        return [...edges, ...condEdges, ...defaultEdges];
+    }, []);
 
-            // 合并普通边和条件边的源-目标对（用于布局）
-            const allEdges = [
-                ...(graphConfig.edges || []),
-                ...(graphConfig.conditional_edges?.flatMap(ce =>
-                    Object.values(ce.mapping).map(target => ({ from: ce.from, to: target }))
-                ) || []),
-            ];
-
-            // 构建基本边（包含完整样式，不再依赖后续映射）
-            const basicEdges: Edge[] = allEdges.map((edge) => {
-                const edgeKey = `${edge.from}->${edge.to}`;
-                const isConditional = conditionalEdgeKeys.has(edgeKey);
-                return {
-                    id: edgeKey,   // 使用干净的 from->to 作为 id
-                    source: edge.from,
-                    target: edge.to,
-                    animated: isConditional,          // 条件边带动画
-                    style: {
-                        stroke: isConditional ? '#3b82f6' : '#94a3b8',
-                        strokeWidth: 2,
-                        ...(isConditional ? { strokeDasharray: '5,5' } : {}),
-                    },
-                    markerEnd: { type: 'arrowclosed', color: isConditional ? '#3b82f6' : '#64748b' },
-                };
-            });
-
-            // 执行布局
-            const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
-                graphConfig.nodes,
-                basicEdges
-            );
-
-            setNodes(layoutedNodes);
-            setEdges(layoutedEdges);
+    // 根据禁用集生成有效边（串行节点自动重连）
+    const getEffectiveEdges = useCallback((nodes: { id: string }[], edges: { from: string; to: string }[], disabled: Set<string>) => {
+        let remaining = edges.filter(e => !disabled.has(e.from) && !disabled.has(e.to));
+        for (const nodeId of disabled) {
+            const inEdges = remaining.filter(e => e.to === nodeId);
+            const outEdges = remaining.filter(e => e.from === nodeId);
+            if (inEdges.length === 1 && outEdges.length === 1) {
+                const pred = inEdges[0].from;
+                const succ = outEdges[0].to;
+                if (!remaining.some(e => e.from === pred && e.to === succ)) {
+                    remaining.push({ from: pred, to: succ });
+                }
+            }
         }
-    }, [graphConfig, setNodes, setEdges]);
+        remaining = remaining.filter(e => !disabled.has(e.from) && !disabled.has(e.to));
+        return remaining;
+    }, []);
 
-    // 交互事件（保持原有）
+    // 连通性验证
+    const validateConnectivity = useCallback((nodes: { id: string }[], edges: { from: string; to: string }[], entry: string, exit: string | undefined, disabled: Set<string>) => {
+        const enabledSet = new Set(nodes.map(n => n.id).filter(id => !disabled.has(id)));
+        if (!enabledSet.has(entry)) return false;
+
+        const adj = new Map<string, string[]>();
+        for (const e of edges) {
+            if (enabledSet.has(e.from) && enabledSet.has(e.to)) {
+                if (!adj.has(e.from)) adj.set(e.from, []);
+                adj.get(e.from)!.push(e.to);
+            }
+        }
+
+        const queue = [entry];
+        const visited = new Set<string>();
+        while (queue.length) {
+            const cur = queue.shift()!;
+            if (visited.has(cur)) continue;
+            visited.add(cur);
+            const out = adj.get(cur) || [];
+            for (const nxt of out) {
+                if (!visited.has(nxt)) queue.push(nxt);
+            }
+        }
+        const exitNodes = exit ? [exit] : nodes.filter(n => !adj.has(n.id) && enabledSet.has(n.id)).map(n => n.id);
+        return exitNodes.some(ex => visited.has(ex));
+    }, []);
+
+    // 生成保存的图配置
+    const generateConfigFromState = useCallback((originalConfig: any, disabled: Set<string>, effectiveEdges: any[]) => {
+        const enabledNodes = originalConfig.nodes.filter((n: any) => !disabled.has(n.id));
+        const newConditionalEdges = (originalConfig.conditional_edges || []).map((ce: any) => ({
+            ...ce,
+            mapping: Object.fromEntries(
+                Object.entries(ce.mapping).filter(([_, target]) => !disabled.has(target as string))
+            )
+        })).filter((ce: any) => Object.keys(ce.mapping).length > 0);
+
+        return {
+            ...originalConfig,
+            nodes: enabledNodes,
+            edges: effectiveEdges.filter(e => !disabled.has(e.from) && !disabled.has(e.to)),
+            conditional_edges: newConditionalEdges,
+            default_edges: (originalConfig.default_edges || []).filter((e: any) => !disabled.has(e.from) && !disabled.has(e.to))
+        };
+    }, []);
+
+    // 级联禁用
+    const cascadeDisable = useCallback((nodeId: string, allEdges: { from: string; to: string }[]) => {
+        const newDisabled = new Set(disabledNodes);
+        const dfs = (id: string) => {
+            if (newDisabled.has(id)) return;
+            newDisabled.add(id);
+            const outEdges = allEdges.filter(e => e.from === id);
+            for (const edge of outEdges) {
+                const inEdges = allEdges.filter(e => e.to === edge.to);
+                if (inEdges.every(e => newDisabled.has(e.from))) {
+                    dfs(edge.to);
+                }
+            }
+        };
+        dfs(nodeId);
+        return newDisabled;
+    }, [disabledNodes]);
+
+    // 切换节点禁用状态
+    const toggleNode = useCallback((nodeId: string) => {
+        const allEdges = getAllEdges(graphConfig);
+        let newDisabled: Set<string>;
+        if (disabledNodes.has(nodeId)) {
+            newDisabled = new Set(disabledNodes);
+            newDisabled.delete(nodeId);
+        } else {
+            newDisabled = cascadeDisable(nodeId, allEdges);
+        }
+        setDisabledNodes(newDisabled);
+        setHasUnsavedChanges(true);
+
+        const effectiveEdges = getEffectiveEdges(graphConfig.nodes, allEdges, newDisabled);
+        const connectivityOk = validateConnectivity(
+            graphConfig.nodes,
+            effectiveEdges,
+            graphConfig.entry || graphConfig.nodes[0]?.id || '',
+            graphConfig.exit,
+            newDisabled
+        );
+        setIsValid(connectivityOk);
+
+        const newConfig = generateConfigFromState(graphConfig, newDisabled, effectiveEdges);
+        setCurrentConfig(newConfig);
+    }, [disabledNodes, graphConfig, getAllEdges, cascadeDisable, getEffectiveEdges, validateConnectivity, generateConfigFromState]);
+
+    // 重置为默认状态（清除所有禁用）
+    const loadDefaultConfig = useCallback(() => {
+        setDisabledNodes(new Set());
+        setHasUnsavedChanges(false);
+        const allEdges = getAllEdges(graphConfig);
+        const effectiveEdges = getEffectiveEdges(graphConfig.nodes, allEdges, new Set());
+        const connectivityOk = validateConnectivity(
+            graphConfig.nodes,
+            effectiveEdges,
+            graphConfig.entry || graphConfig.nodes[0]?.id || '',
+            graphConfig.exit,
+            new Set()
+        );
+        setIsValid(connectivityOk);
+        const defaultConfig = generateConfigFromState(graphConfig, new Set(), effectiveEdges);
+        setCurrentConfig(defaultConfig);
+    }, [graphConfig, getAllEdges, getEffectiveEdges, validateConnectivity, generateConfigFromState]);
+
+    // 保存配置
+    const handleSave = async () => {
+        if (!currentConfig) return;
+        setSaving(true);
+        try {
+            await updateToolPreference(profileId, graphName, currentConfig);
+            setHasUnsavedChanges(false);
+            alert('保存成功');
+            onSaveSuccess?.();
+        } catch (err) {
+            console.error('保存失败', err);
+            alert('保存失败');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    // 退出编辑模式
+    const handleExitEditMode = () => {
+        if (hasUnsavedChanges) {
+            if (confirm('有未保存的修改，是否保存？')) {
+                handleSave();
+            } else {
+                loadDefaultConfig();
+            }
+        }
+        setEditMode(false);
+    };
+
+    // 初次加载时生成默认 config
+    useEffect(() => {
+        if (!initialLoadRef.current && graphConfig) {
+            loadDefaultConfig();
+            initialLoadRef.current = true;
+        }
+    }, [graphConfig, loadDefaultConfig]);
+
+    // 根据禁用集动态渲染图（包含条件边样式）
+    useEffect(() => {
+        if (!graphConfig || !graphConfig.nodes) return;
+        const allEdges = getAllEdges(graphConfig);
+        const effectiveEdges = getEffectiveEdges(graphConfig.nodes, allEdges, disabledNodes);
+        const enabledNodes = graphConfig.nodes.filter(n => !disabledNodes.has(n.id));
+
+        // 构建条件边标识集合
+        const conditionalEdgeKeys = new Set<string>();
+        graphConfig.conditional_edges?.forEach(ce => {
+            Object.values(ce.mapping).forEach(target => {
+                conditionalEdgeKeys.add(`${ce.from}->${target}`);
+            });
+        });
+
+        const basicEdges: Edge[] = effectiveEdges.map(edge => {
+            const edgeKey = `${edge.from}->${edge.to}`;
+            const isConditional = conditionalEdgeKeys.has(edgeKey);
+            return {
+                id: edgeKey,
+                source: edge.from,
+                target: edge.to,
+                animated: isConditional,
+                style: {
+                    stroke: isConditional ? '#3b82f6' : '#94a3b8',
+                    strokeWidth: 2,
+                    ...(isConditional ? { strokeDasharray: '5,5' } : {}),
+                },
+                markerEnd: { type: 'arrowclosed', color: isConditional ? '#3b82f6' : '#64748b' },
+            };
+        });
+
+        const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(enabledNodes, basicEdges);
+        setNodes(layoutedNodes);
+        setEdges(layoutedEdges);
+    }, [graphConfig, disabledNodes, getAllEdges, getEffectiveEdges]);
+
+    // 交互事件
     const onNodeMouseEnter = useCallback((_: React.MouseEvent, node: Node) => {
         setNodes((nds) =>
             nds.map((n) => {
@@ -210,21 +381,51 @@ export default function GraphViewer({ graphConfig, height = 400 }: GraphViewerPr
         return <div className="flex items-center justify-center h-[400px] text-gray-400">暂无图结构数据</div>;
     }
 
-    const [showFullscreen, setShowFullscreen] = useState(false);
-
     return (
         <>
-            <div style={{
-                height: typeof height === 'number' ? `${height}px` : height,
-                width: '100%',
-                border: '1px solid #e2e8f0',
-                borderRadius: '12px',
-                background: '#fafcff',
-                position: 'relative'
-            }}>
+            {/* 控制栏 */}
+            <div className="absolute top-2 left-2 z-10 flex gap-2 bg-white/80 p-2 rounded shadow">
+                <button
+                    onClick={() => setEditMode(true)}
+                    className={`px-3 py-1 rounded ${editMode ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}
+                >
+                    编辑模式
+                </button>
+                {editMode && (
+                    <>
+                        <button
+                            onClick={handleSave}
+                            disabled={!hasUnsavedChanges || !isValid || saving}
+                            className="px-3 py-1 bg-green-600 text-white rounded disabled:opacity-50"
+                        >
+                            {saving ? '保存中...' : '保存'}
+                        </button>
+                        <button
+                            onClick={handleExitEditMode}
+                            className="px-3 py-1 bg-gray-400 text-white rounded"
+                        >
+                            退出
+                        </button>
+                        {!isValid && (
+                            <span className="text-red-600 text-sm">⚠️ 当前配置无效，无法保存</span>
+                        )}
+                    </>
+                )}
+            </div>
+            <div
+                style={{
+                    height: typeof height === 'number' ? `${height}px` : height,
+                    width: '100%',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '12px',
+                    background: '#fafcff',
+                    position: 'relative',
+                }}
+            >
                 <ReactFlow
                     nodes={nodes}
                     edges={edges}
+                    onNodeClick={editMode ? (_, node) => toggleNode(node.id) : undefined}
                     onNodesChange={onNodesChange}
                     onEdgesChange={onEdgesChange}
                     onNodeMouseEnter={onNodeMouseEnter}
@@ -245,7 +446,7 @@ export default function GraphViewer({ graphConfig, height = 400 }: GraphViewerPr
                     title="放大查看"
                 >
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                        <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
                     </svg>
                 </button>
             </div>
@@ -269,6 +470,7 @@ export default function GraphViewer({ graphConfig, height = 400 }: GraphViewerPr
                             <ReactFlow
                                 nodes={nodes}
                                 edges={edges}
+                                onNodeClick={editMode ? (_, node) => toggleNode(node.id) : undefined}
                                 onNodesChange={onNodesChange}
                                 onEdgesChange={onEdgesChange}
                                 onNodeMouseEnter={onNodeMouseEnter}
