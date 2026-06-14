@@ -22,6 +22,7 @@ async def check_quality_node(state: AgentState) -> dict:
         raise ValueError("无法检查质量：缺少 final_audio_path")
 
     task_id = state["task_id"]
+    profile_id = state.get("profile_id")
 
     # 准备子状态
     sub_state = {

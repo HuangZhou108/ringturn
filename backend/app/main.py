@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import uvicorn
+from pathlib import Path
 
 from app.core.config import get_settings, ensure_directories
 from app.core.exceptions import AppException
@@ -85,6 +86,11 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # 上传文件访问（临时）
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+# 挂载 tool_graphs 目录，使默认 JSON 可通过 URL 访问
+tool_graphs_dir = Path(__file__).parent / "agent" / "tool_graphs"
+if tool_graphs_dir.exists():
+    app.mount("/tool_graphs", StaticFiles(directory=str(tool_graphs_dir)), name="tool_graphs")
 
 if __name__ == "__main__":
     uvicorn.run(

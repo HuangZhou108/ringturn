@@ -14,6 +14,7 @@ async def extract_melody_node(state: AgentState) -> dict:
     """
     audio_path = state["audio_path"]
     task_id = state["task_id"]
+    profile_id = state.get("profile_id") 
     
     user_request = state.get("user_request", "")
 
@@ -26,7 +27,7 @@ async def extract_melody_node(state: AgentState) -> dict:
         "audio_path": audio_path,
     }
 
-    graph = await get_extract_graph()
+    graph = await get_extract_graph(profile_id=profile_id)
     final_state = await graph.ainvoke(sub_state)
 
     melody_data = final_state.get("melody_data")

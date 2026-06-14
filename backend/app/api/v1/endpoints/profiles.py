@@ -3,12 +3,13 @@ Profile 管理接口
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import Optional
+from pydantic import BaseModel
+from typing import Optional, Literal
 import json
 from datetime import datetime
 
 from app.db.session import get_db
-from app.models import Profile, Task as TaskModel
+from app.models import Profile, Task as TaskModel, ToolPreference
 from app.schemas.profile import (
     ProfileCreate,
     ProfileUpdate,
@@ -382,3 +383,106 @@ async def get_profile_tasks(
         "data": {"total": total, "page": page, "page_size": page_size, "tasks": items},
         "message": "success"
     }
+
+
+# 定义允许的 graph_name
+ALLOWED_GRAPH_NAMES = {"analysis", "extract", "arrange", "quality", "render", "reflect"}
+
+# 列名映射
+GRAPH_COLUMN_MAP = {
+    "analysis": "analysis_graph_config",
+    "extract": "extract_graph_config",
+    "arrange": "arrange_graph_config",
+    "quality": "quality_graph_config",
+    "render": "render_graph_config",
+    "reflect": "reflect_graph_config",
+}
+
+
+class ToolPreferenceUpdate(BaseModel):
+    config: dict  # 完整的图 JSON 对象
+
+
+@router.put("/{profile_id}/tool-preferences/{graph_name}")
+async def update_tool_preference(
+    profile_id: int,
+    graph_name: str,
+    request: ToolPreferenceUpdate,
+    db: Session = Depends(get_db),
+):
+    """保存/更新指定子图的自定义配置"""
+    if graph_name not in ALLOWED_GRAPH_NAMES:
+        raise HTTPException(status_code=400, detail="Invalid graph_name")
+    
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise ProfileNotFoundException(profile_id)
+    
+    # 获取或创建 tool_preference 记录
+    pref = db.query(ToolPreference).filter(ToolPreference.profile_id == profile_id).first()
+    if not pref:
+        pref = ToolPreference(profile_id=profile_id)
+        db.add(pref)
+    
+    # 更新对应列
+    column = GRAPH_COLUMN_MAP[graph_name]
+    setattr(pref, column, json.dumps(request.config, ensure_ascii=False))
+    pref.updated_at = datetime.utcnow()
+    db.commit()
+    
+    return {"code": 200, "data": None, "message": f"{graph_name} graph preference saved"}
+
+@router.get("/{profile_id}/tool-preferences/{graph_name}")
+async def get_tool_preference(
+    profile_id: int,
+    graph_name: str,
+    db: Session = Depends(get_db),
+):
+    """获取指定子图的自定义配置（若无则返回 null）"""
+    if graph_name not in ALLOWED_GRAPH_NAMES:
+        raise HTTPException(status_code=400, detail="Invalid graph_name")
+    
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise ProfileNotFoundException(profile_id)
+    
+    pref = db.query(ToolPreference).filter(ToolPreference.profile_id == profile_id).first()
+    if not pref:
+        return {"code": 200, "data": None, "message": "No custom config, using default"}
+    
+    column = GRAPH_COLUMN_MAP[graph_name]
+    config_json = getattr(pref, column)
+    if config_json:
+        try:
+            config = json.loads(config_json)
+            return {"code": 200, "data": config, "message": "success"}
+        except json.JSONDecodeError:
+            return {"code": 500, "data": None, "message": "Invalid stored config"}
+    
+    return {"code": 200, "data": None, "message": "No custom config, using default"}
+
+
+@router.delete("/{profile_id}/tool-preferences/{graph_name}")
+async def delete_tool_preference(
+    profile_id: int,
+    graph_name: str,
+    db: Session = Depends(get_db),
+):
+    """删除自定义配置（恢复默认）"""
+    if graph_name not in ALLOWED_GRAPH_NAMES:
+        raise HTTPException(status_code=400, detail="Invalid graph_name")
+    
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise ProfileNotFoundException(profile_id)
+    
+    pref = db.query(ToolPreference).filter(ToolPreference.profile_id == profile_id).first()
+    if not pref:
+        return {"code": 200, "data": None, "message": "No custom config to remove"}
+    
+    column = GRAPH_COLUMN_MAP[graph_name]
+    setattr(pref, column, None)
+    pref.updated_at = datetime.utcnow()
+    db.commit()
+    
+    return {"code": 200, "data": None, "message": "Custom config removed, will use default"}

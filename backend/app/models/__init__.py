@@ -38,6 +38,7 @@ class Profile(Base):
 
     # 关联
     tasks = relationship("Task", back_populates="profile", cascade="all, delete-orphan")
+    tool_preference = relationship("ToolPreference", back_populates="profile", uselist=False)
 
 class Task(Base):
     """任务表"""
@@ -142,3 +143,23 @@ class ConversationMessage(Base):
     # 关联
     conversation = relationship("Conversation", back_populates="messages")
     task = relationship("Task", back_populates="conversation_messages")
+
+class ToolPreference(Base):
+    """工具偏好表"""
+    __tablename__ = "tool_preferences"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=False, unique=True)
+    
+    # 各子图的配置 JSON
+    analysis_graph_config = Column(Text, nullable=True)
+    extract_graph_config = Column(Text, nullable=True)
+    arrange_graph_config = Column(Text, nullable=True)
+    render_graph_config = Column(Text, nullable=True)
+    quality_graph_config = Column(Text, nullable=True)
+    reflect_graph_config = Column(Text, nullable=True)
+    
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # 关联
+    profile = relationship("Profile", back_populates="tool_preference")

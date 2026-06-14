@@ -17,10 +17,14 @@ from app.agent.atomic_tools.arrangement.change_tempo import change_tempo
 from app.agent.thinking_utils import record_thought
 from app.agent.utils import clean_state
 from app.agent.node_registry import register_node, register_condition, NODE_REGISTRY, CONDITION_REGISTRY
-_ARRANGE_GRAPH_JSON = Path(__file__).parent / "arrange_graph.json"
 from app.core.config import get_settings
+from app.db.session import SessionLocal
+from app.models import ToolPreference
 
 settings = get_settings()
+
+_ARRANGE_GRAPH_JSON = Path(__file__).parent / "arrange_graph.json"
+_arrange_graph_cache = {}  # cache_key -> graph
 
 
 # ---------- 节点定义 ----------
@@ -105,11 +109,12 @@ def arrange_should_change_tempo(state: AgentState) -> str:
 
 # ---------- 构建图 ----------
 
-async def build_arrange_graph():
+async def build_arrange_graph(config: dict = None):
     """从 JSON 配置文件动态构建乐器改编子图"""
     import json
-    with open(_ARRANGE_GRAPH_JSON, "r", encoding="utf-8") as f:
-        config = json.load(f)
+    if config is None:
+        with open(_ARRANGE_GRAPH_JSON, "r", encoding="utf-8") as f:
+            config = json.load(f)
 
     workflow = StateGraph(AgentState)
 
@@ -162,8 +167,26 @@ async def build_arrange_graph():
 _arrange_graph = None
 
 
-async def get_arrange_graph():
-    global _arrange_graph
-    if _arrange_graph is None:
-        _arrange_graph = await build_arrange_graph()
-    return _arrange_graph
+async def get_arrange_graph(profile_id: int = None):
+    """
+    获取指定 profile 的 arrange 子图。
+    若 profile_id 为 None 或没有自定义配置，返回默认图。
+    """
+    cache_key = profile_id if profile_id is not None else "default"
+
+    if cache_key in _arrange_graph_cache:
+        return _arrange_graph_cache[cache_key]
+
+    custom_config = None
+    if profile_id is not None:
+        db = SessionLocal()
+        try:
+            pref = db.query(ToolPreference).filter(ToolPreference.profile_id == profile_id).first()
+            if pref and pref.arrange_graph_config:
+                custom_config = json.loads(pref.arrange_graph_config)
+        finally:
+            db.close()
+
+    graph = await build_arrange_graph(config=custom_config)
+    _arrange_graph_cache[cache_key] = graph
+    return graph

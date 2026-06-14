@@ -10,7 +10,8 @@ async def analyze_structure_node(state: AgentState) -> dict:
 
     使用预定义的工具链图执行分析，并将结果存入 analysis_result。
     """
-    graph = await get_analysis_graph()
+    profile_id = state.get("profile_id")
+    graph = await get_analysis_graph(profile_id=profile_id)
     result_state = await graph.ainvoke(state)
     
     updates = {

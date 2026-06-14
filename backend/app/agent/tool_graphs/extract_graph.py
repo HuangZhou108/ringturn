@@ -16,6 +16,7 @@
 import os
 from pathlib import Path
 from typing import Any, Dict
+import json
 
 from langgraph.graph import StateGraph, END
 
@@ -28,7 +29,11 @@ from app.agent.atomic_tools.melody.quantize_notes import quantize_notes
 from app.agent.thinking_utils import record_thought
 from app.agent.utils import clean_state
 from app.agent.node_registry import register_node, register_condition, NODE_REGISTRY, CONDITION_REGISTRY
+from app.db.session import SessionLocal
+from app.models import ToolPreference
+
 _EXTRACT_GRAPH_JSON = Path(__file__).parent / "extract_graph.json"
+_extract_graph_cache = {}
 
 # ---------- 节点定义 ----------
 
@@ -244,11 +249,12 @@ def extract_route_after_check(state: AgentState) -> str:
 
 # ---------- 构建图 ----------
 
-async def build_extract_graph():
+async def build_extract_graph(config: dict = None):
     """从 JSON 文件动态构建提取旋律子图"""
     import json
-    with open(_EXTRACT_GRAPH_JSON, "r", encoding="utf-8") as f:
-        config = json.load(f)
+    if config is None:
+        with open(_EXTRACT_GRAPH_JSON, "r", encoding="utf-8") as f:
+            config = json.load(f)
     
     workflow = StateGraph(AgentState)
     
@@ -290,8 +296,21 @@ async def build_extract_graph():
 _extract_graph = None
 
 
-async def get_extract_graph():
-    global _extract_graph
-    if _extract_graph is None:
-        _extract_graph = await build_extract_graph()
-    return _extract_graph
+async def get_extract_graph(profile_id: int = None):
+    cache_key = profile_id if profile_id is not None else "default"
+    if cache_key in _extract_graph_cache:
+        return _extract_graph_cache[cache_key]
+    
+    custom_config = None
+    if profile_id is not None:
+        db = SessionLocal()
+        try:
+            pref = db.query(ToolPreference).filter(ToolPreference.profile_id == profile_id).first()
+            if pref and pref.extract_graph_config:
+                custom_config = json.loads(pref.extract_graph_config)
+        finally:
+            db.close()
+    
+    graph = await build_extract_graph(config=custom_config)
+    _extract_graph_cache[cache_key] = graph
+    return graph

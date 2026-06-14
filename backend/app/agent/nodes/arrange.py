@@ -26,6 +26,7 @@ async def arrange_node(state: AgentState) -> dict:
     if not midi_path or not Path(midi_path).exists():
         raise ValueError(f"MIDI 文件不存在: {midi_path}")
     
+    profile_id = state.get("profile_id")
     # 准备工具链图需要的状态（原样传递）
     sub_state = {
         "task_id": state["task_id"],
@@ -34,7 +35,7 @@ async def arrange_node(state: AgentState) -> dict:
         "tempo": state.get("tempo"),
     }
 
-    graph = await get_arrange_graph()
+    graph = await get_arrange_graph(profile_id=profile_id)
     try:
         final_state = await graph.ainvoke(sub_state)
     except Exception as e:
