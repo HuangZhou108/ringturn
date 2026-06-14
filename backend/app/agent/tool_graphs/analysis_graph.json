@@ -58,6 +58,7 @@
     }
   ],
   "default_edges": [
+    { "from": "decide_separation", "to": "fork" },
     { "from": "fork", "to": "tempo" },
     { "from": "fork", "to": "tempo_var" },
     { "from": "fork", "to": "loudness" },
