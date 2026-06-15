@@ -69,7 +69,16 @@ export default function TrackParams({
 
     // 处理 BPM 输入（数字校验，范围 20-300）
     const handleTempoChange = (val: string) => {
-        let numVal = parseInt(val, 10);
+        // 只过滤非数字字符，保留空字符串或数字串
+        const filtered = val.replace(/[^\d]/g, '');
+        setTempo(filtered);
+    };
+    const handleTempoBlur = () => {
+        if (tempo === '') {
+            setTempo('');
+            return;
+        }
+        let numVal = parseInt(tempo, 10);
         if (isNaN(numVal)) {
             setTempo('');
             return;
@@ -201,6 +210,7 @@ export default function TrackParams({
                                 pattern="\d*"
                                 value={tempo}
                                 onChange={(e) => handleTempoChange(e.target.value)}
+                                onBlur={handleTempoBlur}
                                 className="w-[120px] bg-transparent outline-none text-sm font-semibold text-[#2f3334]"
                                 placeholder="-"
                             />
