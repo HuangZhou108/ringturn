@@ -18,10 +18,11 @@ langgraph-checkpoint-sqlite>=0.1.0
 # Audio processing
 librosa==0.10.0
 soundfile>=0.12.0
+pyloudnorm>=0.1.0
 mido>=1.3.0  # MIDI handling
 pretty_midi
 numpy>=1.24.0,<2.0
-scipy>=1.11.0
+scipy==1.10.1
 
 # HTTP client
 httpx>=0.27.0
@@ -36,16 +37,19 @@ passlib[bcrypt]>=1.7.4
 # OpenAI
 openai>=1.12.0
 
+# YAMNet
+kagglehub
+# tflite-runtime
+
 # basic-pitch - older versions conflict with Python 3.11+, latest only supports up to Python 3.11
 basic-pitch
 setuptools<70
 demucs
 torchcodec
-# tensorflow==2.13.0
+# tensorflow==.15.1
 # tensorflow-cpu==2.13.0
 # keras==2.15.0
 # onnxruntime
-
 # Dev dependencies
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
@@ -54,3 +58,15 @@ isort>=5.13.0
 
 # LLM integration
 langchain-openai>=0.1.0
+
+# models&tools
+transformers
+# modelscope
+# datasets
+laion-clap
+# msclap
+# torchvision
+msaf
+cython
+# madmom # 如果提示缺少cython，使用pip install madmom --no-build-isolation禁用构建隔离; 由于该包的兼容性问题，可能需要手动修复一些问题才能使用
+# omnizart

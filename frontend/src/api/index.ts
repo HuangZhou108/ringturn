@@ -160,6 +160,16 @@ export const api = {
     // 获取 Profile 的所有偏好
     getProfilePreferences: (profileId: number) =>
         request<ProfilePreferences>(`/profiles/${profileId}/preferences`),
+
+    // 创建反馈
+    createFeedback: (taskId: string, feedback: string, params?: Record<string, any>) =>
+        request<{ task_id: string; parent_task_id: string; status: string }>(
+            `/tasks/${taskId}/feedback`,
+            {
+                method: 'POST',
+                body: JSON.stringify({ feedback, parent_task_id: taskId, params }), // 注意 schema 要求 parent_task_id
+            }
+        ),
 }
 
 export type { ApiResponse }

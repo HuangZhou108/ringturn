@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import ProfileInfo from './ProfileInfo';
+import ProfileSettings from './profile_settings';
 
 interface TopBarProps {
     title?: string;               // 左侧标题，默认使用 t('header.chatFlow')
@@ -90,12 +90,8 @@ export default function TopBar({
                     </svg>
                 </button>
             </div>
-            {/* Profile 弹窗 */}
-            <ProfileInfo
-                isOpen={showProfileModal}
-                onClose={() => setShowProfileModal(false)}
-                onProfileChanged={onProfileChanged}
-            />
+            {/* Profile设置 弹窗 */}
+            <ProfileSettings isOpen={showProfileModal} onClose={() => setShowProfileModal(false)} onProfileChanged={onProfileChanged} />
         </header>
     );
 }

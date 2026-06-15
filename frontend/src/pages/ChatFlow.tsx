@@ -62,6 +62,7 @@ function ChatFlow() {
     const [uploadProgress, setUploadProgress] = useState<number>(0)
     const [isUploading, setIsUploading] = useState(false)
     const [uploadedFileName, setUploadedFileName] = useState<string | null>(null)
+    const [audioDuration, setAudioDuration] = useState<number | undefined>(undefined); // 上传的音频长度
 
     // 调试日志 - 每次渲染时打印完整状态
     console.log('[ChatFlow] === RENDER === audioFileId:', audioFileId, '| uploadSuccess:', uploadSuccess, '| isUploading:', isUploading, '| location.state:', JSON.stringify(location.state))
@@ -78,6 +79,11 @@ function ChatFlow() {
     const [refreshSidebar, setRefreshSidebar] = useState(0); // 刷新侧边栏
     // 使用 ref 保存路由状态，避免重新渲染时丢失
     const locationStateRef = useRef(location.state as any)
+
+    // 反馈任务相关
+    const [feedbackMode, setFeedbackMode] = useState(false);
+    const [availableParentTasks, setAvailableParentTasks] = useState<{ task_id: string; user_request: string }[]>([]);
+    const [selectedParentTaskId, setSelectedParentTaskId] = useState<string | null>(null);
 
     // 获取当前Profile
     useEffect(() => {
@@ -122,6 +128,9 @@ function ChatFlow() {
 
     // 加载会话详情
     const loadConversation = useCallback(async (conversationId: string) => {
+        // 重置反馈模式
+        setFeedbackMode(false)
+        setSelectedParentTaskId(null)
         try {
             const res = await conversationApi.get(conversationId)
             if (res.code === 200) {
@@ -173,6 +182,9 @@ function ChatFlow() {
             fileInputRef.current.value = ''
         }
         setRefreshSidebar(prev => prev + 1); // 刷新侧边栏
+        // 重置反馈模式
+        setFeedbackMode(false)
+        setSelectedParentTaskId(null)
     }, [])
 
     // 加载历史任务（保留兼容性）
@@ -379,6 +391,59 @@ function ChatFlow() {
     // 发送消息
     const handleSend = async () => {
         if (!inputValue.trim()) return
+
+        // 反馈模式
+        if (feedbackMode) {
+            if (!selectedParentTaskId) {
+                showToast('请选择要反馈的任务');
+                return;
+            }
+            // 收集当前参数
+            const params: Record<string, any> = {};
+            if (instrument.trim()) params.instrument = instrument;
+            if (tempo.trim()) params.tempo = parseInt(tempo, 10);
+            if (duration.trim()) params.duration = parseInt(duration, 10);
+            if (filename && filename.trim() !== '') params.filename = filename;
+            try {
+                const res = await api.createFeedback(selectedParentTaskId, inputValue.trim(), params);
+                if (res.code === 200) {
+                    // 清空输入，退出反馈模式
+                    setInputValue('');
+                    setFeedbackMode(false);
+                    setSelectedParentTaskId(null);
+
+                    // 获取新创建的子任务 ID
+                    const newTaskId = res.data.task_id;
+                    setCurrentTaskId(newTaskId);
+                    setIsProcessing(true);
+
+                    // 添加 AI 占位消息，用于显示思考过程
+                    const processingMsg: Message = {
+                        id: nextId(),
+                        type: 'ai',
+                        taskId: newTaskId,
+                        deepThinking: t('chat.deepThinking'),
+                        content: '根据您的反馈正在优化...',
+                        thinkingProcess: [],
+                    };
+                    setMessages((prev) => [...prev, processingMsg]);
+
+                    // 如果 WebSocket 未连接，启动轮询
+                    if (!isConnected) {
+                        pollTaskStatus(newTaskId, processingMsg.id);
+                    }
+                    // 刷新侧边栏和会话列表
+                    setRefreshSidebar(prev => prev + 1);
+                    if (currentConversationId) loadConversation(currentConversationId);
+                } else {
+                    showToast(res.message || '反馈提交失败');
+                }
+            } catch (err) {
+                console.error(err);
+                showToast('网络错误，反馈失败');
+            }
+            return;
+        }
 
         // 检查是否已上传音频
         if (!audioFileId) {
@@ -628,6 +693,9 @@ function ChatFlow() {
                     }`
                 )
                 setUploadError(null)
+                if (res.data.duration) {
+                    setAudioDuration(res.data.duration);
+                }
             } else {
                 setUploadError(res.message || '文件上传失败')
                 setUploadSuccess(null)
@@ -765,6 +833,19 @@ function ChatFlow() {
         }
     }, [navigate]);
 
+    // 获取当前会话中已完成的任务列表（用于反馈选择）
+    const loadCompletedTasks = useCallback(async () => {
+        if (!currentConversationId) return [];
+        // 从会话消息中提取所有任务（需要后端支持或者从消息中解析）
+        // 简单做法：遍历 messages，找到 type='ai' 且 taskId 存在且对应任务状态为 completed 的
+        // 更可靠的是调用后端接口：GET /conversations/{id}/tasks?status=completed
+        // 这里为简化，直接从现有 messages 中提取（实际项目中应添加后端接口）
+        const tasks = messages
+            .filter(m => m.type === 'ai' && m.taskId)
+            .map(m => ({ task_id: m.taskId!, user_request: m.content || '' }));
+        setAvailableParentTasks(tasks);
+    }, [messages, currentConversationId]);
+
     return (
         <div className="flex flex-col h-screen bg-white text-gray-800 font-sans page-enter">
             <TopBar
@@ -873,6 +954,7 @@ function ChatFlow() {
                         setInstrument={setInstrument}
                         tempo={tempo}
                         setTempo={setTempo}
+                        audioDuration={audioDuration}
                         duration={duration}
                         setDuration={setDuration}
                         filename={filename}
@@ -881,6 +963,12 @@ function ChatFlow() {
                         uploadProgress={uploadProgress}
                         uploadError={uploadError}
                         uploadSuccess={uploadSuccess}
+                        feedbackMode={feedbackMode}
+                        setFeedbackMode={setFeedbackMode}
+                        selectedParentTaskId={selectedParentTaskId}
+                        setSelectedParentTaskId={setSelectedParentTaskId}
+                        availableParentTasks={availableParentTasks}
+                        loadCompletedTasks={loadCompletedTasks}
                     />
                 </main>
             </div>

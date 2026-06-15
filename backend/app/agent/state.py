@@ -3,6 +3,16 @@ from langgraph.graph.message import add_messages
 from datetime import datetime
 from enum import Enum
 
+def merge_dicts(left: dict, right: dict) -> dict:
+    """后者胜出的归约器，用于合并多个并行节点的更新。"""
+    if left is None:
+        left = {}
+    if right is None:
+        right = {}
+    merged = left.copy()
+    merged.update(right)
+    return merged
+
 class TaskStep(str, Enum):
     """子步骤枚举"""
     FETCH_SOURCE = "fetch_source"
@@ -36,12 +46,22 @@ class AgentState(TypedDict, total=False):
     tempo: int
     filename: str
 
+    # Demucs 分离结果（由 analysis 节点填充）
+    demucs_separated: bool              # 是否执行了分离
+    vocals_path: str | None             # 人声轨道路径（如果有分离）
+    accompaniment_path: str | None      # 伴奏轨道路径（other.wav，如果有分离）
+    demucs_stems: str | None            # 使用的分离模式（'4' 或 None）
     # 分析结果
-    analysis_result: dict | None
+    analysis_result: Annotated[dict | None, merge_dicts]
     melody_data: dict | None
     midi_path: str | None
 
+    # 旋律提取
+    use_vocal_and_accompaniment: bool        # 是否双轨提取旋律
+    source_for_melody: str | None            # 单轨模式下的提取源
+
     # 改编参数
+    arrange_temp_path: str | None
     arrangement_params: dict | None
     arranged_midi_path: str | None
 
@@ -75,6 +95,7 @@ class AgentState(TypedDict, total=False):
     thread_id: str                     # LangGraph 线程 ID
     human_feedback: str | None         # 用户反馈内容
     waiting_for_feedback: bool         # 是否等待用户输入
+    resume_from_node: str | None       # 反馈起始节点
 
 def get_step_index(step: TaskStep) -> int:
     """获取步骤索引"""

@@ -21,6 +21,7 @@ function Home() {
     const [isUploading, setIsUploading] = useState(false);
     const [toastMessage, setToastMessage] = useState<string | null>(null);
     const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+    const [audioDuration, setAudioDuration] = useState<number | undefined>(undefined); // 上传音频长度
 
     // 参数设置（与 TrackParams 共享）
     const [instrument, setInstrument] = useState('');
@@ -102,6 +103,9 @@ function Home() {
                 setAudioFileId(res.data.file_id);
                 setUploadedFileName(res.data.filename);
                 setUploadSuccess(`文件已上传: ${res.data.filename} (${res.data.file_size.toFixed(2)} MB)`);
+                if (res.data.duration) {
+                    setAudioDuration(res.data.duration);
+                }
             } else {
                 setUploadError(res.message || '文件上传失败');
             }
@@ -138,6 +142,7 @@ function Home() {
                     setInstrument={setInstrument}
                     tempo={tempo}
                     setTempo={setTempo}
+                    audioDuration={audioDuration}
                     duration={duration}
                     setDuration={setDuration}
                     filename={filename}

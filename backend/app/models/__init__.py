@@ -38,6 +38,8 @@ class Profile(Base):
 
     # 关联
     tasks = relationship("Task", back_populates="profile", cascade="all, delete-orphan")
+    tool_preference = relationship("ToolPreference", back_populates="profile", uselist=False)
+    preference = relationship("Preference", back_populates="profile", uselist=False)
 
 class Task(Base):
     """任务表"""
@@ -85,6 +87,10 @@ class Task(Base):
     feedbacks = relationship("Feedback", back_populates="task", cascade="all, delete-orphan")
     conversation_messages = relationship("ConversationMessage", back_populates="task")
 
+    # 反馈处理
+    resume_from_node = Column(String(50), nullable=True)   # 反馈任务从哪个节点开始
+    intermediate_data = Column(JSON, nullable=True)        # 父任务完成时的中间状态
+
 class Feedback(Base):
     """反馈表"""
     __tablename__ = "feedbacks"
@@ -98,16 +104,17 @@ class Feedback(Base):
     task = relationship("Task", back_populates="feedbacks")
 
 class Preference(Base):
-    """用户偏好表"""
+    """偏好表：存储每个 Profile 的 AI 统计与用户覆盖配置"""
     __tablename__ = "preferences"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    # profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=False)
-    key = Column(String(64), nullable=False)
-    value = Column(JSON, nullable=False)  # 如 ["cello"] 或 {"bpm": 120}
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=False, unique=True)
+    stats = Column(Text, nullable=False)          # AI 统计 JSON
+    user_overrides = Column(Text, nullable=True)  # 用户覆盖 JSON
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # 关联
-    # profile = relationship("Profile", back_populates="preferences")
+    profile = relationship("Profile", back_populates="preference")
 
 class Conversation(Base):
     """会话表"""
@@ -142,3 +149,23 @@ class ConversationMessage(Base):
     # 关联
     conversation = relationship("Conversation", back_populates="messages")
     task = relationship("Task", back_populates="conversation_messages")
+
+class ToolPreference(Base):
+    """工具偏好表"""
+    __tablename__ = "tool_preferences"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=False, unique=True)
+    
+    # 各子图的配置 JSON
+    analysis_graph_config = Column(Text, nullable=True)
+    extract_graph_config = Column(Text, nullable=True)
+    arrange_graph_config = Column(Text, nullable=True)
+    render_graph_config = Column(Text, nullable=True)
+    quality_graph_config = Column(Text, nullable=True)
+    reflect_graph_config = Column(Text, nullable=True)
+    
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # 关联
+    profile = relationship("Profile", back_populates="tool_preference")

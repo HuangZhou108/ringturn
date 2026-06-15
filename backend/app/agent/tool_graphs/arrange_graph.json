@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "arrange_subgraph",
+  "entry": "change_instrument",
+  "exit": "change_tempo_or_finalize",
+  "nodes": [
+    { "id": "change_instrument", "type": "regular" },
+    { "id": "change_tempo", "type": "regular" },
+    { "id": "finalize", "type": "regular" }
+  ],
+  "conditional_edges": [
+    {
+      "from": "change_instrument",
+      "condition": "arrange_should_change_tempo",
+      "mapping": {
+        "change_tempo": "change_tempo",
+        "finalize": "finalize"
+      }
+    }
+  ],
+  "default_edges": [
+    { "from": "change_tempo", "to": "END" },
+    { "from": "finalize", "to": "END" }
+  ]
+}

@@ -33,10 +33,19 @@ NODE_ARRANGE = "arrange"
 NODE_RENDER = "render"
 NODE_CHECK = "check_quality"
 NODE_REFLECT = "reflect"
+ALL_NODES = [NODE_FETCH, NODE_ANALYZE, NODE_EXTRACT, NODE_GEN_MIDI, 
+             NODE_ARRANGE, NODE_RENDER, NODE_CHECK, NODE_REFLECT]
 
 _agent_graph = None
 _graph_lock = asyncio.Lock()
 
+# 对于反馈任务，需要动态选择从哪个节点开始
+def entry_router(state: AgentState) -> str:
+    """根据 state 中的 resume_from_node 决定从哪个节点开始"""
+    target = state.get("resume_from_node", NODE_FETCH)
+    print(f"[ROUTER] resume_from_node = {target}")
+    # 确保目标节点存在于图中
+    return target if target in ALL_NODES else NODE_FETCH
 
 async def build_agent_graph():
     """异步构建并编译LangGraph状态图"""
@@ -61,6 +70,11 @@ async def build_agent_graph():
     workflow.add_edge(NODE_RENDER, NODE_CHECK)
     workflow.add_edge(NODE_CHECK, NODE_REFLECT)
 
+    # 添加路由入口
+    workflow.set_entry_point("entry_router")
+    workflow.add_node("entry_router", lambda state: {})  # 空节点
+    workflow.add_conditional_edges("entry_router", entry_router, {node: node for node in ALL_NODES})
+
     # 条件边：根据反思结果决定是否重试
     def should_retry(state: AgentState) -> str:
         if not state.get("needs_revision", False):
@@ -80,7 +94,7 @@ async def build_agent_graph():
         },
     )
 
-    workflow.set_entry_point(NODE_FETCH)
+    # workflow.set_entry_point(NODE_FETCH)
 
     # 异步检查点
     db_path = settings.CHECKPOINT_DB_URL.replace("sqlite:///", "")

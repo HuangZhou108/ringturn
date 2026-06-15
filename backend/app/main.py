@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import uvicorn
+from pathlib import Path
 
 from app.core.config import get_settings, ensure_directories
 from app.core.exceptions import AppException
@@ -31,6 +32,28 @@ async def lifespan(app: FastAPI):
         db.close()
     yield
     # 关闭时执行
+    # 关闭时取消所有正在执行的任务
+    from app.api.v1.endpoints.tasks import _running_tasks, _background_tasks
+    import asyncio
+
+    # 1. 取消所有 AgentExecutor
+    cancel_tasks = []
+    for task_id, executor in list(_running_tasks.items()):
+        if hasattr(executor, 'cancel'):
+            cancel_tasks.append(asyncio.create_task(executor.cancel()))
+    if cancel_tasks:
+        await asyncio.gather(*cancel_tasks, return_exceptions=True)
+
+    # 2. 取消并等待后台任务
+    for t in _background_tasks:
+        if not t.done():
+            t.cancel()
+    if _background_tasks:
+        await asyncio.gather(*_background_tasks, return_exceptions=True)
+
+    # 3. 可选：强制垃圾回收
+    import gc
+    gc.collect()
     pass
 
 app = FastAPI(
@@ -85,6 +108,11 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # 上传文件访问（临时）
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+# 挂载 tool_graphs 目录，使默认 JSON 可通过 URL 访问
+tool_graphs_dir = Path(__file__).parent / "agent" / "tool_graphs"
+if tool_graphs_dir.exists():
+    app.mount("/tool_graphs", StaticFiles(directory=str(tool_graphs_dir)), name="tool_graphs")
 
 if __name__ == "__main__":
     uvicorn.run(

@@ -2,6 +2,7 @@
 // Profile相关API
 
 import type { ApiResponse } from './index'
+import type {PreferenceResponse, PreferenceUpdateRequest} from "../types";
 
 // ==================== 类型定义 ====================
 
@@ -106,6 +107,23 @@ export const profileApi = {
         body: JSON.stringify({ preferences }),
       }
     ),
+
+    // 获取偏好
+    getPreferences: (profileId: number) =>
+        request<PreferenceResponse>(`/profiles/${profileId}/preferences`),
+
+// 保存用户覆盖
+    updatePreferences: (profileId: number, data: PreferenceUpdateRequest) =>
+        request<null>(`/profiles/${profileId}/preferences`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        }),
+
+// 恢复 AI 推荐
+    resetPreferences: (profileId: number) =>
+        request<null>(`/profiles/${profileId}/preferences`, {
+            method: 'DELETE',
+        }),
 }
 
 // 辅助函数：解析偏好配置JSON
@@ -124,3 +142,22 @@ export function parsePreferences(preferencesData: string | null): ProfilePrefere
 export function stringifyPreferences(preferences: ProfilePreferences): string {
   return JSON.stringify(preferences)
 }
+
+// 获取工具链配置
+export const getToolPreference = (profileId: number, graphName: string) =>
+    request<{ config: any }>(`/profiles/${profileId}/tool-preferences/${graphName}`)
+
+// 保存工具链配置
+export const updateToolPreference = (profileId: number, graphName: string, config: any) =>
+    request<null>(`/profiles/${profileId}/tool-preferences/${graphName}`, {
+      method: 'PUT',
+      body: JSON.stringify({ config }),
+    })
+
+// 删除工具链配置（恢复默认）
+export const deleteToolPreference = (profileId: number, graphName: string) =>
+    request<null>(`/profiles/${profileId}/tool-preferences/${graphName}`, {
+      method: 'DELETE',
+    })
+
+

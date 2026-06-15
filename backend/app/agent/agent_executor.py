@@ -35,6 +35,7 @@ class AgentExecutor:
         self.conversation_id = conversation_id
         self._active_task: Optional[AsyncioTask] = None
         self._cancel_event = asyncio.Event()   # 用于通知内部协程取消
+        self._subprocesses = []   # 保存子进程对象
 
         # 获取任务
         self.task = self.db.query(TaskModel).filter(TaskModel.id == task_id).first()
@@ -65,7 +66,7 @@ class AgentExecutor:
 
     def _init_state(self) -> AgentState:
         """初始化 Agent 状态"""
-        return {
+        state = {
             "task_id": self.task.id,
             "profile_id": self.task.profile_id,
             "user_request": self.task.user_request,
@@ -98,6 +99,22 @@ class AgentExecutor:
             "created_at": self.task.created_at,
             "updated_at": datetime.utcnow(),
         }
+
+        # 如果是反馈任务，从父任务的 intermediate_data 加载
+        if self.task.parent_task_id and self.task.intermediate_data:
+            inter = self.task.intermediate_data
+            print(f"[DEBUG] intermediate_data: {inter}")
+            state.update({
+                "audio_path": inter.get("audio_path"),
+                "analysis_result": inter.get("analysis_result"),
+                "melody_data": inter.get("melody_data"),
+                "midi_path": inter.get("midi_path"),
+                "arranged_midi_path": inter.get("arranged_midi_path"),
+                "tempo": inter.get("tempo", 120),
+                "instrument": inter.get("instrument", "Acoustic Piano"),
+            })
+
+        return state
 
     async def _plan(self) -> None:
         """规划阶段：生成执行计划（仅用于展示，不影响图路由）"""
@@ -147,6 +164,11 @@ class AgentExecutor:
             # 检查是否已取消
             if self.task.status == TaskStatus.cancelled:
                 return {"success": False, "reason": "cancelled"}
+            
+            # 将反馈指定的起始节点注入 state
+            if self.task.resume_from_node:
+                self.state["resume_from_node"] = self.task.resume_from_node
+                print(f"[AGENT] Will resume from node: {self.task.resume_from_node}")
 
             await self._update_task_status(TaskStatus.planning)
             await self._plan()
@@ -163,6 +185,30 @@ class AgentExecutor:
             )
             final_state = await self._active_task
 
+            # 确保从 final_state 中提取有效值
+            self.state.update(final_state)   # 合并最终状态
+
+            # 优先使用 final_state 中的路径，其次是 self.state
+            midi_path = final_state.get("midi_path") or self.state.get("midi_path")
+            # 如果仍然为空，尝试从 melody_data 中提取
+            if not midi_path:
+                melody_data = final_state.get("melody_data") or self.state.get("melody_data")
+                if melody_data and isinstance(melody_data, dict):
+                    midi_path = melody_data.get("midi_path")
+            arranged_midi_path = final_state.get("arranged_midi_path") or self.state.get("arranged_midi_path")
+
+            if self.task.resume_from_node:
+                self.state["resume_from_node"] = self.task.resume_from_node
+            self.task.intermediate_data = {
+                "audio_path": final_state.get("audio_path") or self.state.get("audio_path"),
+                "analysis_result": final_state.get("analysis_result") or self.state.get("analysis_result"),
+                "melody_data": final_state.get("melody_data") or self.state.get("melody_data"),
+                "midi_path": midi_path,
+                "arranged_midi_path": arranged_midi_path,
+                "tempo": final_state.get("tempo") or self.state.get("tempo"),
+                "instrument": final_state.get("instrument") or self.state.get("instrument"),
+            }
+
             # 检查是否在运行中被取消
             if self._cancel_event.is_set():
                 raise asyncio.CancelledError()
@@ -178,6 +224,8 @@ class AgentExecutor:
                 f"任务已完成！\n生成铃声：{self.task.final_audio_url}\n时长：{self.task.audio_duration}秒"
             )
             self._complete_conversation()
+
+            self.db.commit()
 
             return {
                 "success": True,
@@ -281,9 +329,27 @@ class AgentExecutor:
     def __del__(self):
         if hasattr(self, 'db') and self.db:
             self.db.close()
+    
+    async def _run_subprocess(self, cmd):
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.PIPE, stderr=asyncio.PIPE
+        )
+        self._subprocesses.append(proc)
+        try:
+            await proc.communicate()
+        finally:
+            if proc in self._subprocesses:
+                self._subprocesses.remove(proc)
 
     async def cancel(self):
         """取消正在执行的任务"""
+        # 终止所有子进程
+        for proc in self._subprocesses:
+            try:
+                proc.terminate()
+                await proc.wait()
+            except:
+                pass
         self._cancel_event.set()
         if self.assistant_message:
             self.assistant_message.content = "任务已取消"

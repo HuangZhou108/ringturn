@@ -3,12 +3,13 @@ Profile 管理接口
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import Optional
+from pydantic import BaseModel
+from typing import Optional, Literal
 import json
 from datetime import datetime
 
 from app.db.session import get_db
-from app.models import Profile, Task as TaskModel
+from app.models import Profile, Task as TaskModel, ToolPreference, Preference as PreferenceModel
 from app.schemas.profile import (
     ProfileCreate,
     ProfileUpdate,
@@ -17,7 +18,21 @@ from app.schemas.profile import (
     PreferencesImport,
     PreferencesExport,
 )
+from app.services.preference_service import (
+    get_effective_preference,
+    update_profile_preference_stats,
+    get_ai_recommendation,
+)
+from app.schemas.preference import (
+    PreferenceGetResponse,
+    PreferenceUpdateRequest,
+    PreferenceUpdateResponse,
+)
 from app.core.exceptions import AppException
+from app.agent.tool_graphs.analysis_graph import _analysis_graph_cache as analysis_cache
+from app.agent.tool_graphs.extract_graph import _extract_graph_cache as extract_cache
+from app.agent.tool_graphs.arrange_graph import _arrange_graph_cache as arrange_cache
+
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
@@ -142,6 +157,31 @@ async def get_active_profile(
         "message": "获取成功",
     }
 
+def _clear_profile_cache(profile_id: Optional[int] = None):
+    """
+    清除 Profile 缓存
+    - 若传入 profile_id，仅清除该 Profile 的子图缓存
+    - 若不传参数，清除全局配置缓存（如有）
+    """
+    # 1. 清除指定 Profile 的子图缓存
+    if profile_id is not None:
+        if profile_id in analysis_cache:
+            del analysis_cache[profile_id]
+        if profile_id in extract_cache:
+            del extract_cache[profile_id]
+        if profile_id in arrange_cache:
+            del arrange_cache[profile_id]
+        # 其他子图缓存同理
+    else:
+        # 2. 清除全局配置缓存
+        from app.core.config import get_settings
+        settings = get_settings()
+        if hasattr(settings, 'cache') and settings.cache:
+            settings.cache.clear()
+        # 也可以选择清除所有子图缓存（视业务需求）
+        # analysis_cache.clear()
+        # extract_cache.clear()
+        # arrange_cache.clear()
 
 @router.put("/{profile_id}/activate", response_model=dict)
 async def activate_profile(
@@ -168,6 +208,7 @@ async def activate_profile(
 
     # 清理缓存（扩展点）
     _clear_profile_cache()
+    _clear_profile_cache(profile_id)
 
     return {
         "code": 200,
@@ -178,22 +219,6 @@ async def activate_profile(
         },
         "message": f"已切换到 Profile: {profile.name}",
     }
-
-
-def _clear_profile_cache():
-    """
-    清理Profile相关缓存
-    
-    目前为空实现，未来如果有缓存需求可扩展：
-    - LRU缓存清理
-    - Redis缓存清理
-    - 内存缓存清理
-    """
-    # 清理config中的LRU缓存（如果有相关配置）
-    from app.core.config import get_settings
-    if hasattr(get_settings, 'cache'):
-        get_settings.cache.clear()
-    pass
 
 
 @router.put("/{profile_id}", response_model=dict)
@@ -381,4 +406,246 @@ async def get_profile_tasks(
         "code": 200,
         "data": {"total": total, "page": page, "page_size": page_size, "tasks": items},
         "message": "success"
+    }
+
+
+# 定义允许的 graph_name
+ALLOWED_GRAPH_NAMES = {"analysis", "extract", "arrange", "quality", "render", "reflect"}
+
+# 列名映射
+GRAPH_COLUMN_MAP = {
+    "analysis": "analysis_graph_config",
+    "extract": "extract_graph_config",
+    "arrange": "arrange_graph_config",
+    "quality": "quality_graph_config",
+    "render": "render_graph_config",
+    "reflect": "reflect_graph_config",
+}
+
+
+class ToolPreferenceUpdate(BaseModel):
+    config: dict  # 完整的图 JSON 对象
+
+
+@router.put("/{profile_id}/tool-preferences/{graph_name}")
+async def update_tool_preference(
+    profile_id: int,
+    graph_name: str,
+    request: ToolPreferenceUpdate,
+    db: Session = Depends(get_db),
+):
+    """保存/更新指定子图的自定义配置"""
+    if graph_name not in ALLOWED_GRAPH_NAMES:
+        raise HTTPException(status_code=400, detail="Invalid graph_name")
+    
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise ProfileNotFoundException(profile_id)
+    
+    # 获取或创建 tool_preference 记录
+    pref = db.query(ToolPreference).filter(ToolPreference.profile_id == profile_id).first()
+    if not pref:
+        pref = ToolPreference(profile_id=profile_id)
+        db.add(pref)
+    
+    # 更新对应列
+    column = GRAPH_COLUMN_MAP[graph_name]
+    setattr(pref, column, json.dumps(request.config, ensure_ascii=False))
+    pref.updated_at = datetime.utcnow()
+    db.commit()
+    
+    _clear_profile_cache(profile_id)
+    return {"code": 200, "data": None, "message": f"{graph_name} graph preference saved"}
+
+@router.get("/{profile_id}/tool-preferences/{graph_name}")
+async def get_tool_preference(
+    profile_id: int,
+    graph_name: str,
+    db: Session = Depends(get_db),
+):
+    """获取指定子图的自定义配置（若无则返回 null）"""
+    if graph_name not in ALLOWED_GRAPH_NAMES:
+        raise HTTPException(status_code=400, detail="Invalid graph_name")
+    
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise ProfileNotFoundException(profile_id)
+    
+    pref = db.query(ToolPreference).filter(ToolPreference.profile_id == profile_id).first()
+    if not pref:
+        return {"code": 200, "data": None, "message": "No custom config, using default"}
+    
+    column = GRAPH_COLUMN_MAP[graph_name]
+    config_json = getattr(pref, column)
+    if config_json:
+        try:
+            config = json.loads(config_json)
+            return {"code": 200, "data": config, "message": "success"}
+        except json.JSONDecodeError:
+            return {"code": 500, "data": None, "message": "Invalid stored config"}
+    
+    return {"code": 200, "data": None, "message": "No custom config, using default"}
+
+
+@router.delete("/{profile_id}/tool-preferences/{graph_name}")
+async def delete_tool_preference(
+    profile_id: int,
+    graph_name: str,
+    db: Session = Depends(get_db),
+):
+    """删除自定义配置（恢复默认）"""
+    if graph_name not in ALLOWED_GRAPH_NAMES:
+        raise HTTPException(status_code=400, detail="Invalid graph_name")
+    
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise ProfileNotFoundException(profile_id)
+    
+    pref = db.query(ToolPreference).filter(ToolPreference.profile_id == profile_id).first()
+    if not pref:
+        return {"code": 200, "data": None, "message": "No custom config to remove"}
+    
+    column = GRAPH_COLUMN_MAP[graph_name]
+    setattr(pref, column, None)
+    pref.updated_at = datetime.utcnow()
+    db.commit()
+    
+    return {"code": 200, "data": None, "message": "Custom config removed, will use default"}
+
+
+# ========== 偏好管理接口 ==========
+
+@router.get("/{profile_id}/preferences")
+async def get_profile_preferences(
+    profile_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    获取当前有效偏好（含 AI 推荐与用户覆盖）
+    """
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise ProfileNotFoundException(profile_id)
+    
+    # 获取或创建 preference 记录
+    pref = db.query(PreferenceModel).filter(PreferenceModel.profile_id == profile_id).first()
+    if not pref:
+        pref = PreferenceModel(
+            profile_id=profile_id,
+            stats='{"instruments":{},"tempo_samples":{},"duration_samples":{},"style_tags":{}}',
+            user_overrides=None
+        )
+        db.add(pref)
+        db.commit()
+        db.refresh(pref)
+    
+    import json
+    stats = json.loads(pref.stats)
+    user_overrides = json.loads(pref.user_overrides) if pref.user_overrides else None
+    
+    ai_rec = get_ai_recommendation(stats)
+    
+    # 构建 user_overrides 结构（若为 None 则使用默认）
+    if user_overrides is None:
+        user_overrides = {
+            "use_ai_preferences": True,
+            "instrument": None,
+            "tempo": None,
+            "duration": None,
+            "style_tags": []
+        }
+    
+    # 计算 effective
+    effective = {}
+    if user_overrides.get("use_ai_preferences", True):
+        effective = ai_rec
+    else:
+        effective = {
+            "instrument": user_overrides.get("instrument"),
+            "tempo": user_overrides.get("tempo"),
+            "duration": user_overrides.get("duration"),
+            "style_tags": user_overrides.get("style_tags", [])
+        }
+    
+    return {
+        "code": 200,
+        "data": {
+            "ai_recommendation": ai_rec,
+            "user_overrides": user_overrides,
+            "effective": effective,
+        },
+        "message": "获取偏好成功"
+    }
+
+
+@router.put("/{profile_id}/preferences")
+async def update_profile_preferences(
+    profile_id: int,
+    request: PreferenceUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    保存用户覆盖偏好
+    """
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise ProfileNotFoundException(profile_id)
+    
+    pref = db.query(PreferenceModel).filter(PreferenceModel.profile_id == profile_id).first()
+    if not pref:
+        pref = PreferenceModel(
+            profile_id=profile_id,
+            stats='{"instruments":{},"tempo_samples":{},"duration_samples":{},"style_tags":{}}',
+            user_overrides=None
+        )
+        db.add(pref)
+    
+    # 加载现有 user_overrides
+    import json
+    current = json.loads(pref.user_overrides) if pref.user_overrides else {}
+    
+    # 合并新值
+    current["use_ai_preferences"] = request.use_ai_preferences
+    if request.instrument is not None:
+        current["instrument"] = request.instrument if request.instrument else None
+    if request.tempo is not None:
+        current["tempo"] = request.tempo
+    if request.duration is not None:
+        current["duration"] = request.duration
+    if request.style_tags is not None:
+        current["style_tags"] = request.style_tags if request.style_tags else []
+    
+    pref.user_overrides = json.dumps(current, ensure_ascii=False)
+    pref.updated_at = datetime.utcnow()
+    db.commit()
+    
+    return {
+        "code": 200,
+        "data": None,
+        "message": "用户偏好已保存"
+    }
+
+
+@router.delete("/{profile_id}/preferences")
+async def reset_profile_preferences(
+    profile_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    恢复 AI 推荐偏好（清除用户覆盖）
+    """
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise ProfileNotFoundException(profile_id)
+    
+    pref = db.query(PreferenceModel).filter(PreferenceModel.profile_id == profile_id).first()
+    if pref:
+        pref.user_overrides = None
+        pref.updated_at = datetime.utcnow()
+        db.commit()
+    
+    return {
+        "code": 200,
+        "data": None,
+        "message": "已恢复 AI 推荐偏好，用户覆盖已清除"
     }
