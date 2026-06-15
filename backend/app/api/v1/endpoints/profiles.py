@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 
 from app.db.session import get_db
-from app.models import Profile, Task as TaskModel, ToolPreference
+from app.models import Profile, Task as TaskModel, ToolPreference, Preference as PreferenceModel
 from app.schemas.profile import (
     ProfileCreate,
     ProfileUpdate,
@@ -18,10 +18,21 @@ from app.schemas.profile import (
     PreferencesImport,
     PreferencesExport,
 )
+from app.services.preference_service import (
+    get_effective_preference,
+    update_profile_preference_stats,
+    get_ai_recommendation,
+)
+from app.schemas.preference import (
+    PreferenceGetResponse,
+    PreferenceUpdateRequest,
+    PreferenceUpdateResponse,
+)
 from app.core.exceptions import AppException
 from app.agent.tool_graphs.analysis_graph import _analysis_graph_cache as analysis_cache
 from app.agent.tool_graphs.extract_graph import _extract_graph_cache as extract_cache
 from app.agent.tool_graphs.arrange_graph import _arrange_graph_cache as arrange_cache
+
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
@@ -500,3 +511,141 @@ async def delete_tool_preference(
     db.commit()
     
     return {"code": 200, "data": None, "message": "Custom config removed, will use default"}
+
+
+# ========== 偏好管理接口 ==========
+
+@router.get("/{profile_id}/preferences")
+async def get_profile_preferences(
+    profile_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    获取当前有效偏好（含 AI 推荐与用户覆盖）
+    """
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise ProfileNotFoundException(profile_id)
+    
+    # 获取或创建 preference 记录
+    pref = db.query(PreferenceModel).filter(PreferenceModel.profile_id == profile_id).first()
+    if not pref:
+        pref = PreferenceModel(
+            profile_id=profile_id,
+            stats='{"instruments":{},"tempo_samples":{},"duration_samples":{},"style_tags":{}}',
+            user_overrides=None
+        )
+        db.add(pref)
+        db.commit()
+        db.refresh(pref)
+    
+    import json
+    stats = json.loads(pref.stats)
+    user_overrides = json.loads(pref.user_overrides) if pref.user_overrides else None
+    
+    ai_rec = get_ai_recommendation(stats)
+    
+    # 构建 user_overrides 结构（若为 None 则使用默认）
+    if user_overrides is None:
+        user_overrides = {
+            "use_ai_preferences": True,
+            "instrument": None,
+            "tempo": None,
+            "duration": None,
+            "style_tags": []
+        }
+    
+    # 计算 effective
+    effective = {}
+    if user_overrides.get("use_ai_preferences", True):
+        effective = ai_rec
+    else:
+        effective = {
+            "instrument": user_overrides.get("instrument"),
+            "tempo": user_overrides.get("tempo"),
+            "duration": user_overrides.get("duration"),
+            "style_tags": user_overrides.get("style_tags", [])
+        }
+    
+    return {
+        "code": 200,
+        "data": {
+            "ai_recommendation": ai_rec,
+            "user_overrides": user_overrides,
+            "effective": effective,
+        },
+        "message": "获取偏好成功"
+    }
+
+
+@router.put("/{profile_id}/preferences")
+async def update_profile_preferences(
+    profile_id: int,
+    request: PreferenceUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    保存用户覆盖偏好
+    """
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise ProfileNotFoundException(profile_id)
+    
+    pref = db.query(PreferenceModel).filter(PreferenceModel.profile_id == profile_id).first()
+    if not pref:
+        pref = PreferenceModel(
+            profile_id=profile_id,
+            stats='{"instruments":{},"tempo_samples":{},"duration_samples":{},"style_tags":{}}',
+            user_overrides=None
+        )
+        db.add(pref)
+    
+    # 加载现有 user_overrides
+    import json
+    current = json.loads(pref.user_overrides) if pref.user_overrides else {}
+    
+    # 合并新值
+    current["use_ai_preferences"] = request.use_ai_preferences
+    if request.instrument is not None:
+        current["instrument"] = request.instrument if request.instrument else None
+    if request.tempo is not None:
+        current["tempo"] = request.tempo
+    if request.duration is not None:
+        current["duration"] = request.duration
+    if request.style_tags is not None:
+        current["style_tags"] = request.style_tags if request.style_tags else []
+    
+    pref.user_overrides = json.dumps(current, ensure_ascii=False)
+    pref.updated_at = datetime.utcnow()
+    db.commit()
+    
+    return {
+        "code": 200,
+        "data": None,
+        "message": "用户偏好已保存"
+    }
+
+
+@router.delete("/{profile_id}/preferences")
+async def reset_profile_preferences(
+    profile_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    恢复 AI 推荐偏好（清除用户覆盖）
+    """
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise ProfileNotFoundException(profile_id)
+    
+    pref = db.query(PreferenceModel).filter(PreferenceModel.profile_id == profile_id).first()
+    if pref:
+        pref.user_overrides = None
+        pref.updated_at = datetime.utcnow()
+        db.commit()
+    
+    return {
+        "code": 200,
+        "data": None,
+        "message": "已恢复 AI 推荐偏好，用户覆盖已清除"
+    }

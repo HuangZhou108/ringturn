@@ -154,6 +154,33 @@ class LLMService:
                 "special_requirements": user_request,
             }
 
+    async def extract_style_and_mood(self, user_request: str) -> dict:
+        """
+        仅提取用户请求中的音乐风格和情感。
+        返回格式：{"style": str | None, "mood": str | None}
+        """
+        system_prompt = """你是一个音乐分析助手。从用户请求中提取音乐风格和情感。
+    如果用户没有明确提及风格或情感，则对应字段返回 null。
+    只输出 JSON，格式：{"style": "风格描述或null", "mood": "情感描述或null"}
+    不要输出任何其他内容。"""
+
+        user_prompt = f"用户请求：{user_request}"
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+        try:
+            response = await self.chat(messages, temperature=0.2, max_tokens=150)
+            import json
+            result = json.loads(response)
+            return {
+                "style": result.get("style") if result.get("style") not in (None, "", "null") else None,
+                "mood": result.get("mood") if result.get("mood") not in (None, "", "null") else None,
+            }
+        except Exception as e:
+            print(f"[LLM] extract_style_and_mood failed: {e}")
+            return {"style": None, "mood": None}
+
     async def generate_plan(self, user_request: str, analysis_result: dict = None) -> list[str]:
         """
         生成执行计划

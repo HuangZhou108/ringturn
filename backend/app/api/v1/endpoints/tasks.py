@@ -120,11 +120,14 @@ async def create_task(
 
         # 从 params 中提取已知参数，未提供则使用Profile偏好，最后使用默认值
         params = request.params or {}
-        
+        # 获取有效偏好
+        from app.services.preference_service import get_effective_preference
+        profile_preferences = get_effective_preference(profile_id, db) if profile_id else {}
+
         # 优先级：用户请求 > Profile偏好 > 默认值
-        instrument = params.get("instrument", profile_preferences.get("default_instrument", "Acoustic Piano"))
-        duration = params.get("duration", profile_preferences.get("default_duration", 30))
-        tempo = params.get("tempo", profile_preferences.get("default_tempo", 120))
+        instrument = params.get("instrument", profile_preferences.get("instrument", "Acoustic Piano"))
+        duration = params.get("duration", profile_preferences.get("duration", 30))
+        tempo = params.get("tempo", profile_preferences.get("tempo", 120))
         filename = params.get("filename", "Untitled_Track")
         
         # 如果auto_apply开启，可以记录偏好到Profile（可选）
@@ -408,7 +411,18 @@ async def run_agent_task(task_id: str):
         async_task = asyncio.create_task(agent_executor.execute())
         _background_tasks.add(async_task)
         try:
-            await async_task
+            result = await async_task
+            # 任务执行完成后，如果是成功，则更新偏好统计
+            if result and result.get("success"):
+                from app.services.preference_service import update_profile_preference_stats
+                # 注意：需要获取 profile_id，可以从 task 中读取
+                # 由于 agent_executor 已经关闭，需要重新查询 task
+                with SessionLocal() as db2:
+                    task2 = db2.query(TaskModel).filter(TaskModel.id == task_id).first()
+                    if task2 and task2.profile_id:
+                        # 异步执行，不阻塞（使用 background_tasks 或创建新任务）
+                        if result and result.get("success"):
+                            asyncio.create_task(update_profile_preference_stats(task.profile_id, task_id))
         except Exception as e:
             print(f"[ERROR] Agent task {task_id} failed: {e}")
         finally:

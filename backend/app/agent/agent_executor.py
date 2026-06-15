@@ -35,6 +35,7 @@ class AgentExecutor:
         self.conversation_id = conversation_id
         self._active_task: Optional[AsyncioTask] = None
         self._cancel_event = asyncio.Event()   # 用于通知内部协程取消
+        self._subprocesses = []   # 保存子进程对象
 
         # 获取任务
         self.task = self.db.query(TaskModel).filter(TaskModel.id == task_id).first()
@@ -328,9 +329,27 @@ class AgentExecutor:
     def __del__(self):
         if hasattr(self, 'db') and self.db:
             self.db.close()
+    
+    async def _run_subprocess(self, cmd):
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.PIPE, stderr=asyncio.PIPE
+        )
+        self._subprocesses.append(proc)
+        try:
+            await proc.communicate()
+        finally:
+            if proc in self._subprocesses:
+                self._subprocesses.remove(proc)
 
     async def cancel(self):
         """取消正在执行的任务"""
+        # 终止所有子进程
+        for proc in self._subprocesses:
+            try:
+                proc.terminate()
+                await proc.wait()
+            except:
+                pass
         self._cancel_event.set()
         if self.assistant_message:
             self.assistant_message.content = "任务已取消"

@@ -227,6 +227,35 @@ export interface ProfilePreferences {
     [key: string]: any
 }
 
+export interface PreferenceAIRecommendation {
+    instrument: string | null;
+    tempo: number | null;
+    duration: number | null;
+    style_tags: string[];
+}
+
+export interface PreferenceUserOverrides {
+    use_ai_preferences: boolean;
+    instrument: string | null;
+    tempo: number | null;
+    duration: number | null;
+    style_tags: string[];
+}
+
+export interface PreferenceResponse {
+    ai_recommendation: PreferenceAIRecommendation;
+    user_overrides: PreferenceUserOverrides;
+    effective: PreferenceAIRecommendation;
+}
+
+export interface PreferenceUpdateRequest {
+    use_ai_preferences?: boolean;
+    instrument?: string | null;
+    tempo?: number | null;
+    duration?: number | null;
+    style_tags?: string[] | null;
+}
+
 export interface GraphConfig {
     version?: number;
     name?: string;
