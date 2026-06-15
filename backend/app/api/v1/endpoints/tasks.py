@@ -416,3 +416,9 @@ async def run_agent_task(task_id: str):
             agent_executor.close()  # 显式关闭内部会话（如果 db 是外部传入，则不会重复关闭）
             if task_id in _running_tasks:
                 del _running_tasks[task_id]
+            import gc
+            gc.collect()
+            # 额外：强制释放 Python 的内存 arena 给操作系统（需要 ctypes）
+            import ctypes
+            libc = ctypes.CDLL("msvcrt.dll")  # Windows
+            libc._heapmin()

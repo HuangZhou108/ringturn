@@ -62,6 +62,7 @@ function ChatFlow() {
     const [uploadProgress, setUploadProgress] = useState<number>(0)
     const [isUploading, setIsUploading] = useState(false)
     const [uploadedFileName, setUploadedFileName] = useState<string | null>(null)
+    const [audioDuration, setAudioDuration] = useState<number | undefined>(undefined); // 上传的音频长度
 
     // 调试日志 - 每次渲染时打印完整状态
     console.log('[ChatFlow] === RENDER === audioFileId:', audioFileId, '| uploadSuccess:', uploadSuccess, '| isUploading:', isUploading, '| location.state:', JSON.stringify(location.state))
@@ -692,6 +693,9 @@ function ChatFlow() {
                     }`
                 )
                 setUploadError(null)
+                if (res.data.duration) {
+                    setAudioDuration(res.data.duration);
+                }
             } else {
                 setUploadError(res.message || '文件上传失败')
                 setUploadSuccess(null)
@@ -950,6 +954,7 @@ function ChatFlow() {
                         setInstrument={setInstrument}
                         tempo={tempo}
                         setTempo={setTempo}
+                        audioDuration={audioDuration}
                         duration={duration}
                         setDuration={setDuration}
                         filename={filename}

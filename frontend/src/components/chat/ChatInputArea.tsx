@@ -14,6 +14,7 @@ interface ChatInputAreaProps {
     setInstrument: (val: string) => void;
     tempo: string;
     setTempo: (val: string) => void;
+    audioDuration?: number;
     duration: string;
     setDuration: (val: string) => void;
     filename: string;
@@ -47,6 +48,7 @@ export default function ChatInputArea({
                                           setInstrument,
                                           tempo,
                                           setTempo,
+                                          audioDuration,
                                           duration,
                                           setDuration,
                                           filename,
@@ -108,6 +110,7 @@ export default function ChatInputArea({
                         setInstrument={setInstrument}
                         tempo={tempo}
                         setTempo={setTempo}
+                        audioDuration={audioDuration}
                         duration={duration}
                         setDuration={setDuration}
                         filename={filename}
@@ -241,6 +244,7 @@ export default function ChatInputArea({
                         setInstrument={setInstrument}
                         tempo={tempo}
                         setTempo={setTempo}
+                        audioDuration={audioDuration}
                         duration={duration}
                         setDuration={setDuration}
                         filename={filename}
