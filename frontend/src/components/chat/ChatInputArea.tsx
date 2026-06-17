@@ -193,7 +193,7 @@ export default function ChatInputArea({
                                     </svg>
                                 </button>
                                 {/* 自定义 Tooltip – 瞬间显示 */}
-                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 text-xs text-white bg-gray-800 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 text-xs text-white bg-gray-800 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none z-50">
                                     {isUploading
                                         ? `正在上传... ${uploadProgress}%`
                                         : uploadSuccess || uploadError || '上传音频文件'}
@@ -337,7 +337,7 @@ export default function ChatInputArea({
                             </svg>
                         </button>
                         {/* 自定义 Tooltip – 瞬间显示 */}
-                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 text-xs text-white bg-gray-800 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 text-xs text-white bg-gray-800 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none z-50">
                             {isUploading
                                 ? `正在上传... ${uploadProgress}%`
                                 : uploadSuccess || uploadError || '上传音频文件'}

@@ -240,6 +240,18 @@ function ChatFlow() {
         setIsEditingTitle(false);
     };
 
+    // 检测到宽度过小时自动关闭侧边栏
+    useEffect(() => {
+        const handleResize = () => {
+            if (window.innerWidth < 1024) {
+                setSidebarOpen(false);
+            }
+        };
+        window.addEventListener('resize', handleResize);
+        handleResize(); // 初始化时检查一次
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
     // 新建空会话
     const handleNewConversation = useCallback(() => {
         // 清除 URL 中的会话 ID，回到干净的新建会话页面
