@@ -1,5 +1,5 @@
 // src/components/chat/MessageList.tsx
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { Message } from '../../types';
 import { api } from '../../api';
 
@@ -81,19 +81,15 @@ function ThinkingProcess({ entries, t }: { entries: ThinkingEntry[]; t: (key: st
     // 获取状态对应的样式
     const statusColor = (status?: string): string => {
         switch (status) {
-            case 'success':
-                return 'text-green-800 bg-green-100';
-            case 'failed':
-                return 'text-red-800 bg-red-100';
-            case 'pending':
-                return 'text-yellow-800 bg-yellow-100';
-            default:
-                return 'text-gray-700 bg-gray-50';
+            case 'success': return 'text-green-800 bg-green-50';
+            case 'failed': return 'text-red-800 bg-red-50';
+            case 'pending': return 'text-yellow-800 bg-yellow-50';
+            default: return 'text-gray-700 bg-gray-50';
         }
     };
 
     return (
-        <div className="bg-white rounded-xl border border-gray-200 p-3 -mx-2">
+        <div className="bg-white rounded-xl border border-gray-200 p-4 -mx-3">
             {/* 头部：可点击折叠/展开 */}
             <div
                 className="flex items-center justify-between cursor-pointer select-none"
@@ -150,31 +146,25 @@ function ThinkingProcess({ entries, t }: { entries: ThinkingEntry[]; t: (key: st
 
                                         {/* 展开的工具列表 */}
                                         {isToolGroupExpanded && (
-                                            <ul className="mt-1 ml-2 space-y-0.5 list-disc list-inside">
+                                            <div className="mt-1 ml-2 space-y-[1.3px]">
                                                 {toolEntries.map((entry, idx) => {
                                                     const isCall = entry.type === 'tool_call';
                                                     const statusClass = statusColor(entry.status);
-                                                    // 展示内容：对于 tool_call，只显示工具名；对于 tool_result，显示结果摘要
                                                     let displayContent = entry.content;
                                                     if (isCall) {
                                                         const name = extractToolName(entry.content);
                                                         displayContent = `调用工具： ${name}`;
                                                     } else {
-                                                        // 结果可能很长，截断
-                                                        displayContent = entry.content.length > 100
-                                                            ? entry.content.slice(0, 100) + '...'
-                                                            : entry.content;
+                                                        displayContent = entry.content.length > 100 ? entry.content.slice(0, 100) + '...' : entry.content;
                                                     }
                                                     return (
-                                                        <li
-                                                            key={idx}
-                                                            className={`text-xs px-2 py-0.5 rounded ${statusClass}`}
-                                                        >
-                                                            {displayContent}
-                                                        </li>
+                                                        <div key={idx} className={`flex items-start gap-2 text-xs px-1.5 py-0.5 rounded ${statusClass}`}>
+                                                            <span className="mt-0.5 flex-shrink-0 w-1.5 h-1.5 rounded-full bg-current" />
+                                                            <span>{displayContent}</span>
+                                                        </div>
                                                     );
                                                 })}
-                                            </ul>
+                                            </div>
                                         )}
                                     </div>
                                 )}
@@ -183,6 +173,69 @@ function ThinkingProcess({ entries, t }: { entries: ThinkingEntry[]; t: (key: st
                     })}
                 </div>
             )}
+        </div>
+    );
+}
+
+// ---------- 用户消息子组件 ----------
+function UserMessage({ msg, t }: { msg: Message; t: (key: string) => string }) {
+    const [isAttachmentWider, setIsAttachmentWider] = useState<boolean | null>(null);
+    const attachmentRef = useRef<HTMLDivElement>(null);
+    const bubbleRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const attachment = attachmentRef.current;
+        const bubble = bubbleRef.current;
+        if (!attachment || !bubble) return;
+
+        const ro = new ResizeObserver(() => {
+            const attachmentWidth = attachment.offsetWidth;
+            const bubbleWidth = bubble.offsetWidth;
+            setIsAttachmentWider(bubbleWidth < attachmentWidth);
+        });
+
+        ro.observe(attachment);
+        ro.observe(bubble);
+
+        // 初始测量
+        const attachmentWidth = attachment.offsetWidth;
+        const bubbleWidth = bubble.offsetWidth;
+        setIsAttachmentWider(bubbleWidth < attachmentWidth);
+
+        return () => ro.disconnect();
+    }, [msg.content]);
+
+    return (
+        <div className="flex justify-end">
+            <div className="max-w-[555px] flex flex-col items-end gap-1">
+                {msg.userFile && (
+                    <div
+                        ref={attachmentRef}
+                        className={`flex items-center gap-4 bg-white border border-[#afb3b3]/60 px-4 py-[13px] w-44 ml-auto 
+                            rounded-t-[15px] rounded-br-[10px] 
+                            ${isAttachmentWider === null ? 'rounded-bl-[2px]' : isAttachmentWider ? 'rounded-bl-[15px]' : 'rounded-bl-[2px]'}`}
+                    >
+                        <div className="w-[29px] h-[31px] bg-[#e0f2fe] rounded-lg flex items-center justify-center flex-shrink-0">
+                            <svg width="17" height="21" viewBox="0 0 17 21" fill="none">
+                                <path d="M0 21V0H17L3.09 7H0V21ZM2 7L10.2 4.65V9.35L2 7Z" fill="#0284c7" />
+                            </svg>
+                        </div>
+                        <span className="text-xs font-semibold text-[#2f3334] truncate flex-1">
+                            {truncateFilename(msg.userFile, 20)}
+                        </span>
+                    </div>
+                )}
+                {msg.content && (
+                    <div
+                        ref={bubbleRef}
+                        className="bg-[#cfe6f0] rounded-2xl rounded-tr-none shadow-[0px_1px_2px_0px_#0000000D] px-6 py-[14.88px] w-fit max-w-[508.8px]"
+                    >
+                        <p className="text-sm text-[#40555d] leading-relaxed">
+                            {msg.content}
+                        </p>
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
@@ -252,34 +305,7 @@ export default function MessageList({ messages, t }: MessageListProps) {
                     )}
 
                     {msg.type === 'user' && (
-                        <div className="flex justify-end">
-                            <div className="max-w-[555px] flex flex-col items-end gap-1">
-                                {/* 用户文件附件 */}
-                                {msg.userFile && (
-                                    <div className="flex items-center gap-4 bg-white border border-[#afb3b3]/60 rounded-t-[15px] rounded-bl-[2px] rounded-br-[10px] px-4 py-[13px] w-44 ml-auto">
-                                        <div className="w-[29px] h-[31px] bg-[#e0f2fe] rounded-lg flex items-center justify-center flex-shrink-0">
-                                            <svg width="17" height="21" viewBox="0 0 17 21" fill="none">
-                                                <path
-                                                    d="M0 21V0H17L3.09 7H0V21ZM2 7L10.2 4.65V9.35L2 7Z"
-                                                    fill="#0284c7"
-                                                />
-                                            </svg>
-                                        </div>
-                                        <span className="text-xs font-semibold text-[#2f3334] truncate flex-1">
-                                            {truncateFilename(msg.userFile, 20)}
-                                        </span>
-                                    </div>
-                                )}
-                                {/* 用户消息气泡 */}
-                                {msg.content && (
-                                    <div className="bg-[#cfe6f0] rounded-2xl rounded-tr-none shadow-[0px_1px_2px_0px_#0000000D] px-6 py-[14.88px] w-fit max-w-[508.8px]">
-                                        <p className="text-sm text-[#40555d] leading-relaxed">
-                                            {msg.content}
-                                        </p>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
+                        <UserMessage msg={msg} t={t} />
                     )}
                 </div>
             ))}

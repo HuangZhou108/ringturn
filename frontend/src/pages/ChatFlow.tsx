@@ -91,6 +91,9 @@ function ChatFlow() {
     const [refreshSidebar, setRefreshSidebar] = useState(0); // 刷新侧边栏
     // 使用 ref 保存路由状态，避免重新渲染时丢失
     const locationStateRef = useRef(location.state as any)
+    // 标题编辑状态
+    const [isEditingTitle, setIsEditingTitle] = useState(false);
+    const [editingTitleValue, setEditingTitleValue] = useState('');
 
     // 反馈任务相关
     const [feedbackMode, setFeedbackMode] = useState(false);
@@ -170,6 +173,7 @@ function ChatFlow() {
             const res = await conversationApi.get(conversationId)
             if (res.code === 200) {
                 setCurrentConversation(res.data)
+                setIsEditingTitle(false);
 
                 // 将会话消息转换为UI消息
                 const uiMessages: Message[] = res.data.messages.map((msg) => ({
@@ -201,6 +205,40 @@ function ChatFlow() {
             showToast('加载会话失败')
         }
     }, [uploadedFileName])
+
+    // 双击标题进入编辑模式
+    const handleTitleDoubleClick = () => {
+        if (currentConversation) {
+            setIsEditingTitle(true);
+            setEditingTitleValue(currentConversation.title || '未命名会话');
+        }
+    };
+
+    // 保存标题
+    const handleTitleSave = async () => {
+        if (!currentConversation) return;
+        const newTitle = editingTitleValue.trim() || '未命名会话';
+        try {
+            const res = await conversationApi.updateTitle(currentConversation.conversation_id, newTitle);
+            if (res.code === 200) {
+                // 更新本地会话数据
+                setCurrentConversation(prev => prev ? { ...prev, title: newTitle } : prev);
+                // 刷新侧边栏会话列表
+                setRefreshSidebar(prev => prev + 1);
+                setIsEditingTitle(false);
+            } else {
+                showToast(res.message || '更新标题失败');
+            }
+        } catch (err) {
+            console.error('更新标题失败:', err);
+            showToast('更新标题失败');
+        }
+    };
+
+    // 取消编辑
+    const handleTitleCancel = () => {
+        setIsEditingTitle(false);
+    };
 
     // 新建空会话
     const handleNewConversation = useCallback(() => {
@@ -955,24 +993,42 @@ function ChatFlow() {
                             {/* 会话标题 */}
                             {currentConversation && (
                                 <div className="text-center mb-4">
-                                    <h2 className="text-lg font-medium text-gray-700">
-                                        {currentConversation.title || '未命名会话'}
-                                    </h2>
-                                    <div className="flex items-center justify-center gap-2 mt-1">
-                                        <span
-                                            className={`px-2 py-0.5 text-xs rounded ${
-                                                currentConversation.status === 'active'
-                                                    ? 'bg-green-100 text-green-600'
-                                                    : 'bg-gray-100 text-gray-500'
-                                            }`}
+                                    {isEditingTitle ? (
+                                        <div className="flex items-center justify-center gap-2">
+                                            <input
+                                                type="text"
+                                                value={editingTitleValue}
+                                                onChange={(e) => setEditingTitleValue(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') handleTitleSave();
+                                                    else if (e.key === 'Escape') handleTitleCancel();
+                                                }}
+                                                onBlur={handleTitleSave}
+                                                className="text-lg font-medium text-gray-700 border-b-2 border-[#00639d] focus:outline-none px-2 py-1 text-center min-w-[200px]"
+                                                autoFocus
+                                            />
+                                        </div>
+                                    ) : (
+                                        <h2
+                                            className="text-lg font-medium text-gray-700 cursor-pointer hover:text-[#00639d] transition-colors"
+                                            onDoubleClick={handleTitleDoubleClick}
+                                            title="双击编辑标题"
                                         >
-                                            {currentConversation.status === 'active'
-                                                ? '进行中'
-                                                : '已完成'}
-                                        </span>
+                                            {currentConversation.title || '未命名会话'}
+                                        </h2>
+                                    )}
+                                    <div className="flex items-center justify-center gap-2 mt-1">
+                                        {/* 状态标签等保持不变 */}
+                                        <span className={`px-2 py-0.5 text-xs rounded ${
+                                            currentConversation.status === 'active'
+                                                ? 'bg-green-100 text-green-600'
+                                                : 'bg-gray-100 text-gray-500'
+                                        }`}>
+                {currentConversation.status === 'active' ? '进行中' : '已完成'}
+            </span>
                                         <span className="text-xs text-gray-400">
-                                            {currentConversation.messages.length} 条消息
-                                        </span>
+                {currentConversation.messages.length} 条消息
+            </span>
                                     </div>
                                 </div>
                             )}

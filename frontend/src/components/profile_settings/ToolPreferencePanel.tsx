@@ -8,7 +8,9 @@ interface ToolPreferencePanelProps {
     t: (key: string) => string;
 }
 
-const GRAPHS = ['analysis', 'extract', 'arrange', 'render', 'reflect', 'quality'];
+const GRAPHS = ['analysis', 'extract', 'arrange']
+// 后续按需开放
+// const GRAPHS = ['analysis', 'extract', 'arrange', 'render', 'reflect', 'quality'];
 
 export default function ToolPreferencePanel({ profileId, t }: ToolPreferencePanelProps) {
     const [selectedGraph, setSelectedGraph] = useState<string>(GRAPHS[0]);
