@@ -96,6 +96,7 @@ function ChatFlow() {
     const [feedbackMode, setFeedbackMode] = useState(false);
     const [availableParentTasks, setAvailableParentTasks] = useState<{ task_id: string; user_request: string }[]>([]);
     const [selectedParentTaskId, setSelectedParentTaskId] = useState<string | null>(null);
+    const [feedbackPanelOpen, setFeedbackPanelOpen] = useState(false);
     // 获取当前会话中已完成的任务列表（用于反馈选择）
     const loadCompletedTasks = useCallback(async () => {
         if (!currentConversationId) {
@@ -164,6 +165,7 @@ function ChatFlow() {
         // 重置反馈模式
         setFeedbackMode(false)
         setSelectedParentTaskId(null)
+        setFeedbackPanelOpen(false);
         try {
             const res = await conversationApi.get(conversationId)
             if (res.code === 200) {
@@ -227,6 +229,7 @@ function ChatFlow() {
         // 重置反馈模式
         setFeedbackMode(false)
         setSelectedParentTaskId(null)
+        setFeedbackPanelOpen(false);
         // 显式清空已完成任务列表，确保重做按钮消失
         setAvailableParentTasks([])
     }, [])
@@ -474,6 +477,7 @@ function ChatFlow() {
                     setInputValue('');
                     setFeedbackMode(false);
                     setSelectedParentTaskId(null);
+                    setFeedbackPanelOpen(false);
 
                     // 获取新创建的子任务 ID
                     const newTaskId = res.data.task_id;
@@ -1029,18 +1033,25 @@ function ChatFlow() {
                             {availableParentTasks.length > 0 && (
                                 <div className="flex-shrink-0 ml-4">
                                     <div className="relative flex items-center gap-2">
+                                        {/* 重做按钮 */}
                                         <button
                                             onClick={async () => {
-                                                if (!setFeedbackMode) return;
-                                                const newMode = !feedbackMode;
-                                                if (newMode && loadCompletedTasks) {
+                                                if (!feedbackMode) {
+                                                    // 进入反馈模式，打开面板
                                                     await loadCompletedTasks();
-                                                    setSelectedParentTaskId?.(null);
+                                                    setSelectedParentTaskId(null);
+                                                    setFeedbackMode(true);
+                                                    setFeedbackPanelOpen(true);
                                                 } else {
-                                                    setSelectedParentTaskId?.(null);
+                                                    // 已处于反馈模式，切换面板开关
+                                                    setFeedbackPanelOpen(!feedbackPanelOpen);
                                                 }
-                                                setFeedbackMode(newMode);
                                             }}
+                                            title={
+                                                selectedParentTaskId
+                                                    ? availableParentTasks.find(t => t.task_id === selectedParentTaskId)?.user_request || '已选择任务'
+                                                    : '重做'
+                                            }
                                             className={`px-4 py-2 rounded-md border transition-all duration-200 font-medium text-sm whitespace-nowrap ${
                                                 feedbackMode
                                                     ? 'bg-blue-100 border-blue-300 text-blue-800'
@@ -1050,24 +1061,32 @@ function ChatFlow() {
                                             重做
                                         </button>
 
-                                        {/* 反馈模式浮动面板 */}
+                                        {/* 取消按钮（仅在反馈模式显示） */}
                                         {feedbackMode && (
+                                            <button
+                                                onClick={() => {
+                                                    setFeedbackMode(false);
+                                                    setSelectedParentTaskId(null);
+                                                    setFeedbackPanelOpen(false);
+                                                }}
+                                                className="px-3 py-2 text-sm text-gray-500 hover:text-red-600 transition"
+                                            >
+                                                取消
+                                            </button>
+                                        )}
+
+                                        {/* 反馈模式浮动面板（仅当 feedbackMode 且面板打开时显示） */}
+                                        {feedbackMode && feedbackPanelOpen && (
                                             <div className="absolute bottom-full right-0 mb-2 z-20 bg-white rounded-lg shadow-lg border border-gray-200 p-3 min-w-[240px]">
                                                 <div className="flex items-center justify-between mb-2">
-                                                    <button
-                                                        onClick={() => {
-                                                            setFeedbackMode?.(false);
-                                                            setSelectedParentTaskId?.(null);
-                                                        }}
-                                                        className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 transition"
-                                                    >
-                                                        取消
-                                                    </button>
                                                     <span className="text-xs text-gray-400">选择要反馈的任务</span>
                                                 </div>
                                                 <select
                                                     value={selectedParentTaskId || ''}
-                                                    onChange={(e) => setSelectedParentTaskId?.(e.target.value || null)}
+                                                    onChange={(e) => {
+                                                        setSelectedParentTaskId(e.target.value || null);
+                                                        setFeedbackPanelOpen(false); // 选择后关闭面板
+                                                    }}
                                                     className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
                                                 >
                                                     <option value="">选择任务</option>
