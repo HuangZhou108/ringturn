@@ -133,7 +133,13 @@ export interface Message {
     userFile?: string;
     audioFileId?: string;
     taskId?: string;
-    thinkingProcess?: { step: string; content: string; timestamp: string }[];
+    thinkingProcess?: {
+        step: string;
+        content: string;
+        timestamp: string;
+        type?: 'info' | 'llm' | 'tool_call' | 'tool_result';
+        status?: 'success' | 'failed' | 'pending' | 'retry';
+    }[];
     showThinking?: boolean;
 }
 
