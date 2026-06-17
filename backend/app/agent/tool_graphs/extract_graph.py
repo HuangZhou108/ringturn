@@ -27,6 +27,7 @@ from app.agent.atomic_tools.melody.extract_with_librosa import extract_melody_li
 from app.agent.atomic_tools.melody.filter_short_notes import filter_short_notes
 from app.agent.atomic_tools.melody.quantize_notes import quantize_notes
 from app.agent.thinking_utils import record_thought
+from app.agent.utils import log_tool_call
 from app.agent.utils import clean_state
 from app.agent.node_registry import register_node, register_condition, NODE_REGISTRY, CONDITION_REGISTRY
 from app.db.session import SessionLocal
@@ -109,9 +110,21 @@ async def node_basic_pitch(state: AgentState) -> Dict[str, Any]:
         record_thought(task_id, "extract_melody", "双轨模式：分别提取人声和伴奏旋律")
 
         # 提取人声旋律
-        vocal_melody = await extract_melody_basic_pitch(vocals_path)
+        vocal_melody = await log_tool_call(
+            task_id=task_id,
+            step_name="extract_melody",
+            tool_func=extract_melody_basic_pitch,
+            audio_path=vocals_path,
+            tool_name="extract_melody_basic_pitch"
+        )
         # 提取伴奏旋律
-        accomp_melody = await extract_melody_basic_pitch(accompaniment_path)
+        accomp_melody = await log_tool_call(
+            task_id=task_id,
+            step_name="extract_melody",
+            tool_func=extract_melody_basic_pitch,
+            audio_path=accompaniment_path,
+            tool_name="extract_melody_basic_pitch"
+        )
 
         # 合并音符列表
         merged_notes = vocal_melody.get("melody_notes", []) + accomp_melody.get("melody_notes", [])
@@ -144,7 +157,13 @@ async def node_basic_pitch(state: AgentState) -> Dict[str, Any]:
         if not source:
             raise ValueError("未找到待提取旋律的音频源，且无可用降级路径")
         record_thought(task_id, "extract_melody", f"单轨模式：提取 {source} 的旋律")
-        melody_data = await extract_melody_basic_pitch(source)
+        melody_data = await log_tool_call(
+            task_id=task_id,
+            step_name="extract_melody",
+            tool_func=extract_melody_basic_pitch,
+            audio_path=source,
+            tool_name="extract_melody_basic_pitch"
+        )
         return {"melody_data": melody_data}
 
 
@@ -169,11 +188,23 @@ async def node_librosa_fallback(state: AgentState) -> Dict[str, Any]:
     if use_both:
         vocals_path = state.get("vocals_path")
         record_thought(task_id, "extract_melody", "Basic Pitch 双轨失败，降级为仅使用 librosa 提取人声旋律")
-        melody_data = await extract_melody_librosa(vocals_path)
+        melody_data = await log_tool_call(
+            task_id=task_id,
+            step_name="extract_melody",
+            tool_func=extract_melody_librosa,
+            audio_path=vocals_path,
+            tool_name="extract_melody_librosa"
+        )
     else:
         source = state.get("source_for_melody") or state.get("audio_path")
         record_thought(task_id, "extract_melody", "Basic Pitch 失败，降级使用 librosa 提取旋律")
-        melody_data = await extract_melody_librosa(source)
+        melody_data = await log_tool_call(
+            task_id=task_id,
+            step_name="extract_melody",
+            tool_func=extract_melody_librosa,
+            audio_path=source,
+            tool_name="extract_melody_librosa"
+        )
     return {"melody_data": melody_data}
 
 
@@ -185,10 +216,15 @@ async def node_filter_short_notes(state: AgentState) -> Dict[str, Any]:
         return {"melody_data": melody_data}
 
     notes = melody_data["melody_notes"]
-    filtered = await filter_short_notes(notes, min_duration=0.05)
+    filtered = await log_tool_call(
+        task_id=state.get("task_id"),
+        step_name="extract_melody",
+        tool_func=filter_short_notes,
+        melody_notes=notes,
+        min_duration=0.05,
+        tool_name="filter_short_notes"
+    )
     melody_data["melody_notes"] = filtered
-    task_id = state.get("task_id")
-    record_thought(task_id, "extract_melody", f"过滤短音符后剩余: {len(filtered)}")
     return {"melody_data": melody_data}
 
 
@@ -204,10 +240,16 @@ async def node_quantize_notes(state: AgentState) -> Dict[str, Any]:
     bpm = analysis.get("tempo_beats", {}).get("bpm") or 120
     # 网格大小：16分音符 = 0.25 拍
     grid = 0.25
-    quantized_notes = await quantize_notes(melody_data["melody_notes"], grid=grid, bpm=bpm)
+    quantized_notes = await log_tool_call(
+        task_id=state.get("task_id"),
+        step_name="extract_melody",
+        tool_func=quantize_notes,
+        melody_notes=melody_data["melody_notes"],
+        grid=grid,
+        bpm=bpm,
+        tool_name="quantize_notes"
+    )
     melody_data["melody_notes"] = quantized_notes
-    task_id = state.get("task_id")
-    record_thought(task_id, "extract_melody", f"量化完成，网格 {grid} 拍，BPM={bpm}")
     return {"melody_data": melody_data}
 
 

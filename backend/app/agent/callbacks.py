@@ -75,29 +75,19 @@ class ThinkingCallbackHandler(AsyncCallbackHandler):
                         record_thought(
                             self.task_id,
                             self.step_name,
-                            f"[LLM思考] {text[:500]}"
+                            f"[LLM思考] {text[:500]}",
+                            type="llm",
+                            status="success"
                         )
 
     async def on_tool_start(self, serialized: dict, input_str: str, **kwargs: Any) -> None:
         record_thought(
             self.task_id,
             self.step_name,
-            f"调用工具: {serialized.get('name')} 参数: {input_str[:200]}"
+            f"调用工具: {serialized.get('name')} 参数: {input_str[:200]}",
+            type="tool_call",
+            status="pending"
         )
-
-    # async def on_tool_end(self, output: Any, **kwargs: Any) -> None:
-    #     # 处理不同类型的输出
-    #     if isinstance(output, ToolMessage):
-    #         content = output.content
-    #     elif isinstance(output, str):
-    #         content = output
-    #     else:
-    #         content = str(output)
-    #     record_thought(
-    #         self.task_id,
-    #         self.step_name,
-    #         f"工具返回: {content[:200]}"
-    #     )
 
     async def on_tool_end(self, output: Any, **kwargs: Any) -> None:
         content = output.content if isinstance(output, ToolMessage) else (
@@ -106,5 +96,25 @@ class ThinkingCallbackHandler(AsyncCallbackHandler):
         record_thought(
             self.task_id,
             self.step_name,
-            f"工具返回: {content[:200]}"
+            f"工具返回: {content[:200]}",
+            type="tool_result",
+            status="success"
+        )
+
+    async def on_tool_error(
+        self,
+        error: BaseException,
+        *,
+        run_id: UUID,
+        parent_run_id: Optional[UUID] = None,
+        tags: Optional[list[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """工具执行错误回调"""
+        record_thought(
+            self.task_id,
+            self.step_name,
+            f"工具执行失败: {str(error)[:200]}",
+            type="tool_result",
+            status="failed"
         )

@@ -2,6 +2,7 @@ from app.agent.node_registry import register_node
 from app.agent.state import AgentState
 from app.agent.atomic_tools.analysis import separate_sources_demucs
 from app.agent.thinking_utils import record_thought
+from app.agent.utils import log_tool_call
 
 @register_node("separate_demucs")
 async def node_separate_demucs(state: AgentState) -> dict:
@@ -11,10 +12,14 @@ async def node_separate_demucs(state: AgentState) -> dict:
     if not stems:
         return {"demucs_separated": False}
     try:
-        result = await separate_sources_demucs(
+        result = await log_tool_call(
+            task_id=task_id,
+            step_name="analysis",
+            tool_func=separate_sources_demucs,
             audio_path=audio_path,
             stems=stems,
-            model="htdemucs_ft"
+            model="htdemucs_ft",
+            tool_name="separate_sources_demucs"
         )
         vocals_path = result.get("vocals_path")
         other_path = result.get("other_path")

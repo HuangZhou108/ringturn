@@ -4,6 +4,7 @@ from app.agent.state import AgentState
 from app.core.config import get_settings
 from app.agent.atomic_tools.midi.create_from_notes import create_midi_from_notes
 from app.agent.utils import clean_state
+from app.agent.utils import log_tool_call
 import mido
 import shutil
 settings = get_settings()
@@ -32,10 +33,14 @@ async def generate_midi_node(state: AgentState) -> dict:
         shutil.copy(existing_midi, output_path)
     else:
         # 降级：重新生成
-        await create_midi_from_notes(
+        await log_tool_call(
+            task_id=task_id,
+            step_name="generate_midi",
+            tool_func=create_midi_from_notes,
             notes=melody_data.get("melody_notes", []),
             bpm=analysis_result.get("bpm", 120),
-            output_path=output_path
+            output_path=output_path,
+            tool_name="create_midi_from_notes"
         )
     
     # 验证文件是否生成成功

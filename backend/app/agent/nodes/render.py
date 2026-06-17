@@ -7,6 +7,7 @@ from app.agent.atomic_tools.rendering.fluidsynth_render import render_midi_with_
 from app.agent.atomic_tools.rendering.convert_to_mp3 import convert_wav_to_mp3
 from app.agent.atomic_tools.rendering.smart_clip import smart_clip_audio
 from app.agent.thinking_utils import record_thought
+from app.agent.utils import log_tool_call
 from app.agent.utils import clean_state
 
 settings = get_settings()
@@ -86,12 +87,16 @@ async def render_node(state: AgentState) -> dict:
     # ---- 步骤1: MIDI → WAV ----
     record_thought(task_id, "render", "开始渲染 MIDI 到 WAV...")
     try:
-        await render_midi_with_fluidsynth(
+        await log_tool_call(
+            task_id=task_id,
+            step_name="render",
+            tool_func=render_midi_with_fluidsynth,
             midi_path=midi_path,
             soundfont_path=soundfont,
             output_wav_path=wav_path,
             sample_rate=44100,
-            duration_limit=None,   # 渲染完整时长，后续由 smart_clip 截断
+            duration_limit=None,
+            tool_name="render_midi_with_fluidsynth"
         )
     except Exception as e:
         record_thought(task_id, "render", f"FluidSynth 渲染失败: {e}")
@@ -103,7 +108,14 @@ async def render_node(state: AgentState) -> dict:
     # ---- 步骤2: WAV → MP3 ----
     record_thought(task_id, "render", "开始转换 WAV 到 MP3...")
     try:
-        await convert_wav_to_mp3(wav_path, mp3_path)
+        await log_tool_call(
+            task_id=task_id,
+            step_name="render",
+            tool_func=convert_wav_to_mp3,
+            wav_path=wav_path,
+            mp3_path=mp3_path,
+            tool_name="convert_wav_to_mp3"
+        )
     except Exception as e:
         record_thought(task_id, "render", f"WAV→MP3 转换失败: {e}")
         raise RuntimeError(f"MP3 转换出错: {e}")
@@ -114,11 +126,15 @@ async def render_node(state: AgentState) -> dict:
     # ---- 步骤3: 智能截取到目标时长 ----
     record_thought(task_id, "render", f"开始截取音频到 {target_duration} 秒...")
     try:
-        clipped_path, actual_duration = await smart_clip_audio(
+        clipped_path, actual_duration = await log_tool_call(
+            task_id=task_id,
+            step_name="render",
+            tool_func=smart_clip_audio,
             audio_path=mp3_path,
             target_duration=target_duration,
             mode="auto",
-            output_path=mp3_path,   # 直接覆盖
+            output_path=mp3_path,
+            tool_name="smart_clip_audio"
         )
     except Exception as e:
         record_thought(task_id, "render", f"截取失败: {e}")

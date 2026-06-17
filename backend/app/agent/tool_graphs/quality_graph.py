@@ -14,6 +14,7 @@ from langgraph.graph import StateGraph, END
 from app.agent.state import AgentState
 from app.agent.atomic_tools.quality.overall_quality import evaluate_overall_quality
 from app.agent.thinking_utils import record_thought
+from app.agent.utils import log_tool_call
 from app.agent.utils import clean_state
 
 
@@ -31,7 +32,13 @@ async def node_evaluate_quality(state: AgentState) -> Dict[str, Any]:
 
     record_thought(task_id, "check_quality", f"开始评估音频质量: {audio_path}")
     try:
-        quality = await evaluate_overall_quality(audio_path)
+        quality = await log_tool_call(
+            task_id=task_id,
+            step_name="check_quality",
+            tool_func=evaluate_overall_quality,
+            audio_path=audio_path,
+            tool_name="evaluate_overall_quality"
+        )
         record_thought(task_id, "check_quality", f"评估完成，总体得分: {quality.get('overall_score', 0)}，通过: {quality.get('passed', False)}")
     except Exception as e:
         record_thought(task_id, "check_quality", f"评估工具调用失败: {e}，使用默认质量结果")

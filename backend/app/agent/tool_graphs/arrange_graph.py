@@ -15,6 +15,7 @@ from app.agent.state import AgentState
 from app.agent.atomic_tools.arrangement.change_instrument import change_instrument
 from app.agent.atomic_tools.arrangement.change_tempo import change_tempo
 from app.agent.thinking_utils import record_thought
+from app.agent.utils import log_tool_call
 from app.agent.utils import clean_state
 from app.agent.node_registry import register_node, register_condition, NODE_REGISTRY, CONDITION_REGISTRY
 from app.core.config import get_settings
@@ -44,7 +45,15 @@ async def node_change_instrument(state: AgentState) -> Dict[str, Any]:
 
     record_thought(task_id, "arrange", f"更换乐器为 {target_instrument}，输入 MIDI: {midi_path}")
     try:
-        await change_instrument(midi_path, target_instrument, temp_path)
+        await log_tool_call(
+            task_id=task_id,
+            step_name="arrange",
+            tool_func=change_instrument,
+            midi_path=midi_path,
+            target_instrument=target_instrument,
+            output_path=temp_path,
+            tool_name="change_instrument"
+        )
         record_thought(task_id, "arrange", f"乐器更换完成，临时文件: {temp_path}")
     except Exception as e:
         record_thought(task_id, "arrange", f"change_instrument 失败: {e}")
@@ -71,7 +80,15 @@ async def node_change_tempo(state: AgentState) -> Dict[str, Any]:
         return {"arranged_midi_path": final_path}
 
     record_thought(task_id, "arrange", f"调整速度至 {new_bpm} BPM...")
-    await change_tempo(temp_path, new_bpm, final_path)
+    await log_tool_call(
+        task_id=task_id,
+        step_name="arrange",
+        tool_func=change_tempo,
+        midi_path=temp_path,
+        new_bpm=new_bpm,
+        output_path=final_path,
+        tool_name="change_tempo"
+    )
     record_thought(task_id, "arrange", f"速度调整完成，最终 MIDI: {final_path}")
 
     return {"arranged_midi_path": final_path}

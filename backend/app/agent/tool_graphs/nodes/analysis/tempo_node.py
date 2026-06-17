@@ -2,6 +2,7 @@ from app.agent.node_registry import register_node
 from app.agent.state import AgentState
 from app.agent.atomic_tools.analysis import detect_tempo_beats_tool
 from app.agent.thinking_utils import record_thought
+from app.agent.utils import log_tool_call
 
 @register_node("tempo")
 async def node_tempo(state: AgentState) -> dict:
@@ -12,9 +13,15 @@ async def node_tempo(state: AgentState) -> dict:
     if "analysis_result" not in state or state["analysis_result"] is None:
         state["analysis_result"] = {}
     try:
-        result = await detect_tempo_beats_tool.coroutine(audio_path=audio_path)
-        if task_id:
-            record_thought(task_id, "analysis", f"tempo_beats: {str(result)[:200]}")
+        result = await log_tool_call(
+            task_id=task_id,
+            step_name="analysis",
+            tool_func=detect_tempo_beats_tool.coroutine,
+            audio_path=audio_path,
+            tool_name="detect_tempo_beats"
+        )
+        # if task_id:
+        #     record_thought(task_id, "analysis", f"tempo_beats: {str(result)[:200]}")
     except Exception as e:
         if task_id:
             record_thought(task_id, "analysis", f"tempo_beats failed: {e}")
