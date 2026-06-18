@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { getToolPreference } from '../../api/profile';
 import GraphViewer from './GraphViewer';
+import { useTranslation } from 'react-i18next';
 
 interface ToolPreferencePanelProps {
     profileId: number;
@@ -13,6 +14,7 @@ const GRAPHS = ['analysis', 'extract', 'arrange']
 // const GRAPHS = ['analysis', 'extract', 'arrange', 'render', 'reflect', 'quality'];
 
 export default function ToolPreferencePanel({ profileId, t }: ToolPreferencePanelProps) {
+    const { t } = useTranslation();
     const [selectedGraph, setSelectedGraph] = useState<string>(GRAPHS[0]);
     const [graphConfig, setGraphConfig] = useState<any>(null);
     const [loading, setLoading] = useState(false);
