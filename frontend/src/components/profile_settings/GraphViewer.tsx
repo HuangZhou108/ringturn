@@ -16,6 +16,7 @@ import ReactFlow, {
 import dagre from 'dagre';
 import 'reactflow/dist/style.css';
 import { updateToolPreference, deleteToolPreference } from '../../api/profile';
+import { useTranslation } from 'react-i18next';
 
 interface GraphViewerProps {
     graphConfig: {
@@ -89,6 +90,7 @@ function getLayoutedElements(
 }
 
 export default function GraphViewer({ graphConfig, profileId, graphName, height = 400, onSaveSuccess, onResetDefault, isCustomConfig }: GraphViewerProps) {
+    const { t } = useTranslation();
     const [nodes, setNodes] = useNodesState([]);
     const [edges, setEdges] = useEdgesState([]);
     const [disabledNodes, setDisabledNodes] = useState<Set<string>>(new Set());
@@ -519,7 +521,7 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
                                 disabled={saving}
                                 className="px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-50"
                             >
-                                {saving ? '处理中...' : '恢复默认配置'}
+                                {saving ? t('preference.saving') : t('graph.resetDefault')}
                             </button>
                         </div>
                     )}

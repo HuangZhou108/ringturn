@@ -347,6 +347,10 @@ i18n
                         loadFailed: "Failed to load conversation",
                         updateTitleFailed: "Failed to update title",
                     },
+                    manual: {
+                        title: 'User Manual',
+                        content: 'Welcome to RingTurn for music adaptation. Currently, we recommend adapting pop songs with simple structures, using orchestral instruments such as violin and flute, with BPM between 80 and 120. For best results, we strongly suggest setting the generated audio length to 15–30 seconds.'
+                    },
                 },
             },
             zh: {
@@ -688,6 +692,10 @@ i18n
                     conversation: {
                         loadFailed: "加载会话失败",
                         updateTitleFailed: "更新标题失败",
+                    },
+                    manual: {
+                        title: '用户手册',
+                        content: '欢迎使用转铃进行音乐改编。现阶段，我们推荐改编结构较为简单的流行乐，乐器选用小提琴、长笛等管弦乐器，BPM 控制在 80–120 之间。强烈建议将生成音频的长度设置为 15–30 秒，以获得最佳效果。'
                     },
                 },
             },
