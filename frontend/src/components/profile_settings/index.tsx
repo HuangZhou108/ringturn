@@ -142,7 +142,7 @@ export default function ProfileSettings({ isOpen, onClose, onProfileChanged }: P
                             />
                         )}
                         {activeTab === 'tool_preference' && activeProfile && (
-                            <ToolPreferencePanel profileId={activeProfile.profile_id} t={t} />
+                            <ToolPreferencePanel profileId={activeProfile.profile_id} />
                         )}
                     </div>
                 </div>
