@@ -156,7 +156,7 @@ export default function SettingsModal({ isOpen, onClose, onProfileChanged }: Set
                         )}
 
                         {activeTab === 'tool_preference' && activeProfile && (
-                            <ToolPreferencePanel profileId={activeProfile.profile_id} />
+                            <ToolPreferencePanel profileId={activeProfile.profile_id} t={t} />
                         )}
                     </div>
                 </div>
