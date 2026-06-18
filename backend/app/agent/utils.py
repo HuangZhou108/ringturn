@@ -4,6 +4,8 @@ from typing import Any, Dict, Callable
 import re
 import json
 from .thinking_utils import record_thought
+import inspect
+import asyncio
 
 def convert_numpy_to_native(obj: Any) -> Any:
     """递归地将 numpy 类型转换为 Python 原生类型"""
@@ -70,7 +72,11 @@ async def log_tool_call(
         status="pending"
     )
     try:
-        result = await tool_func(*args, **kwargs)
+        # result = await tool_func(*args, **kwargs)
+        if inspect.iscoroutinefunction(tool_func):
+            result = await tool_func(*args, **kwargs)
+        else:
+            result = await asyncio.to_thread(tool_func, *args, **kwargs)
         record_thought(
             task_id,
             step_name,

@@ -204,9 +204,9 @@ class LLMService:
 - check_quality
 
 要求：
-1. 通常必须包含：fetch_source、extract_melody、generate_midi、arrange、render（这些是基本流程）。
+1. 通常包含：fetch_source、analyze_structure、extract_melody、generate_midi、arrange、render（这些是基本流程）。
 2. 如果用户明确说“不需要分析”、“跳过分析”、“无需解析”、“直接替换”或类似表述，则可以省略 analyze_structure。
-3. 如果用户要求“检查质量”、“评估音质”、“确保质量”，则包含 check_quality；否则通常省略。
+3. 如果用户要求“检查质量”、“评估音质”、“确保质量”、“保证质量”，则包含 check_quality；否则通常省略。
 4. 只返回 JSON 数组，例如：["fetch_source", "extract_melody", "generate_midi", "arrange", "render"]
    不要包含任何解释、参数或代码块标记。
 """

@@ -23,7 +23,7 @@ from app.core.config import get_settings
 settings = get_settings()
 
 
-async def separate_sources_demucs(
+def separate_sources_demucs(
     audio_path: str,
     output_dir: str | None = None,
     model: Literal["htdemucs", "htdemucs_ft", "htdemucs_6s"] = "htdemucs_6s",

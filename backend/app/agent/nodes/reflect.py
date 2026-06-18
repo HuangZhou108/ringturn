@@ -16,6 +16,15 @@ async def reflect_node(state: AgentState) -> dict:
 
     修改 state 中的 needs_revision 和 retry_count
     """
+    # 如果计划中没有质量检查节点，则跳过反思，输出任务完成信息
+    if "check_quality" not in state.get("plan", []):
+        record_thought(state["task_id"], "reflect", "任务执行完成（不进行质量检查）")
+        return {
+            "needs_revision": False,
+            "reflection": {"message": "任务执行完成，未进行质量检查", "adjustments": []},
+            "retry_count": 0,
+        }
+
     quality = state.get("step_results", {}).get("quality_check", {})
     user_request = state.get("user_request", "")
     retry_count = state.get("retry_count", 0)
