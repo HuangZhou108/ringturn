@@ -67,7 +67,7 @@ export default function TopBar({
                                     i18n.language === 'en' ? 'text-[#0284c7] font-medium' : 'text-gray-700'
                                 }`}
                             >
-                                English
+                                {t('language.en')}
                             </button>
                             <button
                                 onClick={() => { i18n.changeLanguage('zh'); setShowLang(false); }}
@@ -75,7 +75,7 @@ export default function TopBar({
                                     i18n.language === 'zh' ? 'text-[#0284c7] font-medium' : 'text-gray-700'
                                 }`}
                             >
-                                中文
+                                {t('language.zh')}
                             </button>
                         </div>
                     )}

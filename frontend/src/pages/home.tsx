@@ -110,11 +110,11 @@ function Home() {
                     setAudioDuration(res.data.duration);
                 }
             } else {
-                setUploadError(res.message || '文件上传失败');
+                setUploadError(res.message || t('toast.uploadFailed', { message: '' }));
             }
         } catch (err) {
             console.error('上传失败:', err);
-            setUploadError(`上传失败: ${err instanceof Error ? err.message : '未知错误'}`);
+            setUploadError(t('toast.uploadFailed', { message: err instanceof Error ? err.message : 'Unknown error' }));
         } finally {
             setIsUploading(false);
             setTimeout(() => setUploadProgress(0), 500);

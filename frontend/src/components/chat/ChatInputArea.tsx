@@ -171,7 +171,7 @@ export default function ChatInputArea({
                             <button
                                 onClick={() => setShowParams(!showParams)}
                                 className="w-11 h-11 bg-[#f0f9ff] rounded-2xl flex items-center justify-center shadow-[inset_0px_2px_4px_0px_#0000000D] hover:bg-[#e0f2fe] transition"
-                                title={t('chat.showParams') || '参数设置'}
+                                title={t('chat.showParams')}
                             >
                                 {OpenParaIcon}
                             </button>
@@ -195,8 +195,8 @@ export default function ChatInputArea({
                                 {/* 自定义 Tooltip – 瞬间显示 */}
                                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 text-xs text-white bg-gray-800 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none z-50">
                                     {isUploading
-                                        ? `正在上传... ${uploadProgress}%`
-                                        : uploadSuccess || uploadError || '上传音频文件'}
+                                        ? t('chat.uploadingTooltip', { progress: uploadProgress })
+                                        : uploadSuccess || uploadError || t('chat.uploadTooltip')}
                                 </div>
                             </div>
                         </div>
@@ -314,7 +314,7 @@ export default function ChatInputArea({
                         <button
                             onClick={() => {
                                 if (feedbackMode) {
-                                    alert('t(\'chat.uploadDisabled\')');
+                                    alert(t('chat.uploadDisabled'));
                                     return;
                                 }
                                 if (!fileInputRef.current) {
@@ -339,8 +339,8 @@ export default function ChatInputArea({
                         {/* 自定义 Tooltip – 瞬间显示 */}
                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 text-xs text-white bg-gray-800 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none z-50">
                             {isUploading
-                                ? `正在上传... ${uploadProgress}%`
-                                : uploadSuccess || uploadError || '上传音频文件'}
+                                ? t('chat.uploadingTooltip', { progress: uploadProgress })
+                                : uploadSuccess || uploadError || t('chat.uploadTooltip')}
                         </div>
                     </div>
 

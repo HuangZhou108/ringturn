@@ -253,11 +253,11 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
         try {
             await updateToolPreference(profileId, graphName, currentConfig);
             setHasUnsavedChanges(false);
-            alert('保存成功');
+            alert(t('graph.saveSuccess'));
             onSaveSuccess?.();
         } catch (err) {
             console.error('保存失败', err);
-            alert('保存失败');
+            alert(t('graph.saveFailed'));
             throw err;   // 抛出异常
         } finally {
             setSaving(false);
@@ -267,7 +267,7 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
     // 恢复默认配置
     const handleResetDefault = async () => {
         if (!profileId || !graphName) return;
-        if (!confirm('确定要恢复默认配置吗？自定义修改将丢失。')) return;
+        if (!confirm(t('graph.confirmReset'))) return;
         setSaving(true);
         try {
             await deleteToolPreference(profileId, graphName);
@@ -279,7 +279,7 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
             setEditMode(false);
         } catch (err) {
             console.error('恢复默认配置失败', err);
-            alert('恢复默认配置失败，请稍后重试');
+            alert(t('toolPreference.resetFailed'));
         } finally {
             setSaving(false);
         }
@@ -402,7 +402,7 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
     };
 
     if (!graphConfig || !graphConfig.nodes) {
-        return <div className="flex items-center justify-center h-[400px] text-gray-400">暂无图结构数据</div>;
+        return <div className="flex items-center justify-center h-[400px] text-gray-400">{t('graph.noData')}</div>;
     }
 
     // ---------- 常规视图（非全屏） ----------
@@ -420,7 +420,7 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
             >
                 {/* 左上角文字：双击放大编辑 */}
                 <div className="absolute top-2 left-2 z-10 text-xs text-gray-400 bg-white/80 px-2 py-1 rounded shadow pointer-events-none">
-                    双击放大编辑
+                    {t('graph.doubleClickZoom')}
                 </div>
 
                 <ReactFlow
@@ -449,7 +449,7 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
                 <button
                     onClick={() => setShowFullscreen(true)}
                     className="absolute top-2 right-2 z-10 p-1.5 bg-white rounded-full shadow-md hover:bg-gray-100 transition"
-                    title="放大查看"
+                    title={t('graph.zoomInTitle')}
                 >
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
@@ -487,7 +487,7 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
                                     if (hasUnsavedChanges) {
                                         // 如果配置无效，阻止保存并提示用户
                                         if (!isValid) {
-                                            alert('当前配置无效（存在不可达节点），无法保存。请点击恢复默认配置。');
+                                            alert(t('graph.invalidConfig'));
                                             return;
                                         }
                                         try {
@@ -505,10 +505,10 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
                             }}
                             className={`px-3 py-1 rounded ${editMode ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}
                         >
-                            {editMode ? '编辑模式(开)' : '编辑模式(关)'}
+                            {editMode ? t('graph.editModeOn') : t('graph.editModeOff')}
                         </button>
                         {!isValid && editMode && (
-                            <span className="text-red-600 text-sm"> 当前配置无效，无法保存，请点击恢复默认配置</span>
+                            <span className="text-red-600 text-sm"> {t('graph.invalidConfig')}</span>
                         )}
                     </div>
                     {/* 恢复默认配置按钮（仅当编辑模式开启且不是默认配置时显示） */}

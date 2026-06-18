@@ -157,7 +157,7 @@ export default function TrackParams({
                                 <button
                                     onClick={() => setInstrument('')}
                                     className="text-gray-400 hover:text-red-500 transition"
-                                    title="清除"
+                                    title={t('params.clearTitle')}
                                 >
                                     <ClearIcon />
                                 </button>

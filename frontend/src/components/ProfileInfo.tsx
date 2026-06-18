@@ -68,11 +68,11 @@ export default function ProfileInfo({ isOpen, onClose, onProfileChanged }: Profi
                 onProfileChanged?.();
                 setIsEditing(false);
             } else {
-                alert(res.message || '修改失败');
+                alert(res.message || t('common.saveFailed'));
             }
         } catch (err) {
             console.error('Update profile name failed:', err);
-            alert('修改失败，请稍后重试');
+            alert(t('common.saveFailed'));
         }
     };
 
@@ -86,11 +86,11 @@ export default function ProfileInfo({ isOpen, onClose, onProfileChanged }: Profi
                 onProfileChanged?.();
                 setShowProfileList(false);
             } else {
-                alert(res.message || '切换失败');
+                alert(res.message || t('profile.switchFailed'));
             }
         } catch (err) {
             console.error('Switch profile failed:', err);
-            alert('切换失败，请稍后重试');
+            alert(t('profile.switchFailed'));
         }
     };
 
@@ -111,7 +111,7 @@ export default function ProfileInfo({ isOpen, onClose, onProfileChanged }: Profi
                 // 可选：通知父组件
                 onProfileChanged?.();
             } else {
-                alert(res.message || '创建失败');
+                alert(res.message || t('common.saveFailed'));
             }
         } catch (err) {
             console.error('Create profile failed:', err);

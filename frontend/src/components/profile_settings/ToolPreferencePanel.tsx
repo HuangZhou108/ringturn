@@ -21,7 +21,7 @@ export default function ToolPreferencePanel({ profileId, t }: ToolPreferencePane
 
     const fetchGraphConfig = async (graphName: string) => {
         if (!profileId) {
-            setError('无有效 Profile ID');
+            setError(t('toolPreference.noProfileId'));
             return;
         }
         setLoading(true);
@@ -45,7 +45,7 @@ export default function ToolPreferencePanel({ profileId, t }: ToolPreferencePane
             setIsCustomConfig(false);
         } catch (err) {
             console.error(`加载图配置失败 (${graphName}):`, err);
-            setError(`加载失败: ${err instanceof Error ? err.message : '未知错误'}`);
+            setError(t('toolPreference.loadFailed', { message: err instanceof Error ? err.message : 'Unknown' }));
             setGraphConfig(null);
         } finally {
             setLoading(false);
@@ -111,7 +111,7 @@ export default function ToolPreferencePanel({ profileId, t }: ToolPreferencePane
                 )}
                 {!loading && !error && !graphConfig && (
                     <div className="flex items-center justify-center h-full bg-gray-50 rounded-lg text-gray-400 text-sm">
-                        无法加载图结构
+                        {t('toolPreference.graphLoadFailed')}
                     </div>
                 )}
             </div>

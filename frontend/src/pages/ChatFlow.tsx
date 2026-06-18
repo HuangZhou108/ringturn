@@ -179,7 +179,7 @@ function ChatFlow() {
                 const uiMessages: Message[] = res.data.messages.map((msg) => ({
                     id: `msg-${msg.id}`,
                     type: msg.role === 'user' ? 'user' : 'ai',
-                    content: msg.content,
+                    content: msg.content === '正在处理您的请求...' ? t('chat.processing') : msg.content,
                     taskId: msg.task_id || undefined,
                     userFile: msg.file_name || (msg.role === 'user' ? uploadedFileName : undefined),
                     thinkingProcess: msg.thinking_process || [],
@@ -204,7 +204,7 @@ function ChatFlow() {
             console.error('Failed to load conversation:', err)
             showToast(t('conversation.loadFailed'))
         }
-    }, [uploadedFileName])
+    }, [uploadedFileName, t])
 
     // 双击标题进入编辑模式
     const handleTitleDoubleClick = () => {
@@ -557,7 +557,7 @@ function ChatFlow() {
                 }
             } catch (err) {
                 console.error(err);
-                showToast('网络错误，反馈失败');
+                showToast(t('chat.networkError'));
             }
             return;
         }
@@ -770,13 +770,13 @@ function ChatFlow() {
         const validFormats = ['mp3', 'wav', 'flac', 'm4a', 'ogg']
         const ext = file.name.split('.').pop()?.toLowerCase()
         if (!ext || !validFormats.includes(ext)) {
-            setUploadError(`不支持的格式: .${ext}，支持: ${validFormats.join(', ')}`)
+            setUploadError(t('toast.uploadUnsupportedFormat', { format: ext, formats: validFormats.join(', ') }))
             setUploadSuccess(null)
             return
         }
         if (file.size > 50 * 1024 * 1024) {
             console.log('[ChatFlow] File too large')
-            setUploadError('文件过大，最大支持 50MB')
+            setUploadError(t('toast.uploadFileTooLarge'))
             setUploadSuccess(null)
             return
         }
@@ -805,21 +805,19 @@ function ChatFlow() {
                 setAudioFileId(res.data.file_id)
                 setUploadedFileName(res.data.filename)
                 setUploadSuccess(
-                    `文件已上传: ${res.data.filename} (${res.data.file_size.toFixed(2)} MB)${
-                        res.data.duration ? `, 时长: ${Math.round(res.data.duration)}秒` : ''
-                    }`
+                    t('toast.uploadSuccess', { filename: res.data.filename, size: res.data.file_size.toFixed(2) })
                 )
                 setUploadError(null)
                 if (res.data.duration) {
                     setAudioDuration(res.data.duration);
                 }
             } else {
-                setUploadError(res.message || '文件上传失败')
+                setUploadError(res.message || t('toast.uploadFailed', { message: '' }))
                 setUploadSuccess(null)
             }
         } catch (err) {
             console.error('上传失败:', err)
-            setUploadError(`上传失败: ${err instanceof Error ? err.message : '未知错误'}`)
+            setUploadError(t('toast.uploadFailed', { message: err instanceof Error ? err.message : 'Unknown error' }))
             setUploadSuccess(null)
         } finally {
             setIsUploading(false)
@@ -946,7 +944,7 @@ function ChatFlow() {
             setRefreshSidebar(prev => prev + 1);
         } catch (err) {
             console.error('Failed to refresh after profile change:', err);
-            showToast('切换档案失败，请刷新页面重试');
+            showToast(t('profile.switchFailed'));
         }
     }, [navigate]);
 
@@ -1119,7 +1117,7 @@ function ChatFlow() {
                                             title={
                                                 selectedParentTaskId
                                                     ? availableParentTasks.find(t => t.task_id === selectedParentTaskId)?.user_request || '已选择任务'
-                                                    : {t('chat.feedbackRetry')}
+                                                    : t('chat.feedbackRetry')
                                             }
                                             className={`px-4 py-2 rounded-md border transition-all duration-200 font-medium text-sm whitespace-nowrap ${
                                                 feedbackMode
@@ -1127,7 +1125,7 @@ function ChatFlow() {
                                                     : 'bg-white border-gray-800 text-gray-800 hover:bg-gray-50'
                                             }`}
                                         >
-                                            重做
+                                            {t('chat.feedbackRetry')}
                                         </button>
 
                                         {/* 取消按钮（仅在反馈模式显示） */}
