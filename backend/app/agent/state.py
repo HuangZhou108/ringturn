@@ -34,6 +34,9 @@ class AgentState(TypedDict, total=False):
     user_request: str
     profile_id: int
 
+    # 规划内容
+    plan_description: str | None
+
     # 音频源
     source_type: str
     source_value: str

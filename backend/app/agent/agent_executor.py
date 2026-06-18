@@ -155,6 +155,7 @@ class AgentExecutor:
                 max_tokens=200,
             )
             self._add_thinking_step("规划", thinking_msg)
+            self.state["plan_description"] = thinking_msg
         except Exception:
             self._add_thinking_step("规划", "根据用户需求自动生成改编计划。")
 

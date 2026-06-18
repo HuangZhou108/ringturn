@@ -33,7 +33,7 @@ async def determine_resume_node(feedback: str) -> str:
 注意：如果用户要求更换乐器或调整速度（BPM），应选择 "arrange"。
 如果用户对旋律本身不满意，选择 "extract_melody"。
 如果用户对音频渲染质量不满意，选择 "render"。
-如果用户对于音频切割的选择不满意，选择"render"。
+如果用户对于音频切割的选择、音乐片段的选取不满意，选择"render"。
 只输出节点名称，不要输出其他内容。
 """
     response = await llm_service.chat([{"role": "user", "content": prompt}], temperature=0.2)

@@ -237,6 +237,8 @@ async def node_quantize_notes(state: AgentState) -> Dict[str, Any]:
 
     # 尝试获取 BPM：优先从 analysis_result 中取，否则用默认值 120
     analysis = state.get("analysis_result", {})
+    if not isinstance(analysis, dict):
+        analysis = {}
     bpm = analysis.get("tempo_beats", {}).get("bpm") or 120
     # 网格大小：16分音符 = 0.25 拍
     grid = 0.25

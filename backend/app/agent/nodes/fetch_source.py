@@ -11,6 +11,10 @@ async def fetch_source_node(state: AgentState) -> dict:
 
     根据source_type获取音频文件
     """
+    plan = state.get("plan", [])
+    if "fetch_source" not in plan:
+        return {}
+    
     source_type = state.get("source_type", "upload")
     source_value = state.get("source_value")
     task_id = state["task_id"]

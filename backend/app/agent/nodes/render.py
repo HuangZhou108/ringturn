@@ -20,6 +20,10 @@ async def render_node(state: AgentState) -> dict:
 
     将改编后的MIDI渲染为音频文件
     """
+    plan = state.get("plan", [])
+    if "render" not in plan:   
+        return {}
+    
     midi_path = state.get("arranged_midi_path") or state.get("midi_path")
     if not Path(midi_path).exists():
         raise FileNotFoundError(f"渲染输入 MIDI 不存在: {midi_path}")

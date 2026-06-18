@@ -192,18 +192,24 @@ class LLMService:
         Returns:
             list[str]: 步骤列表
         """
-        system_prompt = """你是一个音乐制作流程规划助手。请根据用户需求生成执行步骤计划。
+        system_prompt = """你是一个音乐制作流程规划助手。根据用户需求，选择以下步骤中的一部分或全部，并以 JSON 数组形式返回步骤名称列表（只返回数组，不含其他内容）。
 
-可选步骤：
-- fetch_source: 获取音频源
-- analyze_structure: 分析音乐结构（BPM、调性、段落）
-- extract_melody: 提取主旋律
-- generate_midi: 生成MIDI文件
-- arrange: 乐器改编
-- render: 渲染音频
-- check_quality: 质量检查
+可选步骤（字符串名称）：
+- fetch_source
+- analyze_structure
+- extract_melody
+- generate_midi
+- arrange
+- render
+- check_quality
 
-返回JSON数组，如：["fetch_source", "analyze_structure", ...]"""
+要求：
+1. 通常必须包含：fetch_source、extract_melody、generate_midi、arrange、render（这些是基本流程）。
+2. 如果用户明确说“不需要分析”、“跳过分析”、“无需解析”、“直接替换”或类似表述，则可以省略 analyze_structure。
+3. 如果用户要求“检查质量”、“评估音质”、“确保质量”，则包含 check_quality；否则通常省略。
+4. 只返回 JSON 数组，例如：["fetch_source", "extract_melody", "generate_midi", "arrange", "render"]
+   不要包含任何解释、参数或代码块标记。
+"""
 
         user_prompt = f"用户需求：{user_request}"
         if analysis_result:
@@ -216,23 +222,26 @@ class LLMService:
 
         import json
         response = await self.chat(messages, temperature=0.5)
-        try:
-            plan = json.loads(response)
-            if isinstance(plan, list) and len(plan) > 0:
-                return plan
-        except:
-            pass
+        import re
+        # 在 try 之前提取代码块内容
+        content = response
+        match = re.search(r"```(?:json)?\s*\n(.*?)\n```", response, re.DOTALL)
+        if match:
+            content = match.group(1).strip()
 
-        # 默认计划
-        return [
-            "fetch_source",
-            "analyze_structure",
-            "extract_melody",
-            "generate_midi",
-            "arrange",
-            "render",
-            "check_quality",
-        ]
+        try:
+            plan = json.loads(content)
+        except json.JSONDecodeError:
+            plan = []
+
+        # 过滤出有效的步骤名称（字符串且属于可选集合）
+        valid_steps = ["fetch_source", "analyze_structure", "extract_melody", "generate_midi", "arrange", "render", "check_quality"]
+        if isinstance(plan, list):
+            filtered = [item for item in plan if isinstance(item, str) and item in valid_steps]
+            if filtered:
+                return filtered
+        # 解析失败或结果为空，返回完整默认计划（所有步骤）
+        return valid_steps
 
     async def extract_clip_preference(self, user_request: str) -> dict:
         """

@@ -12,6 +12,10 @@ async def extract_melody_node(state: AgentState) -> dict:
 
     提取音频中的主旋律数据
     """
+    plan = state.get("plan", [])
+    if "extract_melody" not in plan:   
+        return {}
+    
     audio_path = state["audio_path"]
     task_id = state["task_id"]
     profile_id = state.get("profile_id") 
