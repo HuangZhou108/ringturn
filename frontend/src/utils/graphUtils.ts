@@ -29,7 +29,7 @@ export function getEffectiveEdges(
     edges: { from: string; to: string }[],
     disabled: Set<string>
 ): { from: string; to: string }[] {
-    let remaining = edges.filter(e => !disabled.has(e.from) && !disabled.has(e.to));
+    const remaining = edges.filter(e => !disabled.has(e.from) && !disabled.has(e.to));
     for (const nodeId of disabled) {
         const inEdges = remaining.filter(e => e.to === nodeId);
         const outEdges = remaining.filter(e => e.from === nodeId);

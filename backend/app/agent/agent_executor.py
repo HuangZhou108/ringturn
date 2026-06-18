@@ -6,6 +6,7 @@ Agent执行器
 
 import asyncio
 from datetime import datetime
+from typing import Optional
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.agent.state import AgentState, TaskStep

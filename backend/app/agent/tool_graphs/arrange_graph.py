@@ -198,6 +198,7 @@ async def get_arrange_graph(profile_id: int = None):
     if profile_id is not None:
         db = SessionLocal()
         try:
+            import json
             pref = db.query(ToolPreference).filter(ToolPreference.profile_id == profile_id).first()
             if pref and pref.arrange_graph_config:
                 custom_config = json.loads(pref.arrange_graph_config)
