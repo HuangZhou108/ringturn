@@ -16,6 +16,7 @@ from app.agent.thinking_utils import record_thought
 from app.models import Task as TaskModel, TaskStatus, Conversation, ConversationMessage, MessageRole, ConversationStatus
 import threading
 from asyncio import Task as AsyncioTask
+from app.services.llm_service import llm_service
 
 class RingtoneParams:
     def __init__(self, task: TaskModel):
@@ -114,6 +115,15 @@ class AgentExecutor:
                 "tempo": inter.get("tempo", 120),
                 "instrument": inter.get("instrument", "Acoustic Piano"),
             })
+            # 用用户反馈中新指定的参数覆盖父任务的旧值
+            if self.ringtone_params.instrument:
+                state["instrument"] = self.ringtone_params.instrument
+            if self.ringtone_params.tempo:
+                state["tempo"] = self.ringtone_params.tempo
+            if self.ringtone_params.duration:
+                state["duration"] = self.ringtone_params.duration
+            if self.ringtone_params.filename:
+                state["filename"] = self.ringtone_params.filename
 
         return state
 
@@ -146,6 +156,7 @@ class AgentExecutor:
                 max_tokens=200,
             )
             self._add_thinking_step("规划", thinking_msg)
+            self.state["plan_description"] = thinking_msg
         except Exception:
             self._add_thinking_step("规划", "根据用户需求自动生成改编计划。")
 
@@ -221,9 +232,33 @@ class AgentExecutor:
             await self._update_task_status(TaskStatus.completed)
 
             # 记录完成消息
-            self._update_assistant_message(
-                f"任务已完成！\n生成铃声：{self.task.final_audio_url}\n时长：{self.task.audio_duration}秒"
+            plan = self.state.get("plan", [])
+            user_request = self.state.get("user_request", "")
+            if plan:
+                steps_str = "、".join(plan)
+                prompt = (
+                    f"用户需求：{user_request}\n"
+                    f"执行步骤：{steps_str}\n"
+                    "请用一句简短自然的中文总结改编结果，不要提及技术细节。"
+                )
+                try:
+                    summary = await llm_service.chat(
+                        [{"role": "user", "content": prompt}],
+                        temperature=0.5,
+                        max_tokens=100
+                    )
+                    summary = summary.strip()
+                except Exception:
+                    summary = "已完成铃声改编。"
+            else:
+                summary = "任务完成。"
+
+            final_message = (
+                f"任务已完成！{summary} "
+                f"生成铃声：{self.task.final_audio_url}\n"
+                f"时长：{self.task.audio_duration}秒"
             )
+            self._update_assistant_message(final_message)
             self._complete_conversation()
 
             self.db.commit()

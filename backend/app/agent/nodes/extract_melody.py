@@ -1,4 +1,5 @@
 # nodes/extract_melody.py
+import asyncio
 from pathlib import Path
 from app.agent.state import AgentState
 from app.agent.tool_graphs.extract_graph import get_extract_graph
@@ -12,6 +13,10 @@ async def extract_melody_node(state: AgentState) -> dict:
 
     提取音频中的主旋律数据
     """
+    plan = state.get("plan", [])
+    if "extract_melody" not in plan:   
+        return {}
+    
     audio_path = state["audio_path"]
     task_id = state["task_id"]
     profile_id = state.get("profile_id") 
@@ -19,6 +24,25 @@ async def extract_melody_node(state: AgentState) -> dict:
     user_request = state.get("user_request", "")
 
     record_thought(task_id, "extract_melody", f"开始提取旋律：")
+
+    # 如果 analysis 未执行（analysis_result 为 None），则主动进行 Demucs 分离
+    if state.get("analysis_result") is None:
+        record_thought(task_id, "extract_melody", "analysis 未执行，主动进行 Demucs 音源分离")
+        try:
+            from app.agent.atomic_tools.analysis.demucs_separate import separate_sources_demucs
+            result = await asyncio.to_thread(
+                separate_sources_demucs,
+                audio_path=audio_path,
+                stems="vocals",
+                model="htdemucs"
+            )
+            state["demucs_separated"] = True
+            state["vocals_path"] = result.get("vocals_path")
+            state["accompaniment_path"] = result.get("accompaniment_path")
+            record_thought(task_id, "extract_melody", f"Demucs 分离成功，人声路径: {state['vocals_path']}")
+        except Exception as e:
+            record_thought(task_id, "extract_melody", f"Demucs 分离失败: {e}，将使用原始音频")
+            # 失败时不设置 demucs_separated，保持 False
 
     # 构建临时 state 副本，避免污染原状态
     sub_state = {

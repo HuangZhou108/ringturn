@@ -9,6 +9,7 @@ from app.agent.atomic_tools.rendering.smart_clip import smart_clip_audio
 from app.agent.thinking_utils import record_thought
 from app.agent.utils import log_tool_call
 from app.agent.utils import clean_state
+from app.agent.atomic_tools.rendering.smart_clip import smart_clip_with_analysis
 
 settings = get_settings()
 
@@ -19,10 +20,19 @@ async def render_node(state: AgentState) -> dict:
 
     将改编后的MIDI渲染为音频文件
     """
+    plan = state.get("plan", [])
+    if "render" not in plan:   
+        return {}
+    
     midi_path = state.get("arranged_midi_path") or state.get("midi_path")
     if not Path(midi_path).exists():
         raise FileNotFoundError(f"渲染输入 MIDI 不存在: {midi_path}")
     target_duration = state.get("duration", settings.DEFAULT_RINGTONE_DURATION)
+    # 确保 target_duration 为数值类型
+    try:
+        target_duration = float(target_duration)
+    except (ValueError, TypeError):
+        target_duration = float(settings.DEFAULT_RINGTONE_DURATION)
     task_id = state["task_id"]
     task_dir = Path(settings.RINGTONES_DIR) / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
@@ -32,58 +42,6 @@ async def render_node(state: AgentState) -> dict:
     wav_path = str(task_dir / "render_temp.wav")
     soundfont = settings.SOUNDFONT_PATH
 
-#     step_tools = [render_midi_with_fluidsynth_tool, convert_wav_to_mp3_tool, smart_clip_audio_tool]
-#     system_prompt = f"""将 MIDI 渲染为 MP3 铃声。
-# MIDI 路径: {midi_path}
-# 音色库: {soundfont}
-# 目标长度: {target_duration} 秒
-# 输出文件: {mp3_path}
-
-# 工作流：
-# 1. 调用 render_midi_with_fluidsynth 生成临时 WAV（路径 {wav_path}，duration_limit={target_duration}）
-# 2. 调用 convert_wav_to_mp3 将 WAV 转为 MP3
-# 3. **必须调用** smart_clip_audio 将音频截取到 {target_duration} 秒
-
-# **你必须严格遵守以下交互格式：**
-# 在每次调用任何工具之前，先输出一句中文说明，格式为：“[思考] 我接下来将使用 <工具名>，因为 <原因>。”
-# 然后调用工具。(注意，如果生成长度大于目标长度，一定要使用smart_clip_audio截取)
-# 完成所有工具调用后，再单独输出最终的 JSON 结果。
-# **绝对不要省略 `[思考]` 行！**
-
-# 示例：
-# [思考] 我接下来将使用 render_midi_with_fluidsynth，因为需要将 MIDI 渲染为音频。
-# （随后调用 render_midi_with_fluidsynth 工具）
-# [思考] 我接下来将使用 convert_wav_to_mp3，因为需要转换为 MP3 格式。
-# （随后调用 convert_wav_to_mp3 工具）
-# [思考] 我接下来将使用 smart_clip_audio，因为需要截取到目标时长 {target_duration} 秒。
-# （随后调用 smart_clip_audio 工具）
-# 最终 JSON 结果：
-# {{"final_audio_path": "{mp3_path}", "audio_duration": 30.0}}
-# """
-#     llm = get_llm()
-#     callback = ThinkingCallbackHandler(task_id, "render")
-#     sub_agent = create_react_agent(llm, step_tools)
-#     resp = await sub_agent.ainvoke(
-#         {"messages": [SystemMessage(content=system_prompt), HumanMessage(content="渲染音频。")]},
-#         config={"callbacks": [callback]}
-#     )
-#     try:
-#         result = json.loads(resp["messages"][-1].content)
-#         final_path = result.get("final_audio_path", mp3_path)
-#         duration = result.get("audio_duration", target_duration)
-#     except:
-#         final_path = mp3_path
-#         duration = target_duration
-    
-
-    # # 验证最终音频文件是否存在
-    # if not Path(mp3_path).exists():
-    #     raise RuntimeError(f"渲染失败：最终音频文件不存在 {mp3_path}")
-    # if Path(mp3_path).stat().st_size == 0:
-    #     raise RuntimeError(f"渲染失败：最终音频文件为空 {mp3_path}")
-    # state["final_audio_path"] = mp3_path
-    # state["audio_duration"] = duration
-    # state["final_audio_url"] = f"/static/ringtones/{task_id}/{Path(mp3_path).name}"
     # ---- 步骤1: MIDI → WAV ----
     record_thought(task_id, "render", "开始渲染 MIDI 到 WAV...")
     try:
@@ -125,19 +83,17 @@ async def render_node(state: AgentState) -> dict:
 
     # ---- 步骤3: 智能截取到目标时长 ----
     record_thought(task_id, "render", f"开始截取音频到 {target_duration} 秒...")
+
     try:
-        clipped_path, actual_duration = await log_tool_call(
-            task_id=task_id,
-            step_name="render",
-            tool_func=smart_clip_audio,
+        clipped_path, actual_duration = await smart_clip_with_analysis(
             audio_path=mp3_path,
             target_duration=target_duration,
-            mode="auto",
-            output_path=mp3_path,
-            tool_name="smart_clip_audio"
+            user_request=state.get("user_request", ""),
+            analysis_result=state.get("analysis_result", {}),
+            task_id=task_id,
         )
     except Exception as e:
-        record_thought(task_id, "render", f"截取失败: {e}")
+        record_thought(task_id, "render", f"截取过程异常: {e}")
         raise RuntimeError(f"音频截取出错: {e}")
 
     # ---- 步骤4: 音量增强（使用 ffmpeg 响度归一化） ----
@@ -152,7 +108,7 @@ async def render_node(state: AgentState) -> dict:
             temp_mp3 = mp3_path + ".tmp.mp3"
             # EBU R128 响度归一化，目标 -16 LUFS，峰值限制 -1.5 dBFS
             cmd = [
-                ffmpeg, "-i", mp3_path,
+                ffmpeg, "-y", "-i", mp3_path,
                 "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
                 "-c:a", "libmp3lame", "-b:a", "192k",
                 temp_mp3

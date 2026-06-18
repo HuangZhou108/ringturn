@@ -18,6 +18,10 @@ async def generate_midi_node(state: AgentState) -> dict:
 
     由于步骤固定，不再调用大模型。
     """
+    plan = state.get("plan", [])
+    if "generate_midi" not in plan:   
+        return {}
+    
     melody_data = state["melody_data"]
     analysis_result = state["analysis_result"]
     task_id = state["task_id"]
@@ -38,7 +42,7 @@ async def generate_midi_node(state: AgentState) -> dict:
             step_name="generate_midi",
             tool_func=create_midi_from_notes,
             notes=melody_data.get("melody_notes", []),
-            bpm=analysis_result.get("bpm", 120),
+            bpm = analysis_result.get("bpm", 120) if isinstance(analysis_result, dict) else 120,
             output_path=output_path,
             tool_name="create_midi_from_notes"
         )

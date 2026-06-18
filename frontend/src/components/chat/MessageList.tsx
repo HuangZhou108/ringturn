@@ -56,10 +56,10 @@ function ThinkingProcess({ entries, t }: { entries: ThinkingEntry[]; t: (key: st
     // 判断是否为工具相关条目
     const isToolEntry = (e: ThinkingEntry) => e.type === 'tool_call' || e.type === 'tool_result';
 
-    // 从 tool_call 内容中提取工具名
+    // 从 tool_call 内容中提取工具名（兼容中英文格式）
     const extractToolName = (content: string): string => {
-        const match = content.match(/调用工具:\s*([^\s,，]+)/);
-        return match ? match[1] : '工具';
+        const match = content.match(/(?:调用工具|Call tool):\s*([^\s,，]+)/);
+        return match ? match[1] : t('chat.toolDefaultName');
     };
 
     // 生成工具摘要（取前 3 个工具名，多余截断）
@@ -71,11 +71,12 @@ function ThinkingProcess({ entries, t }: { entries: ThinkingEntry[]; t: (key: st
                 if (!names.includes(name)) names.push(name);
             }
         }
-        if (names.length === 0) return '工具调用完成';
+        if (names.length === 0) return t('chat.toolSummaryFallback');
         const display = names.slice(0, 3);
-        let summary = display.join('、');
-        if (names.length > 3) summary += `…（共${names.length}个）`;
-        return `工具调用完成：${summary}`;
+        const sep = t('chat.toolSeparator');
+        let summary = display.join(sep);
+        if (names.length > 3) summary += `…（${t('common.all')}${names.length}${t('chat.toolDefaultName')}）`;
+        return `${t('chat.toolSummaryComplete')}${summary}`;
     };
 
     // 获取状态对应的样式
@@ -100,7 +101,7 @@ function ThinkingProcess({ entries, t }: { entries: ThinkingEntry[]; t: (key: st
                         !isDeepExpanded ? 'underline' : ''
                     }`}
                 >
-                    深度思考过程
+                    {t('chat.deepThinking')}
                 </p>
                 <span className="text-xs text-gray-400">
                     {isDeepExpanded ? '▼' : '▶'}
@@ -153,7 +154,7 @@ function ThinkingProcess({ entries, t }: { entries: ThinkingEntry[]; t: (key: st
                                                     let displayContent = entry.content;
                                                     if (isCall) {
                                                         const name = extractToolName(entry.content);
-                                                        displayContent = `调用工具： ${name}`;
+                                                        displayContent = `${t('chat.toolCallPrefix')}${name}`;
                                                     } else {
                                                         displayContent = entry.content.length > 100 ? entry.content.slice(0, 100) + '...' : entry.content;
                                                     }
@@ -295,7 +296,7 @@ export default function MessageList({ messages, t }: MessageListProps) {
                                                 }
                                                 className="px-3 py-1.5 bg-[#0284c7] text-white text-xs font-medium rounded-lg hover:bg-[#0369a1] transition"
                                             >
-                                                下载
+                                                {t('chat.download')}
                                             </button>
                                         </div>
                                     </div>

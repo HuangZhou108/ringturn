@@ -1,10 +1,13 @@
 // frontend/src/components/UserManualModal.tsx
+import { useTranslation } from 'react-i18next';
+
 interface UserManualModalProps {
     isOpen: boolean;
     onClose: () => void;
 }
 
 export default function UserManualModal({ isOpen, onClose }: UserManualModalProps) {
+    const { t } = useTranslation();
     if (!isOpen) return null;
 
     return (
@@ -15,7 +18,7 @@ export default function UserManualModal({ isOpen, onClose }: UserManualModalProp
             >
                 {/* 标题栏 */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-                    <h3 className="text-lg font-semibold text-gray-800">用户手册</h3>
+                    <h3 className="text-lg font-semibold text-gray-800">{t('userManual.title')}</h3>
                     <button
                         onClick={onClose}
                         className="text-gray-400 hover:text-gray-600 transition"
@@ -29,7 +32,7 @@ export default function UserManualModal({ isOpen, onClose }: UserManualModalProp
                 {/* 内容区域 */}
                 <div className="flex-1 overflow-y-auto p-6">
                     <div className="text-center text-gray-500 text-sm leading-relaxed">
-                        敬请期待
+                        {t('userManual.comingSoon')}
                     </div>
                 </div>
 
@@ -39,7 +42,7 @@ export default function UserManualModal({ isOpen, onClose }: UserManualModalProp
                         onClick={onClose}
                         className="px-4 py-2 bg-[#00639d] text-white rounded-lg hover:bg-[#005288] transition"
                     >
-                        关闭
+                        {t('userManual.close')}
                     </button>
                 </div>
             </div>

@@ -26,14 +26,14 @@ async def determine_resume_node(feedback: str) -> str:
 - analyze_structure: 对音乐结构分析不满意（BPM、调性等）
 - extract_melody: 对提取的主旋律不满意
 - generate_midi: 对生成的MIDI不满意
-- arrange: 对乐器改编不满意（乐器选择、节奏编排）
+- arrange: 对乐器改编不满意（乐器选择、节奏编排、BPM调整、速度调整）
 - render: 对渲染的音频质量不满意（音色、时长截取）
 - check_quality: 对整体质量不满意需要重试
 
-注意：如果用户要求更换乐器或调整速度，应选择 "arrange"。
+注意：如果用户要求更换乐器或调整速度（BPM），应选择 "arrange"。
 如果用户对旋律本身不满意，选择 "extract_melody"。
 如果用户对音频渲染质量不满意，选择 "render"。
-如果用户对于音频切割的选择不满意，选择"render"。
+如果用户对于音频切割的选择、音乐片段的选取不满意，选择"render"。
 只输出节点名称，不要输出其他内容。
 """
     response = await llm_service.chat([{"role": "user", "content": prompt}], temperature=0.2)

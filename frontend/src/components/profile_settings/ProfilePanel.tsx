@@ -76,8 +76,8 @@ export default function ProfilePanel({ profiles, activeProfile, isLoading, onRef
                                     className="border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#00639d]"
                                     autoFocus
                                 />
-                                <button onClick={handleEditSubmit} className="text-xs bg-[#00639d] text-white px-2 py-1 rounded">保存</button>
-                                <button onClick={() => setEditingProfileId(null)} className="text-xs text-gray-500">取消</button>
+                                <button onClick={handleEditSubmit} className="text-xs bg-[#00639d] text-white px-2 py-1 rounded">{t('profile.save')}</button>
+                                <button onClick={() => setEditingProfileId(null)} className="text-xs text-gray-500">{t('profile.cancel')}</button>
                             </div>
                         ) : (
                             <div className="flex items-center gap-2">

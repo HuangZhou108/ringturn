@@ -80,11 +80,11 @@ function Home() {
         const validFormats = ['mp3', 'wav', 'flac', 'm4a', 'ogg'];
         const ext = file.name.split('.').pop()?.toLowerCase();
         if (!ext || !validFormats.includes(ext)) {
-            setUploadError(`不支持的格式: .${ext}，支持: ${validFormats.join(', ')}`);
+            setUploadError(t('toast.uploadUnsupportedFormat', { format: ext, formats: validFormats.join(', ') }));
             return;
         }
         if (file.size > 50 * 1024 * 1024) {
-            setUploadError('文件过大，最大支持 50MB');
+            setUploadError(t('toast.uploadFileTooLarge'));
             return;
         }
 
@@ -105,16 +105,16 @@ function Home() {
             if (res.code === 200) {
                 setAudioFileId(res.data.file_id);
                 setUploadedFileName(res.data.filename);
-                setUploadSuccess(`文件已上传: ${res.data.filename} (${res.data.file_size.toFixed(2)} MB)`);
+                setUploadSuccess(t('toast.uploadSuccess', { filename: res.data.filename, size: res.data.file_size.toFixed(2) }));
                 if (res.data.duration) {
                     setAudioDuration(res.data.duration);
                 }
             } else {
-                setUploadError(res.message || '文件上传失败');
+                setUploadError(res.message || t('toast.uploadFailed', { message: '' }));
             }
         } catch (err) {
             console.error('上传失败:', err);
-            setUploadError(`上传失败: ${err instanceof Error ? err.message : '未知错误'}`);
+            setUploadError(t('toast.uploadFailed', { message: err instanceof Error ? err.message : 'Unknown error' }));
         } finally {
             setIsUploading(false);
             setTimeout(() => setUploadProgress(0), 500);

@@ -19,16 +19,33 @@ from .tempo_variation import detect_tempo_variation_tool
 from .mood_style import infer_mood_style_tool
 from .special_effects import detect_special_effects_tool
 
-from .yamnet import analyze_yamnet_tool
-from .mert import analyze_mert_tool
+try:
+    from .yamnet import analyze_yamnet_tool
+except ModuleNotFoundError:
+    analyze_yamnet_tool = None
 
-from .clap_analyze import (
-    classify_vocal_presence,
-    classify_piano_presence,
-    classify_guitar_presence,
-)
+try:
+    from .mert import analyze_mert_tool
+except ModuleNotFoundError:
+    analyze_mert_tool = None
+
+try:
+    from .clap_analyze import (
+        classify_vocal_presence,
+        classify_piano_presence,
+        classify_guitar_presence,
+    )
+except ModuleNotFoundError:
+    classify_vocal_presence = None
+    classify_piano_presence = None
+    classify_guitar_presence = None
+
 from .demucs_separate import separate_sources_demucs
-from .msaf_analyze import msaf_analyze_tool
+
+try:
+    from .msaf_analyze import msaf_analyze_tool
+except ModuleNotFoundError:
+    msaf_analyze_tool = None
 
 __all__ = [
     "get_bpm_tool",

@@ -17,7 +17,7 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
     const [saving, setSaving] = useState(false);
 
     // 本地编辑状态（用户覆盖部分）
-    const [useAi, setUseAi] = useState(true);           // use_ai_preferences
+    // const [useAi, setUseAi] = useState(true);           // use_ai_preferences
     const [instrument, setInstrument] = useState('');
     const [tempo, setTempo] = useState<number | null>(null);
     const [duration, setDuration] = useState<number | null>(null);
@@ -32,7 +32,7 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
             if (res.code === 200 && res.data) {
                 setPrefData(res.data);
                 const overrides = res.data.user_overrides;
-                setUseAi(overrides?.use_ai_preferences ?? true);
+                // setUseAi(overrides?.use_ai_preferences ?? true);
                 setInstrument(overrides?.instrument ?? '');
                 setTempo(overrides?.tempo ?? null);
                 setDuration(overrides?.duration ?? null);
@@ -58,8 +58,22 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
                 .split(',')
                 .map(s => s.trim())
                 .filter(s => s !== '');
+
+            // 检查是否有任何有效输入
+            const hasAnyValue = instrument !== '' || tempo !== null || duration !== null || styleTags.length > 0;
+
+            if (!hasAnyValue) {
+                // 如果所有字段为空，等同于清除覆盖
+                await profileApi.resetPreferences(profileId);
+                await loadPreferences();
+                onSave?.();
+                alert(t('preference.resetSuccess'));
+                setSaving(false);
+                return;
+            }
+
             const updateData: PreferenceUpdateRequest = {
-                use_ai_preferences: useAi,
+                use_ai_preferences: false,
                 instrument: instrument || null,
                 tempo: tempo ?? null,
                 duration: duration ?? null,
@@ -70,13 +84,13 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
                 // 重新加载最新数据
                 await loadPreferences();
                 onSave?.();
-                alert('偏好已保存');
+                alert(t('preference.saveSuccess'));
             } else {
-                alert(res.message || '保存失败');
+                alert(res.message || t('preference.saveFailed'));
             }
         } catch (err) {
             console.error('保存失败', err);
-            alert('保存失败，请稍后重试');
+            alert(t('preference.saveFailed'));
         } finally {
             setSaving(false);
         }
@@ -85,20 +99,20 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
     // 恢复 AI 推荐（清除用户覆盖）
     const handleReset = async () => {
         if (!profileId) return;
-        if (!confirm('确定要清除所有用户覆盖，恢复使用 AI 推荐吗？')) return;
+        if (!confirm(t('preference.resetConfirm'))) return;
         setSaving(true);
         try {
             const res = await profileApi.resetPreferences(profileId);
             if (res.code === 200) {
                 await loadPreferences();
                 onSave?.();
-                alert('已恢复 AI 推荐设置');
+                alert(t('preference.resetSuccess'));
             } else {
-                alert(res.message || '恢复失败');
+                alert(res.message || t('preference.resetFailed'));
             }
         } catch (err) {
             console.error('恢复失败', err);
-            alert('恢复失败，请稍后重试');
+            alert(t('preference.resetFailed'));
         } finally {
             setSaving(false);
         }
@@ -113,7 +127,7 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
     }
 
     if (!prefData) {
-        return <div className="text-gray-500 text-center">无法加载偏好数据</div>;
+        return <div className="text-gray-500 text-center">{t('preference.loadFailed')}</div>;
     }
 
     const ai = prefData.ai_recommendation;
@@ -127,7 +141,7 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
                     <svg className="w-4 h-4 text-[#00639d]" fill="currentColor" viewBox="0 0 20 20">
                         <path d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" />
                     </svg>
-                    AI 智能推荐
+                    {t('preference.aiRecommendation')}
                 </h4>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                     <div className="text-gray-500">乐器</div>
@@ -146,45 +160,46 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
             {/* 用户覆盖区 */}
             <div className="border border-gray-200 rounded-xl p-4">
                 <div className="flex items-center justify-between mb-4">
-                    <h4 className="text-sm font-semibold text-gray-700">个人偏好设置</h4>
-                    <button
-                        onClick={handleReset}
-                        disabled={saving}
-                        className="text-xs text-red-500 hover:text-red-700 transition disabled:opacity-50"
-                    >
-                        恢复 AI 推荐
-                    </button>
+                    <h4 className="text-sm font-semibold text-gray-700">{t('preference.personalSettings')}</h4>
+                    {prefData?.user_overrides !== null && (
+                        <button
+                            onClick={handleReset}
+                            disabled={saving}
+                            className="text-xs text-red-500 hover:text-red-700 transition disabled:opacity-50"
+                        >
+                            {t('preference.resetAI')}
+                        </button>
+                    )}
                 </div>
 
-                {/* 是否使用 AI 推荐开关 */}
-                <div className="flex items-center justify-between mb-5">
-                    <span className="text-sm text-gray-700">使用 AI 智能推荐</span>
-                    <button
-                        onClick={() => setUseAi(!useAi)}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-                            useAi ? 'bg-[#00639d]' : 'bg-gray-300'
-                        }`}
-                    >
-            <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
-                    useAi ? 'translate-x-6' : 'translate-x-1'
-                }`}
-            />
-                    </button>
-                </div>
+            {/*    /!* 是否使用 AI 推荐开关 *!/*/}
+            {/*    <div className="flex items-center justify-between mb-5">*/}
+            {/*        <span className="text-sm text-gray-700">使用 AI 智能推荐</span>*/}
+            {/*        <button*/}
+            {/*            onClick={() => setUseAi(!useAi)}*/}
+            {/*            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${*/}
+            {/*                useAi ? 'bg-[#00639d]' : 'bg-gray-300'*/}
+            {/*            }`}*/}
+            {/*        >*/}
+            {/*<span*/}
+            {/*    className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${*/}
+            {/*        useAi ? 'translate-x-6' : 'translate-x-1'*/}
+            {/*    }`}*/}
+            {/*/>*/}
+            {/*        </button>*/}
+            {/*    </div>*/}
 
                 {/* 当不使用 AI 推荐时，显示自定义表单 */}
-                {!useAi && (
                     <div className="space-y-4 mt-2">
                         {/* 乐器选择 */}
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">乐器</label>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">{t('preference.instrumentLabel')}</label>
                             <select
                                 value={instrument}
                                 onChange={(e) => setInstrument(e.target.value)}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-[#00639d] text-sm"
                             >
-                                <option value="">不指定</option>
+                                <option value="">{t('preference.notSpecified')}</option>
                                 {GM_INSTRUMENTS.map((inst) => (
                                     <option key={inst} value={inst}>
                                         {t(`params.instruments.${inst}`, inst)}
@@ -196,7 +211,7 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
                         {/* 速度 */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
-                                速度 (BPM)
+                                {t('preference.tempoLabel')}
                             </label>
                             <input
                                 type="number"
@@ -205,52 +220,51 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
                                 value={tempo ?? ''}
                                 onChange={(e) => setTempo(e.target.value ? Number(e.target.value) : null)}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                                placeholder="自动"
+                                placeholder={t('common.auto')}
                             />
                         </div>
 
                         {/* 时长 */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
-                                时长 (秒)
+                                {t('preference.durationLabel')}
                             </label>
                             <input
                                 type="number"
-                                min="5"
-                                max="60"
+                                min="1"
+                                max="600"
                                 value={duration ?? ''}
                                 onChange={(e) => setDuration(e.target.value ? Number(e.target.value) : null)}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                                placeholder="自动"
+                                placeholder={t('common.auto')}
                             />
                         </div>
 
                         {/* 风格标签（逗号分隔） */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
-                                风格标签（逗号分隔）
+                                {t('preference.styleTagsLabel')}
                             </label>
                             <input
                                 type="text"
                                 value={styleTagsStr}
                                 onChange={(e) => setStyleTagsStr(e.target.value)}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                                placeholder="例如: 欢快, 钢琴, 电子"
+                                placeholder={t('preference.styleTagsPlaceholder')}
                             />
                             <p className="text-xs text-gray-400 mt-1">
                                 多个标签请用英文逗号分隔
                             </p>
                         </div>
                     </div>
-                )}
 
                 {/* 当前有效偏好提示 */}
                 <div className="mt-5 pt-3 border-t border-gray-100 text-xs text-gray-400">
-                    当前有效配置：
+                    {t('preference.effectiveConfig')}
                     <span className="ml-1 font-medium text-gray-600">
-            乐器 {effective.instrument || '自动'}，速度 {effective.tempo || '自动'} BPM，
-            时长 {effective.duration || '自动'} 秒
-                        {effective.style_tags?.length ? `，风格: ${effective.style_tags.join(', ')}` : ''}
+            {t('preference.instrumentLabel')} {effective.instrument || t('common.auto')}，{t('preference.tempoLabel')} {effective.tempo || t('common.auto')}，
+            {t('preference.durationLabel')} {effective.duration || t('common.auto')}
+                        {effective.style_tags?.length ? `，${t('preference.styleTagsLabel')}: ${effective.style_tags.join(', ')}` : ''}
           </span>
                 </div>
 
@@ -260,7 +274,7 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
                     disabled={saving}
                     className="mt-5 w-full py-2 bg-[#00639d] text-white rounded-lg hover:bg-[#005288] transition disabled:opacity-50"
                 >
-                    {saving ? '保存中...' : '保存个人偏好'}
+                    {saving ? t('preference.saving') : t('preference.save')}
                 </button>
             </div>
         </div>

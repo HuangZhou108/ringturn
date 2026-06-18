@@ -10,6 +10,7 @@ from app.agent.atomic_tools.arrangement import (
     change_instrument_tool, change_tempo_tool, quantize_midi_tool
 )
 from app.agent.utils import clean_state
+from app.services.llm_service import llm_service
 from app.agent.thinking_utils import record_thought
 import mido
 from app.agent.tool_graphs.arrange_graph import get_arrange_graph
@@ -22,6 +23,9 @@ async def arrange_node(state: AgentState) -> dict:
 
     根据用户需求更换乐器、调整风格
     """
+    plan = state.get("plan", [])
+    if "arrange" not in plan:   
+        return {}
     midi_path = state["midi_path"]
     if not midi_path or not Path(midi_path).exists():
         raise ValueError(f"MIDI 文件不存在: {midi_path}")
@@ -34,6 +38,13 @@ async def arrange_node(state: AgentState) -> dict:
         "instrument": state.get("instrument"),
         "tempo": state.get("tempo"),
     }
+
+    # ---- 开始改编说明 ----
+    instrument = state.get("instrument", "未指定")
+    tempo = state.get("tempo", "未指定")
+    user_request = state.get("user_request", "")
+    start_msg = f"开始根据您的需求进行改编："
+    record_thought(state["task_id"], "arrange", start_msg)
 
     graph = await get_arrange_graph(profile_id=profile_id)
     try:
@@ -51,5 +62,27 @@ async def arrange_node(state: AgentState) -> dict:
         mido.MidiFile(arranged_path)
     except Exception as e:
         raise RuntimeError(f"改编后的 MIDI 无效: {e}")
+    
+    # ---- 改编结束说明 ----
+    # 收集实际发生的改编
+    changes = []
+    if state.get("instrument"):
+        changes.append(f"乐器设置为 {state['instrument']}")
+    if state.get("tempo"):
+        changes.append(f"速度调整为 {state['tempo']} BPM")
+    change_text = "；".join(changes) if changes else "未进行明显修改"
+
+    plan_desc = state.get("plan_description", "")
+    user_req = state.get("user_request", "")[:100]
+
+    prompt = f"""用户请求：{user_req}...
+规划描述：{plan_desc}...
+已完成的改编：{change_text}。
+请用自然语言总结我们进行了哪些改编，以及这些改编与用户任务（铃声改编）的关系。只输出总结，不超过80字。"""
+    try:
+        summary = await llm_service.chat([{"role": "user", "content": prompt}], temperature=0.5, max_tokens=120)
+    except Exception:
+        summary = f"已完成改编：{change_text}，这些调整将用于生成符合用户需求的铃声音频。"
+    record_thought(state["task_id"], "arrange", summary)
 
     return {"arranged_midi_path": arranged_path}

@@ -73,10 +73,15 @@ async def node_change_tempo(state: AgentState) -> Dict[str, Any]:
     task_dir = Path(settings.RINGTONES_DIR) / task_id
     final_path = str(task_dir / "arrange_arranged.mid")
 
-    if not new_bpm:
-        # 未提供 tempo，直接重命名临时文件为最终文件
+    if new_bpm is not None:
+        try:
+            new_bpm = float(new_bpm)
+        except (ValueError, TypeError):
+            new_bpm = None
+    if new_bpm is None:
+        # 未提供有效的 tempo，直接重命名临时文件为最终文件
         Path(temp_path).rename(final_path)
-        record_thought(task_id, "arrange", "未指定 tempo，跳过速度调整")
+        record_thought(task_id, "arrange", "未提供有效的 tempo，跳过速度调整")
         return {"arranged_midi_path": final_path}
 
     record_thought(task_id, "arrange", f"调整速度至 {new_bpm} BPM...")

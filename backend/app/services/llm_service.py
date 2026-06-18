@@ -192,18 +192,24 @@ class LLMService:
         Returns:
             list[str]: 步骤列表
         """
-        system_prompt = """你是一个音乐制作流程规划助手。请根据用户需求生成执行步骤计划。
+        system_prompt = """你是一个音乐制作流程规划助手。根据用户需求，选择以下步骤中的一部分或全部，并以 JSON 数组形式返回步骤名称列表（只返回数组，不含其他内容）。
 
-可选步骤：
-- fetch_source: 获取音频源
-- analyze_structure: 分析音乐结构（BPM、调性、段落）
-- extract_melody: 提取主旋律
-- generate_midi: 生成MIDI文件
-- arrange: 乐器改编
-- render: 渲染音频
-- check_quality: 质量检查
+可选步骤（字符串名称）：
+- fetch_source
+- analyze_structure
+- extract_melody
+- generate_midi
+- arrange
+- render
+- check_quality
 
-返回JSON数组，如：["fetch_source", "analyze_structure", ...]"""
+要求：
+1. 通常包含：fetch_source、analyze_structure、extract_melody、generate_midi、arrange、render（这些是基本流程）。
+2. 如果用户明确说“不需要分析”、“跳过分析”、“无需解析”、“直接替换”或类似表述，则可以省略 analyze_structure。
+3. 如果用户要求“检查质量”、“评估音质”、“确保质量”、“保证质量”，则包含 check_quality；否则通常省略。
+4. 只返回 JSON 数组，例如：["fetch_source", "extract_melody", "generate_midi", "arrange", "render"]
+   不要包含任何解释、参数或代码块标记。
+"""
 
         user_prompt = f"用户需求：{user_request}"
         if analysis_result:
@@ -216,23 +222,81 @@ class LLMService:
 
         import json
         response = await self.chat(messages, temperature=0.5)
-        try:
-            plan = json.loads(response)
-            if isinstance(plan, list) and len(plan) > 0:
-                return plan
-        except:
-            pass
+        import re
+        # 在 try 之前提取代码块内容
+        content = response
+        match = re.search(r"```(?:json)?\s*\n(.*?)\n```", response, re.DOTALL)
+        if match:
+            content = match.group(1).strip()
 
-        # 默认计划
-        return [
-            "fetch_source",
-            "analyze_structure",
-            "extract_melody",
-            "generate_midi",
-            "arrange",
-            "render",
-            "check_quality",
-        ]
+        try:
+            plan = json.loads(content)
+        except json.JSONDecodeError:
+            plan = []
+
+        # 过滤出有效的步骤名称（字符串且属于可选集合）
+        valid_steps = ["fetch_source", "analyze_structure", "extract_melody", "generate_midi", "arrange", "render", "check_quality"]
+        if isinstance(plan, list):
+            filtered = [item for item in plan if isinstance(item, str) and item in valid_steps]
+            if filtered:
+                return filtered
+        # 解析失败或结果为空，返回完整默认计划（所有步骤）
+        return valid_steps
+
+    async def extract_clip_preference(self, user_request: str) -> dict:
+        """
+        解析用户请求中的截取偏好，返回分类结果。
+        返回格式: {"category": int, "value": Any}
+        category含义:
+            1: 能量高（副歌/高潮）
+            2: 特定片段（主歌/副歌等，但无法精确定位，故随机）
+            3: 特定时间（如"35-75秒"）
+            4: 无指定偏好
+        当category=3时，value应包含起始时间（秒），例如 {"category": 3, "value": 35}
+        """
+        prompt = """你是一个音乐分析助手。分析用户对截取音频片段位置的描述，并分类。
+    分类规则：
+    1. 如果用户希望截取“高潮”、“副歌”、“最精彩”、“能量最高”的部分，类别为1，value为null。
+    2. 如果用户提到“主歌”、“第一段”、“第二段”等具体段落，但无法精确定位，类别为2，value为null。
+    3. 如果用户指定了具体时间范围，如“35秒到75秒”、“从30秒开始”、“1分20秒”，类别为3，value为起始时间（秒数）。注意将“1分20秒”转换为80秒。
+    4. 如果用户没有提及任何位置偏好，类别为4，value为null。
+
+    只输出JSON对象，格式：{"category": 整数, "value": 数字或null}，例如：
+    - {"category": 1, "value": null}
+    - {"category": 3, "value": 35}
+    - {"category": 4, "value": null}
+    不要输出其他内容。"""
+        messages = [{"role": "user", "content": f"用户请求：{user_request}\n{prompt}"}]
+        try:
+            response = await self.chat(messages, temperature=0.2, max_tokens=150)
+            import re, json
+            # 清理 markdown 代码块
+            match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", response, re.DOTALL)
+            if match:
+                json_str = match.group(1).strip()
+            else:
+                json_str = response.strip()
+            result = json.loads(json_str)
+            # 验证字段
+            if isinstance(result, dict) and "category" in result:
+                category = int(result["category"])
+                if category not in [1, 2, 3, 4]:
+                    return {"category": 4, "value": None}
+                value = result.get("value")
+                if category == 3:
+                    # 尝试将value转换为浮点数，若失败则回退None
+                    try:
+                        value = float(value)
+                    except (TypeError, ValueError):
+                        value = None
+                else:
+                    value = None
+                return {"category": category, "value": value}
+            else:
+                return {"category": 4, "value": None}
+        except Exception as e:
+            print(f"[LLM] extract_clip_preference failed: {e}")
+            return {"category": 4, "value": None}
 
     async def reflect_on_quality(
         self,

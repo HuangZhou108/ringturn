@@ -60,10 +60,10 @@ export default function SettingsModal({ isOpen, onClose, onProfileChanged }: Set
     if (!isOpen) return null;
 
     const tabLabels: Record<TabType, string> = {
-        base: '基础',
-        profile: '档案',
-        preference: '偏好',
-        tool_preference: '工具',
+        base: t('settings.tabs.base'),
+        profile: t('settings.tabs.profile'),
+        preference: t('settings.tabs.preference'),
+        tool_preference: t('settings.tabs.tool'),
     };
 
     return (
@@ -110,7 +110,7 @@ export default function SettingsModal({ isOpen, onClose, onProfileChanged }: Set
                     <div className="flex-1 overflow-y-auto px-5 pb-5">
                         {activeTab === 'base' && (
                             <div className="space-y-4">
-                                <p className="text-sm text-gray-600">选择界面语言</p>
+                                <p className="text-sm text-gray-600">{t('settings.languageTitle')}</p>
                                 <div className="flex gap-3">
                                     <button
                                         onClick={() => i18n.changeLanguage('en')}
@@ -120,7 +120,7 @@ export default function SettingsModal({ isOpen, onClose, onProfileChanged }: Set
                                                 : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                                         }`}
                                     >
-                                        English
+                                        {t('language.en')}
                                     </button>
                                     <button
                                         onClick={() => i18n.changeLanguage('zh')}
@@ -130,10 +130,10 @@ export default function SettingsModal({ isOpen, onClose, onProfileChanged }: Set
                                                 : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                                         }`}
                                     >
-                                        中文
+                                        {t('language.zh')}
                                     </button>
                                 </div>
-                                <p className="text-xs text-gray-400 mt-2">当前语言：{i18n.language === 'zh' ? '中文' : 'English'}</p>
+                                <p className="text-xs text-gray-400 mt-2">{t('settings.currentLanguage')} {i18n.language === 'zh' ? t('language.zh') : t('language.en')}</p>
                             </div>
                         )}
 

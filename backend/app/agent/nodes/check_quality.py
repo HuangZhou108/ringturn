@@ -17,6 +17,10 @@ async def check_quality_node(state: AgentState) -> dict:
 
     评估生成音频的质量
     """
+    plan = state.get("plan", [])
+    if "check_quality" not in plan:   
+        return {}
+    
     audio_path = state.get("final_audio_path")
     if not audio_path:
         raise ValueError("无法检查质量：缺少 final_audio_path")

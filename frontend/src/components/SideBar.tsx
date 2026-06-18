@@ -73,7 +73,7 @@ export default function Sidebar({
         e.stopPropagation()
         e.preventDefault()
 
-        if (!confirm('确定删除该会话？')) return
+        if (!confirm(t('sidebar.deleteConfirm'))) return
 
         try {
             const res = await conversationApi.delete(id)
@@ -125,7 +125,7 @@ export default function Sidebar({
     // 添加编辑处理函数
     const handleDoubleClick = (conv: ConversationListItem) => {
         setEditingConversationId(conv.conversation_id);
-        setEditingTitle(conv.title || '未命名会话');
+        setEditingTitle(conv.title || t('chat.untitledConversation'));
     };
 
     const handleEditSubmit = async (convId: string) => {
@@ -208,7 +208,7 @@ export default function Sidebar({
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                     <path d="M6 7H0V5H6V0H8V5H14V7H8V14H6V7Z" fill="#f7f9ff"/>
                 </svg>
-                {t('sidebar.newConversation') || '新建会话'}
+                {t('sidebar.newConversation')}
             </button>
 
             {/* 会话列表区域 */}
@@ -221,7 +221,7 @@ export default function Sidebar({
                             filter === 'all' ? 'bg-[#00639d] text-white' : 'text-gray-500 hover:bg-gray-50'
                         }`}
                     >
-                        全部
+                        {t('sidebar.filterAll')}
                     </button>
                     <button
                         onClick={() => setFilter('active')}
@@ -229,7 +229,7 @@ export default function Sidebar({
                             filter === 'active' ? 'bg-[#00639d] text-white' : 'text-gray-500 hover:bg-gray-50'
                         }`}
                     >
-                        进行中
+                        {t('sidebar.filterActive')}
                     </button>
                     <button
                         onClick={() => setFilter('completed')}
@@ -237,20 +237,20 @@ export default function Sidebar({
                             filter === 'completed' ? 'bg-[#00639d] text-white' : 'text-gray-500 hover:bg-gray-50'
                         }`}
                     >
-                        已完成
+                        {t('sidebar.filterCompleted')}
                     </button>
                 </div>
 
                 {/* 刷新按钮 */}
                 <div className="flex items-center justify-between mb-2">
                     <h2 className="text-xs uppercase tracking-wider text-gray-500">
-                        {t('sidebar.conversations') || '会话'}
+                        {t('sidebar.conversations')}
                     </h2>
                     <button
                         onClick={loadConversations}
                         disabled={isLoading}
                         className="p-1 hover:bg-gray-200 rounded transition disabled:opacity-50"
-                        title="刷新"
+                        title={t('sidebar.refresh')}
                     >
                         {/* 图标来自：https://heroicons.com/ */}
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor" className={`size-4 ${isLoading ? 'animate-spin' : ''}`}>
@@ -268,7 +268,11 @@ export default function Sidebar({
                         </div>
                     ) : conversations.length === 0 ? (
                         <div className="text-center py-8 text-gray-400 text-sm">
-                            {filter === 'all' ? '暂无会话记录' : `暂无${filter === 'active' ? '进行中' : '已完成'}的会话`}
+                            {filter === 'all'
+                                ? t('sidebar.emptyAll')
+                                : filter === 'active'
+                                    ? t('sidebar.emptyActive')
+                                    : t('sidebar.emptyCompleted')}
                         </div>
                     ) : (
                         conversations.map(conv => (
@@ -310,7 +314,7 @@ export default function Sidebar({
                                                     : 'text-gray-800'
                                             }`}
                                         >
-                                            {conv.title || '未命名会话'}
+                                            {conv.title || t('chat.untitledConversation')}
                                         </div>
                                     )}
 
@@ -339,7 +343,7 @@ export default function Sidebar({
                                                 : 'bg-gray-100 text-gray-500')
                                         }
                 `}>
-                    {conv.status === 'active' ? '进行中' : '已完成'}
+                    {conv.status === 'active' ? t('chat.statusActive') : t('chat.statusCompleted')}
                 </span>
                                     </div>
                                 </div>
@@ -355,7 +359,7 @@ export default function Sidebar({
                                             : 'opacity-0 group-hover:opacity-100 hover:bg-red-50 text-gray-400 hover:text-red-500'
                                         }
                                     `}
-                                    title="删除会话"
+                                    title={t('sidebar.deleteTitle')}
                                 >
                                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                                         <path d="M11.5 3.5L2.5 12.5M2.5 3.5L11.5 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
