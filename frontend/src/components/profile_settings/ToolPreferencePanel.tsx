@@ -8,13 +8,16 @@ interface ToolPreferencePanelProps {
     t: (key: string) => string;
 }
 
-const GRAPHS = ['analysis', 'extract', 'arrange', 'render', 'reflect', 'quality'];
+const GRAPHS = ['analysis', 'extract', 'arrange']
+// 后续按需开放
+// const GRAPHS = ['analysis', 'extract', 'arrange', 'render', 'reflect', 'quality'];
 
 export default function ToolPreferencePanel({ profileId, t }: ToolPreferencePanelProps) {
     const [selectedGraph, setSelectedGraph] = useState<string>(GRAPHS[0]);
     const [graphConfig, setGraphConfig] = useState<any>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [isCustomConfig, setIsCustomConfig] = useState<boolean>(false);
 
     const fetchGraphConfig = async (graphName: string) => {
         if (!profileId) {
@@ -28,6 +31,7 @@ export default function ToolPreferencePanel({ profileId, t }: ToolPreferencePane
             const customRes = await getToolPreference(profileId, graphName);
             if (customRes.code === 200 && customRes.data) {
                 setGraphConfig(customRes.data);
+                setIsCustomConfig(true);
                 return;
             }
 
@@ -38,6 +42,7 @@ export default function ToolPreferencePanel({ profileId, t }: ToolPreferencePane
             }
             const defaultConfig = await response.json();
             setGraphConfig(defaultConfig);
+            setIsCustomConfig(false);
         } catch (err) {
             console.error(`加载图配置失败 (${graphName}):`, err);
             setError(`加载失败: ${err instanceof Error ? err.message : '未知错误'}`);
@@ -55,6 +60,10 @@ export default function ToolPreferencePanel({ profileId, t }: ToolPreferencePane
     const handleSaveSuccess = () => {
         // 保存成功后重新加载当前图，以显示最新配置
         fetchGraphConfig(selectedGraph);
+    };
+
+    const handleResetDefault = () => {
+        fetchGraphConfig(selectedGraph);   // 恢复默认配置后重新加载
     };
 
     return (
@@ -90,11 +99,14 @@ export default function ToolPreferencePanel({ profileId, t }: ToolPreferencePane
                 )}
                 {!loading && !error && graphConfig && (
                     <GraphViewer
+                        key={selectedGraph}
                         graphConfig={graphConfig}
                         profileId={profileId}
                         graphName={selectedGraph}
                         height="100%"
                         onSaveSuccess={handleSaveSuccess}
+                        onResetDefault={handleResetDefault}
+                        isCustomConfig={isCustomConfig}
                     />
                 )}
                 {!loading && !error && !graphConfig && (

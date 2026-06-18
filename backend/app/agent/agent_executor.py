@@ -6,6 +6,7 @@ Agent执行器
 
 import asyncio
 from datetime import datetime
+from typing import Optional
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.agent.state import AgentState, TaskStep
@@ -261,16 +262,8 @@ class AgentExecutor:
         self.task.updated_at = datetime.utcnow()
         self.db.commit()
 
-    def _add_thinking_step(self, step: str, content: str) -> None:
-        self.db.refresh(self.task)
-        steps = list(self.task.thinking_process or [])
-        steps.append({
-            "step": step,
-            "content": content,
-            "timestamp": datetime.utcnow().isoformat(),
-        })
-        self.task.thinking_process = steps
-        self.db.commit()
+    def _add_thinking_step(self, step: str, content: str, type: str = "info", status: str = None) -> None:
+        record_thought(self.task_id, step, content, type, status)
 
     def _add_assistant_message(self, content: str) -> None:
         """记录助手消息到会话"""

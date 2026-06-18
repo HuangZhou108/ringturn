@@ -63,6 +63,18 @@ function ChatFlow() {
     const [isUploading, setIsUploading] = useState(false)
     const [uploadedFileName, setUploadedFileName] = useState<string | null>(null)
     const [audioDuration, setAudioDuration] = useState<number | undefined>(undefined); // 上传的音频长度
+    // 清除上传状态的函数
+        const clearUploadState = useCallback(() => {
+            setAudioFileId(null);
+            setUploadedFileName(null);
+            setUploadSuccess(null);
+            setUploadError(null);
+            setUploadProgress(0);
+            setIsUploading(false);
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+        }, []);
 
     // 调试日志 - 每次渲染时打印完整状态
     console.log('[ChatFlow] === RENDER === audioFileId:', audioFileId, '| uploadSuccess:', uploadSuccess, '| isUploading:', isUploading, '| location.state:', JSON.stringify(location.state))
@@ -79,11 +91,36 @@ function ChatFlow() {
     const [refreshSidebar, setRefreshSidebar] = useState(0); // 刷新侧边栏
     // 使用 ref 保存路由状态，避免重新渲染时丢失
     const locationStateRef = useRef(location.state as any)
+    // 标题编辑状态
+    const [isEditingTitle, setIsEditingTitle] = useState(false);
+    const [editingTitleValue, setEditingTitleValue] = useState('');
 
     // 反馈任务相关
     const [feedbackMode, setFeedbackMode] = useState(false);
     const [availableParentTasks, setAvailableParentTasks] = useState<{ task_id: string; user_request: string }[]>([]);
     const [selectedParentTaskId, setSelectedParentTaskId] = useState<string | null>(null);
+    const [feedbackPanelOpen, setFeedbackPanelOpen] = useState(false);
+    // 获取当前会话中已完成的任务列表（用于反馈选择）
+    const loadCompletedTasks = useCallback(async () => {
+        if (!currentConversationId) {
+            setAvailableParentTasks([]);
+            return;
+        }
+        // 从消息中提取 assistant 消息且包含 audio_url 的任务
+        const tasks = messages
+            .filter(m => m.type === 'ai' && m.taskId && m.fileName) // fileName 即 audio_url
+            .map(m => ({ task_id: m.taskId!, user_request: m.content || '' }));
+        setAvailableParentTasks(tasks);
+    }, [messages, currentConversationId]);
+
+    const handleToggleFeedback = useCallback((newMode: boolean) => {
+        if (newMode) {
+            clearUploadState();          // 开启反馈时清除已上传音频
+            loadCompletedTasks();        // 刷新任务列表
+            setSelectedParentTaskId(null);
+        }
+        setFeedbackMode(newMode);
+    }, [clearUploadState, loadCompletedTasks]);
 
     // 获取当前Profile
     useEffect(() => {
@@ -131,10 +168,12 @@ function ChatFlow() {
         // 重置反馈模式
         setFeedbackMode(false)
         setSelectedParentTaskId(null)
+        setFeedbackPanelOpen(false);
         try {
             const res = await conversationApi.get(conversationId)
             if (res.code === 200) {
                 setCurrentConversation(res.data)
+                setIsEditingTitle(false);
 
                 // 将会话消息转换为UI消息
                 const uiMessages: Message[] = res.data.messages.map((msg) => ({
@@ -154,6 +193,12 @@ function ChatFlow() {
                 } else {
                     setMessages(uiMessages)
                 }
+
+                // 直接根据 uiMessages 计算已完成任务列表，避免 state 异步问题
+                const tasks = uiMessages
+                    .filter(m => m.type === 'ai' && m.taskId && m.fileName)
+                    .map(m => ({ task_id: m.taskId!, user_request: m.content || '' }));
+                setAvailableParentTasks(tasks);
             }
         } catch (err) {
             console.error('Failed to load conversation:', err)
@@ -161,8 +206,57 @@ function ChatFlow() {
         }
     }, [uploadedFileName])
 
+    // 双击标题进入编辑模式
+    const handleTitleDoubleClick = () => {
+        if (currentConversation) {
+            setIsEditingTitle(true);
+            setEditingTitleValue(currentConversation.title || '未命名会话');
+        }
+    };
+
+    // 保存标题
+    const handleTitleSave = async () => {
+        if (!currentConversation) return;
+        const newTitle = editingTitleValue.trim() || '未命名会话';
+        try {
+            const res = await conversationApi.updateTitle(currentConversation.conversation_id, newTitle);
+            if (res.code === 200) {
+                // 更新本地会话数据
+                setCurrentConversation(prev => prev ? { ...prev, title: newTitle } : prev);
+                // 刷新侧边栏会话列表
+                setRefreshSidebar(prev => prev + 1);
+                setIsEditingTitle(false);
+            } else {
+                showToast(res.message || '更新标题失败');
+            }
+        } catch (err) {
+            console.error('更新标题失败:', err);
+            showToast('更新标题失败');
+        }
+    };
+
+    // 取消编辑
+    const handleTitleCancel = () => {
+        setIsEditingTitle(false);
+    };
+
+    // 检测到宽度过小时自动关闭侧边栏
+    useEffect(() => {
+        const handleResize = () => {
+            if (window.innerWidth < 1024) {
+                setSidebarOpen(false);
+            }
+        };
+        window.addEventListener('resize', handleResize);
+        handleResize(); // 初始化时检查一次
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
     // 新建空会话
     const handleNewConversation = useCallback(() => {
+        // 清除 URL 中的会话 ID，回到干净的新建会话页面
+        navigate('/chat', { replace: true })
+
         setCurrentConversationId(null)
         setCurrentConversation(null)
         setMessages([])
@@ -185,6 +279,9 @@ function ChatFlow() {
         // 重置反馈模式
         setFeedbackMode(false)
         setSelectedParentTaskId(null)
+        setFeedbackPanelOpen(false);
+        // 显式清空已完成任务列表，确保重做按钮消失
+        setAvailableParentTasks([])
     }, [])
 
     // 加载历史任务（保留兼容性）
@@ -308,6 +405,25 @@ function ChatFlow() {
                         return msg
                     })
                 })
+                // 获取任务的 user_request（用于重做下拉显示）
+                let userRequest = '';
+                try {
+                    const taskRes = await api.getTask(taskId);
+                    if (taskRes.code === 200) {
+                        userRequest = taskRes.data.user_request;
+                    }
+                } catch (e) {
+                    console.warn('Failed to get task user_request', e);
+                }
+
+                // 直接添加到 availableParentTasks，不依赖 messages 的异步更新
+                // 延迟到下一帧更新，避免布局未完成时按钮位置偏移
+                requestAnimationFrame(() => {
+                    setAvailableParentTasks(prev => {
+                        if (prev.some(t => t.task_id === taskId)) return prev; // 避免重复
+                        return [...prev, { task_id: taskId, user_request: userRequest || '已完成的改编任务' }];
+                    });
+                });
             }
         } catch (err) {
             console.error('Failed to get task result:', err)
@@ -411,6 +527,7 @@ function ChatFlow() {
                     setInputValue('');
                     setFeedbackMode(false);
                     setSelectedParentTaskId(null);
+                    setFeedbackPanelOpen(false);
 
                     // 获取新创建的子任务 ID
                     const newTaskId = res.data.task_id;
@@ -833,19 +950,6 @@ function ChatFlow() {
         }
     }, [navigate]);
 
-    // 获取当前会话中已完成的任务列表（用于反馈选择）
-    const loadCompletedTasks = useCallback(async () => {
-        if (!currentConversationId) return [];
-        // 从会话消息中提取所有任务（需要后端支持或者从消息中解析）
-        // 简单做法：遍历 messages，找到 type='ai' 且 taskId 存在且对应任务状态为 completed 的
-        // 更可靠的是调用后端接口：GET /conversations/{id}/tasks?status=completed
-        // 这里为简化，直接从现有 messages 中提取（实际项目中应添加后端接口）
-        const tasks = messages
-            .filter(m => m.type === 'ai' && m.taskId)
-            .map(m => ({ task_id: m.taskId!, user_request: m.content || '' }));
-        setAvailableParentTasks(tasks);
-    }, [messages, currentConversationId]);
-
     return (
         <div className="flex flex-col h-screen bg-white text-gray-800 font-sans page-enter">
             <TopBar
@@ -901,24 +1005,42 @@ function ChatFlow() {
                             {/* 会话标题 */}
                             {currentConversation && (
                                 <div className="text-center mb-4">
-                                    <h2 className="text-lg font-medium text-gray-700">
-                                        {currentConversation.title || '未命名会话'}
-                                    </h2>
-                                    <div className="flex items-center justify-center gap-2 mt-1">
-                                        <span
-                                            className={`px-2 py-0.5 text-xs rounded ${
-                                                currentConversation.status === 'active'
-                                                    ? 'bg-green-100 text-green-600'
-                                                    : 'bg-gray-100 text-gray-500'
-                                            }`}
+                                    {isEditingTitle ? (
+                                        <div className="flex items-center justify-center gap-2">
+                                            <input
+                                                type="text"
+                                                value={editingTitleValue}
+                                                onChange={(e) => setEditingTitleValue(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') handleTitleSave();
+                                                    else if (e.key === 'Escape') handleTitleCancel();
+                                                }}
+                                                onBlur={handleTitleSave}
+                                                className="text-lg font-medium text-gray-700 border-b-2 border-[#00639d] focus:outline-none px-2 py-1 text-center min-w-[200px]"
+                                                autoFocus
+                                            />
+                                        </div>
+                                    ) : (
+                                        <h2
+                                            className="text-lg font-medium text-gray-700 cursor-pointer hover:text-[#00639d] transition-colors"
+                                            onDoubleClick={handleTitleDoubleClick}
+                                            title="双击编辑标题"
                                         >
-                                            {currentConversation.status === 'active'
-                                                ? '进行中'
-                                                : '已完成'}
-                                        </span>
+                                            {currentConversation.title || '未命名会话'}
+                                        </h2>
+                                    )}
+                                    <div className="flex items-center justify-center gap-2 mt-1">
+                                        {/* 状态标签等保持不变 */}
+                                        <span className={`px-2 py-0.5 text-xs rounded ${
+                                            currentConversation.status === 'active'
+                                                ? 'bg-green-100 text-green-600'
+                                                : 'bg-gray-100 text-gray-500'
+                                        }`}>
+                {currentConversation.status === 'active' ? '进行中' : '已完成'}
+            </span>
                                         <span className="text-xs text-gray-400">
-                                            {currentConversation.messages.length} 条消息
-                                        </span>
+                {currentConversation.messages.length} 条消息
+            </span>
                                     </div>
                                 </div>
                             )}
@@ -940,36 +1062,117 @@ function ChatFlow() {
                     </div>
 
                     {/* 底部输入区域 */}
-                    <ChatInputArea
-                        isProcessing={isProcessing}
-                        onCancel={handleCancel}
-                        mode="chat"
-                        // isFloating={false}
-                        inputValue={inputValue}
-                        setInputValue={setInputValue}
-                        handleSend={handleSend}
-                        fileInputRef={fileInputRef}
-                        handleFileSelect={handleFileSelect}
-                        instrument={instrument}
-                        setInstrument={setInstrument}
-                        tempo={tempo}
-                        setTempo={setTempo}
-                        audioDuration={audioDuration}
-                        duration={duration}
-                        setDuration={setDuration}
-                        filename={filename}
-                        setFilename={setFilename}
-                        isUploading={isUploading}
-                        uploadProgress={uploadProgress}
-                        uploadError={uploadError}
-                        uploadSuccess={uploadSuccess}
-                        feedbackMode={feedbackMode}
-                        setFeedbackMode={setFeedbackMode}
-                        selectedParentTaskId={selectedParentTaskId}
-                        setSelectedParentTaskId={setSelectedParentTaskId}
-                        availableParentTasks={availableParentTasks}
-                        loadCompletedTasks={loadCompletedTasks}
-                    />
+                    <div className="border-t border-gray-100 px-4 py-3">
+                        <div className="flex items-center justify-center">
+                            {/* ChatInputArea 占据父容器宽度 */}
+                            <div className="flex-shrink-0 w-[768px]">
+                            <ChatInputArea
+                                isProcessing={isProcessing}
+                                onCancel={handleCancel}
+                                mode="chat"
+                                inputValue={inputValue}
+                                setInputValue={setInputValue}
+                                handleSend={handleSend}
+                                fileInputRef={fileInputRef}
+                                handleFileSelect={handleFileSelect}
+                                instrument={instrument}
+                                setInstrument={setInstrument}
+                                tempo={tempo}
+                                setTempo={setTempo}
+                                audioDuration={audioDuration}
+                                duration={duration}
+                                setDuration={setDuration}
+                                filename={filename}
+                                setFilename={setFilename}
+                                isUploading={isUploading}
+                                uploadProgress={uploadProgress}
+                                uploadError={uploadError}
+                                uploadSuccess={uploadSuccess}
+                                feedbackMode={feedbackMode}
+                                setFeedbackMode={handleToggleFeedback}
+                                selectedParentTaskId={selectedParentTaskId}
+                                setSelectedParentTaskId={setSelectedParentTaskId}
+                                availableParentTasks={availableParentTasks}
+                                loadCompletedTasks={loadCompletedTasks}
+                            />
+                            </div>
+
+                            {/* 重做按钮（仅在存在已完成任务时显示） */}
+                            {availableParentTasks.length > 0 && (
+                                <div className="flex-shrink-0 ml-4">
+                                    <div className="relative flex items-center gap-2">
+                                        {/* 重做按钮 */}
+                                        <button
+                                            onClick={async () => {
+                                                if (!feedbackMode) {
+                                                    // 进入反馈模式，打开面板
+                                                    await loadCompletedTasks();
+                                                    setSelectedParentTaskId(null);
+                                                    setFeedbackMode(true);
+                                                    setFeedbackPanelOpen(true);
+                                                } else {
+                                                    // 已处于反馈模式，切换面板开关
+                                                    setFeedbackPanelOpen(!feedbackPanelOpen);
+                                                }
+                                            }}
+                                            title={
+                                                selectedParentTaskId
+                                                    ? availableParentTasks.find(t => t.task_id === selectedParentTaskId)?.user_request || '已选择任务'
+                                                    : '重做'
+                                            }
+                                            className={`px-4 py-2 rounded-md border transition-all duration-200 font-medium text-sm whitespace-nowrap ${
+                                                feedbackMode
+                                                    ? 'bg-blue-100 border-blue-300 text-blue-800'
+                                                    : 'bg-white border-gray-800 text-gray-800 hover:bg-gray-50'
+                                            }`}
+                                        >
+                                            重做
+                                        </button>
+
+                                        {/* 取消按钮（仅在反馈模式显示） */}
+                                        {feedbackMode && (
+                                            <button
+                                                onClick={() => {
+                                                    setFeedbackMode(false);
+                                                    setSelectedParentTaskId(null);
+                                                    setFeedbackPanelOpen(false);
+                                                }}
+                                                className="px-3 py-2 text-sm text-gray-500 hover:text-red-600 transition"
+                                            >
+                                                取消
+                                            </button>
+                                        )}
+
+                                        {/* 反馈模式浮动面板（仅当 feedbackMode 且面板打开时显示） */}
+                                        {feedbackMode && feedbackPanelOpen && (
+                                            <div className="absolute bottom-full right-0 mb-2 z-20 bg-white rounded-lg shadow-lg border border-gray-200 p-3 min-w-[240px]">
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <span className="text-xs text-gray-400">选择要反馈的任务</span>
+                                                </div>
+                                                <select
+                                                    value={selectedParentTaskId || ''}
+                                                    onChange={(e) => {
+                                                        setSelectedParentTaskId(e.target.value || null);
+                                                        setFeedbackPanelOpen(false); // 选择后关闭面板
+                                                    }}
+                                                    className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                                >
+                                                    <option value="">选择任务</option>
+                                                    {availableParentTasks.map((task) => (
+                                                        <option key={task.task_id} value={task.task_id}>
+                                                            {task.user_request.length > 40
+                                                                ? task.user_request.substring(0, 40) + '...'
+                                                                : task.user_request}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
                 </main>
             </div>
 

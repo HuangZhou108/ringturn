@@ -2,7 +2,6 @@ import numpy as np
 import librosa
 from pathlib import Path
 import urllib.request
-import tensorflow as tf
 from app.services.audio_models.download_yamnet import download_yamnet
 
 class YAMNetService:
@@ -83,6 +82,7 @@ class YAMNetService:
             return False
 
     def _load_tf_model(self):
+        import tensorflow as tf
         # 下载或定位 SavedModel 目录
         model_dir = download_yamnet(backend="tf", force_download=False)
         self.model = tf.saved_model.load(str(model_dir))
@@ -90,6 +90,7 @@ class YAMNetService:
         self.backend = "tf"
 
     def _load_tflite_model(self):
+        import tensorflow as tf
         model_path = download_yamnet(backend="tflite", force_download=False)
         self.interpreter = tf.lite.Interpreter(model_path=str(model_path))
         self.interpreter.allocate_tensors()

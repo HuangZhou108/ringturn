@@ -42,6 +42,9 @@ function Home() {
         if (tempo.trim()) params.tempo = parseInt(tempo, 10);
         if (duration.trim()) params.duration = parseInt(duration, 10);
         if (filename && filename.trim() !== '') params.filename = filename;
+        // 保存原始文件名
+        if (uploadedFileName) params.original_filename = uploadedFileName;
+
         // 其他参数后续在此添加
 
         try {

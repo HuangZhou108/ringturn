@@ -97,8 +97,7 @@ export default function ChatInputArea({
         // ==================== Home 模式（完全复刻原 Home 页面输入区域） ====================
         return (
             <div className="flex flex-col-reverse items-center px-4 mb-[240px] flex-shrink-0 relative">
-                {/* 参数面板（折叠） */}
-                {/* 参数面板（悬浮，不影响布局，带滑入滑出动画） */}
+                {/* 参数面板（折叠，悬浮，不影响布局，带滑入滑出动画） */}
                 <div
                     className={`absolute left-0 right-0 mx-auto transition-all duration-300 ease-out z-20 ${
                         showParams ? 'opacity-100 translate-y-0 visible' : 'opacity-0 -translate-y-4 invisible'
@@ -136,32 +135,32 @@ export default function ChatInputArea({
                         </div>
                     </div>
 
-                    {/* 上传状态显示 */}
-                    {(isUploading || uploadError || uploadSuccess) && (
-                        <div className="w-[691px] mt-2 self-center">
-                            {isUploading && (
-                                <>
-                                    <div className="flex items-center justify-between mb-1">
-                                        <span className="text-sm text-blue-600">正在上传...</span>
-                                        <span className="text-sm text-blue-600">{uploadProgress}%</span>
-                                    </div>
-                                    <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                                        <div className="h-full bg-blue-500 rounded-full transition-all duration-200" style={{ width: `${uploadProgress}%` }} />
-                                    </div>
-                                </>
-                            )}
-                            {uploadError && (
-                                <div className="h-[30px] flex items-center px-4 bg-red-50 border border-red-200 rounded-lg">
-                                    <span className="text-sm text-red-600">{uploadError}</span>
-                                </div>
-                            )}
-                            {uploadSuccess && (
-                                <div className="h-[30px] flex items-center px-4 bg-green-50 border border-green-200 rounded-lg">
-                                    <span className="text-sm text-green-600">{uploadSuccess}</span>
-                                </div>
-                            )}
-                        </div>
-                    )}
+                    {/*/!* 上传状态显示（已删除） *!/*/}
+                    {/*{(isUploading || uploadError || uploadSuccess) && (*/}
+                    {/*    <div className="w-[691px] mt-2 self-center">*/}
+                    {/*        {isUploading && (*/}
+                    {/*            <>*/}
+                    {/*                <div className="flex items-center justify-between mb-1">*/}
+                    {/*                    <span className="text-sm text-blue-600">正在上传...</span>*/}
+                    {/*                    <span className="text-sm text-blue-600">{uploadProgress}%</span>*/}
+                    {/*                </div>*/}
+                    {/*                <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">*/}
+                    {/*                    <div className="h-full bg-blue-500 rounded-full transition-all duration-200" style={{ width: `${uploadProgress}%` }} />*/}
+                    {/*                </div>*/}
+                    {/*            </>*/}
+                    {/*        )}*/}
+                    {/*        {uploadError && (*/}
+                    {/*            <div className="h-[30px] flex items-center px-4 bg-red-50 border border-red-200 rounded-lg">*/}
+                    {/*                <span className="text-sm text-red-600">{uploadError}</span>*/}
+                    {/*            </div>*/}
+                    {/*        )}*/}
+                    {/*        {uploadSuccess && (*/}
+                    {/*            <div className="h-[30px] flex items-center px-4 bg-green-50 border border-green-200 rounded-lg">*/}
+                    {/*                <span className="text-sm text-green-600">{uploadSuccess}</span>*/}
+                    {/*            </div>*/}
+                    {/*        )}*/}
+                    {/*    </div>*/}
+                    {/*)}*/}
 
                     {/* 按钮区域：直接放在对话框容器底部，左右分布 */}
                     <div className="flex items-center justify-between mt-[30px] mb-3 px-3">
@@ -176,13 +175,30 @@ export default function ChatInputArea({
                             >
                                 {OpenParaIcon}
                             </button>
-                            {/* 附件按钮 */}
-                            <button
-                                onClick={() => fileInputRef.current?.click()}
-                                className="flex items-center justify-center w-11 h-11"
-                            >
-                                {AttachmentIcon}
-                            </button>
+                            {/* 附件按钮 – 带高亮和 tooltip */}
+                            <div className="relative group">
+                                <button
+                                    onClick={() => fileInputRef.current?.click()}
+                                    className="flex items-center justify-center w-11 h-11 rounded-2xl transition hover:bg-gray-100"
+                                >
+                                    <svg
+                                        width="13"
+                                        height="20"
+                                        viewBox="0 0 13 20"
+                                        fill="none"
+                                        className="transition-colors duration-200"
+                                        style={{ fill: uploadError ? '#ef4444' : (isUploading || uploadSuccess ? '#3b82f6' : '#94a3b8') }}
+                                    >
+                                        <path d="M12.5 13.75C12.5 15.48315 11.8916 16.95801 10.67505 18.1748C9.4585 19.39136 7.9834 20 6.25 20C4.5166 20 3.0415 19.39136 1.82495 18.1748C0.608398 16.95801 0 15.48315 0 13.75V4.5C0 3.25 0.4375 2.1875 1.3125 1.3125C2.1875 0.4375 3.25 0 4.5 0C5.75 0 6.8125 0.4375 7.6875 1.3125C8.5625 2.1875 9 3.25 9 4.5V13.25C9 14.0166 8.7334 14.6665 8.19995 15.19995C7.6665 15.7334 7.0166 16 6.25 16C5.4834 16 4.8335 15.7334 4.30005 15.19995C3.7666 14.6665 3.5 14.0166 3.5 13.25V4H5.5V13.25C5.5 13.4668 5.5708 13.6455 5.7124 13.78735C5.854 13.92896 6.0332 14 6.25 14C6.4668 14 6.646 13.92896 6.7876 13.78735C6.9292 13.6455 7 13.4668 7 13.25V4.5C6.9834 3.8 6.73755 3.20825 6.26245 2.72485C5.7876 2.24145 5.19995 2 4.5 2C3.80005 2 3.2085 2.24145 2.7251 2.72485C2.2417 3.20825 2 3.8 2 4.5V13.75C1.9834 14.93335 2.3916 15.9375 3.2251 16.7622C4.05835 17.5872 5.06665 18 6.25 18C7.4165 18 8.4082 17.5872 9.2251 16.7622C10.0417 15.9375 10.4668 14.93335 10.5 13.75V4H12.5V13.75H12.5V20H10.5V20H6.25H12.5Z" />
+                                    </svg>
+                                </button>
+                                {/* 自定义 Tooltip – 瞬间显示 */}
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 text-xs text-white bg-gray-800 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none z-50">
+                                    {isUploading
+                                        ? `正在上传... ${uploadProgress}%`
+                                        : uploadSuccess || uploadError || '上传音频文件'}
+                                </div>
+                            </div>
                         </div>
                         {/* 右侧发送按钮 */}
                         <button
@@ -201,160 +217,100 @@ export default function ChatInputArea({
 
     // ==================== Chat 模式 ====================
     return (
-        <div className="border-t border-gray-100 px-4 py-3">
-            <div className="max-w-[768px] mx-auto relative">
-                {/* 上传状态显示 */}
-                {(isUploading || uploadError || uploadSuccess) && (
-                    <div className="mb-2 px-2 py-2 bg-[#f8fafc] rounded-xl border border-gray-100">
-                        {isUploading && (
-                            <div className="flex items-center gap-3">
-                                <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                                <span className="text-sm text-gray-600">正在上传... {uploadProgress}%</span>
-                            </div>
-                        )}
-                        {uploadError && (
-                            <div className="flex items-center gap-2 text-red-600">
-                                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                                    <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4.75v4.5a.75.75 0 001.5 0v-4.5a.75.75 0 00-1.5 0zM8 10.5a.875.875 0 110-1.75.875.875 0 010 1.75z"/>
-                                </svg>
-                                <span className="text-sm">{uploadError}</span>
-                            </div>
-                        )}
-                        {uploadSuccess && (
-                            <div className="flex items-center gap-2 text-green-600">
-                                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                                    <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/>
-                                </svg>
-                                <span className="text-sm">{uploadSuccess}</span>
-                            </div>
-                        )}
-                    </div>
-                )}
+        <div className="w-full relative">
+            {/*/!* 上传状态显示（已删除） *!/*/}
+            {/*{(isUploading || uploadError || uploadSuccess) && (*/}
+            {/*    <div className="mb-2 px-2 py-2 bg-[#f8fafc] rounded-xl border border-gray-100">*/}
+            {/*        {isUploading && (*/}
+            {/*            <div className="flex items-center gap-3">*/}
+            {/*                <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />*/}
+            {/*                <span className="text-sm text-gray-600">正在上传... {uploadProgress}%</span>*/}
+            {/*            </div>*/}
+            {/*        )}*/}
+            {/*        {uploadError && (*/}
+            {/*            <div className="flex items-center gap-2 text-red-600">*/}
+            {/*                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">*/}
+            {/*                    <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4.75v4.5a.75.75 0 001.5 0v-4.5a.75.75 0 00-1.5 0zM8 10.5a.875.875 0 110-1.75.875.875 0 010 1.75z"/>*/}
+            {/*                </svg>*/}
+            {/*                <span className="text-sm">{uploadError}</span>*/}
+            {/*            </div>*/}
+            {/*        )}*/}
+            {/*        {uploadSuccess && (*/}
+            {/*            <div className="flex items-center gap-2 text-green-600">*/}
+            {/*                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">*/}
+            {/*                    <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/>*/}
+            {/*                </svg>*/}
+            {/*                <span className="text-sm">{uploadSuccess}</span>*/}
+            {/*            </div>*/}
+            {/*        )}*/}
+            {/*    </div>*/}
+            {/*)}*/}
 
-                {/* 参数面板（折叠） */}
-                {/* 参数面板（悬浮，不影响布局，带滑入滑出动画） */}
-                <div
-                    className={`absolute left-0 w-full transition-all duration-300 ease-out z-20 ${
-                        showParams ? 'opacity-100 translate-y-0 visible' : 'opacity-0 translate-y-4 invisible'
+            {/* 参数面板（折叠） */}
+            <div
+                className={`absolute left-0 w-full transition-all duration-300 ease-out z-20 ${
+                    showParams ? 'opacity-100 translate-y-0 visible' : 'opacity-0 translate-y-4 invisible'
+                }`}
+                style={{ bottom: '100%' }}
+            >
+                <TrackParams
+                    instrument={instrument}
+                    setInstrument={setInstrument}
+                    tempo={tempo}
+                    setTempo={setTempo}
+                    audioDuration={audioDuration}
+                    duration={duration}
+                    setDuration={setDuration}
+                    filename={filename}
+                    setFilename={setFilename}
+                />
+            </div>
+
+            {/* 输入栏主体（保持原布局，无重做按钮） */}
+            <div className="relative flex flex-row-reverse items-center gap-2 bg-white border border-[#e0f2fe] rounded-3xl px-2.5 py-2.5">
+                {/* 发送按钮 */}
+                <button
+                    onClick={isProcessing ? onCancel : wrappedHandleSend}
+                    className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 transition ${
+                        isProcessing
+                            ? 'bg-red-500 hover:bg-red-600 shadow-[0_10px_15px_-3px_rgba(239,68,68,0.3)]'
+                            : 'bg-[#00639d] hover:bg-[#005288] shadow-[0px_10px_15px_-3px_#00639d4D,0px_4px_6px_-4px_#00639d4D]'
                     }`}
-                    style={{ bottom: '100%' }}
                 >
-                    <TrackParams
-                        instrument={instrument}
-                        setInstrument={setInstrument}
-                        tempo={tempo}
-                        setTempo={setTempo}
-                        audioDuration={audioDuration}
-                        duration={duration}
-                        setDuration={setDuration}
-                        filename={filename}
-                        setFilename={setFilename}
+                    {isProcessing ? (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                            <rect x="4" y="4" width="16" height="16" rx="2" />
+                        </svg>
+                    ) : (
+                        <svg width="19" height="16" viewBox="0 0 19 16" fill="none">
+                            <path d="M0 16V0L19 8L0 16ZM2 13L13.85 8L2 3V6.5L8 8L2 9.5V13Z" fill="#f7f9ff"/>
+                        </svg>
+                    )}
+                </button>
+
+                {/* 文本输入框 */}
+                <div className="flex-1 px-3 py-2.5 min-h-[39px] min-w-0">
+                    <textarea
+                        placeholder={t('input.placeholder')}
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        disabled={isProcessing}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                wrappedHandleSend();
+                            }
+                        }}
+                        className="w-full bg-transparent outline-none resize-none text-[15px] text-gray-700 placeholder-[#94a3b8] leading-tight"
+                        rows={1}
                     />
                 </div>
 
+                <div className="w-px h-8 bg-[#f1f5f9] mx-1 flex-shrink-0"></div>
 
-                {/* 输入栏主体 */}
-                <div className="relative flex flex-row-reverse items-center gap-2 bg-white border border-[#e0f2fe] rounded-3xl px-2.5 py-2.5">
-                    <button
-                        onClick={isProcessing ? onCancel : wrappedHandleSend}
-                        className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 transition ${
-                            isProcessing
-                                ? 'bg-red-500 hover:bg-red-600 shadow-[0_10px_15px_-3px_rgba(239,68,68,0.3)]'
-                                : 'bg-[#00639d] hover:bg-[#005288] shadow-[0px_10px_15px_-3px_#00639d4D,0px_4px_6px_-4px_#00639d4D]'
-                        }`}
-                    >
-                        {isProcessing ? (
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-                                <rect x="4" y="4" width="16" height="16" rx="2" />
-                            </svg>
-                        ) : (
-                            <svg width="19" height="16" viewBox="0 0 19 16" fill="none">
-                                <path d="M0 16V0L19 8L0 16ZM2 13L13.85 8L2 3V6.5L8 8L2 9.5V13Z" fill="#f7f9ff"/>
-                            </svg>
-                        )}
-                    </button>
-                    {/* ========= 新增：重做按钮区域（位于发送按钮左侧） ========= */}
-                    <div className="relative flex items-center gap-2">
-                        {/* 重做按钮 */}
-                        <button
-                            onClick={async () => {
-                                if (!setFeedbackMode) return;
-                                const newMode = !feedbackMode;
-                                if (newMode && loadCompletedTasks) {
-                                    await loadCompletedTasks();
-                                    setSelectedParentTaskId?.(null);
-                                } else {
-                                    setSelectedParentTaskId?.(null);
-                                }
-                                setFeedbackMode(newMode);
-                            }}
-                            className={`px-4 py-2 rounded-md border transition-all duration-200 font-medium text-sm whitespace-nowrap ${
-                                feedbackMode
-                                    ? 'bg-blue-100 border-blue-300 text-blue-800'
-                                    : 'bg-white border-gray-800 text-gray-800 hover:bg-gray-50'
-                            }`}
-                        >
-                            重做
-                        </button>
-
-                        {/* 反馈模式下的浮动面板（出现在重做按钮上方） */}
-                        {feedbackMode && (
-                            <div className="absolute bottom-full right-0 mb-2 z-20 bg-white rounded-lg shadow-lg border border-gray-200 p-3 min-w-[240px]">
-                                {/* 左侧取消按钮（在面板内部左侧） */}
-                                <div className="flex items-center justify-between mb-2">
-                                    <button
-                                        onClick={() => {
-                                            setFeedbackMode?.(false);
-                                            setSelectedParentTaskId?.(null);
-                                        }}
-                                        className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 transition"
-                                    >
-                                        取消
-                                    </button>
-                                    <span className="text-xs text-gray-400">选择要反馈的任务</span>
-                                </div>
-                                {/* 任务选择下拉框 */}
-                                <select
-                                    value={selectedParentTaskId || ''}
-                                    onChange={(e) => setSelectedParentTaskId?.(e.target.value || null)}
-                                    className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                                >
-                                    <option value="">选择任务</option>
-                                    {availableParentTasks.map((task) => (
-                                        <option key={task.task_id} value={task.task_id}>
-                                            {task.user_request.length > 40
-                                                ? task.user_request.substring(0, 40) + '...'
-                                                : task.user_request}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                        )}
-                    </div>
-                    {/* ========= 重做按钮区域结束 ========= */}
-
-                    {/* 文本输入框 */}
-                    <div className="flex-1 px-3 py-2.5 min-h-[39px]">
-                        <textarea
-                            placeholder={t('input.placeholder')}
-                            value={inputValue}
-                            onChange={(e) => setInputValue(e.target.value)}
-                            disabled={isProcessing}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' && !e.shiftKey) {
-                                    e.preventDefault();
-                                    wrappedHandleSend();
-                                }
-                            }}
-                            className="w-full bg-transparent outline-none resize-none text-[15px] text-gray-700 placeholder-[#94a3b8] leading-tight"
-                            rows={1}
-                        />
-                    </div>
-
-                    <div className="w-px h-8 bg-[#f1f5f9] mx-1"></div>
-
-                    <div className="flex flex-row-reverse items-center gap-4 px-1">
-                        {/* 附件按钮 */}
+                <div className="flex flex-row-reverse items-center gap-4 px-1 flex-shrink-0">
+                    {/* 附件按钮 – 修改后带高亮和 tooltip */}
+                    <div className="relative group">
                         <button
                             onClick={() => {
                                 if (feedbackMode) {
@@ -365,24 +321,38 @@ export default function ChatInputArea({
                                     console.error('[ChatInputArea] fileInputRef is null!')
                                     return
                                 }
-                                console.log('[ChatInputArea] Upload button clicked, fileInputRef:', fileInputRef.current)
                                 fileInputRef.current.click()
                             }}
-                            className="flex items-center justify-center w-11 h-11"
+                            className="flex items-center justify-center w-11 h-11 rounded-2xl transition hover:bg-gray-100"
                         >
-                            {AttachmentIcon}
+                            <svg
+                                width="13"
+                                height="20"
+                                viewBox="0 0 13 20"
+                                fill="none"
+                                className="transition-colors duration-200"
+                                style={{ fill: uploadError ? '#ef4444' : (isUploading || uploadSuccess ? '#3b82f6' : '#94a3b8') }}
+                            >
+                                <path d="M12.5 13.75C12.5 15.48315 11.8916 16.95801 10.67505 18.1748C9.4585 19.39136 7.9834 20 6.25 20C4.5166 20 3.0415 19.39136 1.82495 18.1748C0.608398 16.95801 0 15.48315 0 13.75V4.5C0 3.25 0.4375 2.1875 1.3125 1.3125C2.1875 0.4375 3.25 0 4.5 0C5.75 0 6.8125 0.4375 7.6875 1.3125C8.5625 2.1875 9 3.25 9 4.5V13.25C9 14.0166 8.7334 14.6665 8.19995 15.19995C7.6665 15.7334 7.0166 16 6.25 16C5.4834 16 4.8335 15.7334 4.30005 15.19995C3.7666 14.6665 3.5 14.0166 3.5 13.25V4H5.5V13.25C5.5 13.4668 5.5708 13.6455 5.7124 13.78735C5.854 13.92896 6.0332 14 6.25 14C6.4668 14 6.646 13.92896 6.7876 13.78735C6.9292 13.6455 7 13.4668 7 13.25V4.5C6.9834 3.8 6.73755 3.20825 6.26245 2.72485C5.7876 2.24145 5.19995 2 4.5 2C3.80005 2 3.2085 2.24145 2.7251 2.72485C2.2417 3.20825 2 3.8 2 4.5V13.75C1.9834 14.93335 2.3916 15.9375 3.2251 16.7622C4.05835 17.5872 5.06665 18 6.25 18C7.4165 18 8.4082 17.5872 9.2251 16.7622C10.0417 15.9375 10.4668 14.93335 10.5 13.75V4H12.5V13.75H12.5V20H10.5V20H6.25H12.5Z" />
+                            </svg>
                         </button>
-
-                        {/* 参数开关按钮 */}
-                        <button
-                            onClick={() => setShowParams(!showParams)}
-                            className="w-11 h-11 bg-[#f0f9ff] rounded-2xl flex items-center justify-center shadow-[inset_0px_2px_4px_0px_#0000000D] hover:bg-[#e0f2fe] transition"
-                            title={t('chat.showParams') || '参数设置'}
-                        >
-                            {OpenParaIcon}
-                        </button>
-                        <input ref={fileInputRef} type="file" accept=".mp3,.wav,.flac,.m4a,.ogg" onChange={handleFileSelect} className="hidden" />
+                        {/* 自定义 Tooltip – 瞬间显示 */}
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 text-xs text-white bg-gray-800 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none z-50">
+                            {isUploading
+                                ? `正在上传... ${uploadProgress}%`
+                                : uploadSuccess || uploadError || '上传音频文件'}
+                        </div>
                     </div>
+
+                    {/* 参数开关按钮 */}
+                    <button
+                        onClick={() => setShowParams(!showParams)}
+                        className="w-11 h-11 bg-[#f0f9ff] rounded-2xl flex items-center justify-center shadow-[inset_0px_2px_4px_0px_#0000000D] hover:bg-[#e0f2fe] transition"
+                        title={t('chat.showParams') || '参数设置'}
+                    >
+                        {OpenParaIcon}
+                    </button>
+                    <input ref={fileInputRef} type="file" accept=".mp3,.wav,.flac,.m4a,.ogg" onChange={handleFileSelect} className="hidden" />
                 </div>
             </div>
         </div>

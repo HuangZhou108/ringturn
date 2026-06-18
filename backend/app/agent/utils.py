@@ -1,8 +1,9 @@
 # backend/app/agent/utils.py
 import numpy as np
-from typing import Any, Dict
+from typing import Any, Dict, Callable
 import re
 import json
+from .thinking_utils import record_thought
 
 def convert_numpy_to_native(obj: Any) -> Any:
     """递归地将 numpy 类型转换为 Python 原生类型"""
@@ -47,3 +48,43 @@ def extract_json_from_response(text: str) -> dict:
     json_str = json_str.strip()
     # 尝试直接解析
     return json.loads(json_str)
+
+async def log_tool_call(
+    task_id: str,
+    step_name: str,
+    tool_func: Callable,
+    *args,
+    tool_name: str = None,
+    **kwargs
+):
+    """记录工具调用的开始、结果/异常，并返回工具返回值。"""
+    tool_name = tool_name or getattr(tool_func, "__name__", "unknown_tool")
+    # 截断参数避免记录过长
+    args_str = str(args)[:200]
+    kwargs_str = str(kwargs)[:200]
+    record_thought(
+        task_id,
+        step_name,
+        f"调用工具: {tool_name} (参数: {args_str}, {kwargs_str})",
+        type="tool_call",
+        status="pending"
+    )
+    try:
+        result = await tool_func(*args, **kwargs)
+        record_thought(
+            task_id,
+            step_name,
+            f"工具返回: {str(result)[:300]}",
+            type="tool_result",
+            status="success"
+        )
+        return result
+    except Exception as e:
+        record_thought(
+            task_id,
+            step_name,
+            f"工具执行失败: {str(e)}",
+            type="tool_result",
+            status="failed"
+        )
+        raise
