@@ -17,7 +17,7 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
     const [saving, setSaving] = useState(false);
 
     // 本地编辑状态（用户覆盖部分）
-    const [useAi, setUseAi] = useState(true);           // use_ai_preferences
+    // const [useAi, setUseAi] = useState(true);           // use_ai_preferences
     const [instrument, setInstrument] = useState('');
     const [tempo, setTempo] = useState<number | null>(null);
     const [duration, setDuration] = useState<number | null>(null);
@@ -32,7 +32,7 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
             if (res.code === 200 && res.data) {
                 setPrefData(res.data);
                 const overrides = res.data.user_overrides;
-                setUseAi(overrides?.use_ai_preferences ?? true);
+                // setUseAi(overrides?.use_ai_preferences ?? true);
                 setInstrument(overrides?.instrument ?? '');
                 setTempo(overrides?.tempo ?? null);
                 setDuration(overrides?.duration ?? null);
@@ -58,8 +58,22 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
                 .split(',')
                 .map(s => s.trim())
                 .filter(s => s !== '');
+
+            // 检查是否有任何有效输入
+            const hasAnyValue = instrument !== '' || tempo !== null || duration !== null || styleTags.length > 0;
+
+            if (!hasAnyValue) {
+                // 如果所有字段为空，等同于清除覆盖
+                await profileApi.resetPreferences(profileId);
+                await loadPreferences();
+                onSave?.();
+                alert('已恢复 AI 推荐设置');
+                setSaving(false);
+                return;
+            }
+
             const updateData: PreferenceUpdateRequest = {
-                use_ai_preferences: useAi,
+                use_ai_preferences: false,
                 instrument: instrument || null,
                 tempo: tempo ?? null,
                 duration: duration ?? null,
@@ -147,34 +161,35 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
             <div className="border border-gray-200 rounded-xl p-4">
                 <div className="flex items-center justify-between mb-4">
                     <h4 className="text-sm font-semibold text-gray-700">个人偏好设置</h4>
-                    <button
-                        onClick={handleReset}
-                        disabled={saving}
-                        className="text-xs text-red-500 hover:text-red-700 transition disabled:opacity-50"
-                    >
-                        恢复 AI 推荐
-                    </button>
+                    {prefData?.user_overrides !== null && (
+                        <button
+                            onClick={handleReset}
+                            disabled={saving}
+                            className="text-xs text-red-500 hover:text-red-700 transition disabled:opacity-50"
+                        >
+                            恢复 AI 推荐
+                        </button>
+                    )}
                 </div>
 
-                {/* 是否使用 AI 推荐开关 */}
-                <div className="flex items-center justify-between mb-5">
-                    <span className="text-sm text-gray-700">使用 AI 智能推荐</span>
-                    <button
-                        onClick={() => setUseAi(!useAi)}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
-                            useAi ? 'bg-[#00639d]' : 'bg-gray-300'
-                        }`}
-                    >
-            <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
-                    useAi ? 'translate-x-6' : 'translate-x-1'
-                }`}
-            />
-                    </button>
-                </div>
+            {/*    /!* 是否使用 AI 推荐开关 *!/*/}
+            {/*    <div className="flex items-center justify-between mb-5">*/}
+            {/*        <span className="text-sm text-gray-700">使用 AI 智能推荐</span>*/}
+            {/*        <button*/}
+            {/*            onClick={() => setUseAi(!useAi)}*/}
+            {/*            className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${*/}
+            {/*                useAi ? 'bg-[#00639d]' : 'bg-gray-300'*/}
+            {/*            }`}*/}
+            {/*        >*/}
+            {/*<span*/}
+            {/*    className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${*/}
+            {/*        useAi ? 'translate-x-6' : 'translate-x-1'*/}
+            {/*    }`}*/}
+            {/*/>*/}
+            {/*        </button>*/}
+            {/*    </div>*/}
 
                 {/* 当不使用 AI 推荐时，显示自定义表单 */}
-                {!useAi && (
                     <div className="space-y-4 mt-2">
                         {/* 乐器选择 */}
                         <div>
@@ -242,7 +257,6 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
                             </p>
                         </div>
                     </div>
-                )}
 
                 {/* 当前有效偏好提示 */}
                 <div className="mt-5 pt-3 border-t border-gray-100 text-xs text-gray-400">

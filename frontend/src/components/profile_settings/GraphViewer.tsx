@@ -485,6 +485,11 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
                                 if (editMode) {
                                     // 从开变为关：如果有未保存修改，自动保存
                                     if (hasUnsavedChanges) {
+                                        // 如果配置无效，阻止保存并提示用户
+                                        if (!isValid) {
+                                            alert('当前配置无效（存在不可达节点），无法保存。请点击恢复默认配置。');
+                                            return;
+                                        }
                                         try {
                                             await handleSave();   // 保存成功后才关闭编辑模式
                                             setEditMode(false);
@@ -503,7 +508,7 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
                             {editMode ? '编辑模式(开)' : '编辑模式(关)'}
                         </button>
                         {!isValid && editMode && (
-                            <span className="text-red-600 text-sm">⚠️ 当前配置无效，无法保存</span>
+                            <span className="text-red-600 text-sm"> 当前配置无效，无法保存，请点击恢复默认配置</span>
                         )}
                     </div>
                     {/* 恢复默认配置按钮（仅当编辑模式开启且不是默认配置时显示） */}
