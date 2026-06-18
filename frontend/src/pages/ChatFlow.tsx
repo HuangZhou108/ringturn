@@ -1051,13 +1051,13 @@ function ChatFlow() {
                             {/* 消息列表 */}
                             <MessageList messages={messages} t={t} />
 
-                            {/* WebSocket连接状态指示器 */}
-                            {currentTaskId && isConnected && (
-                                <div className="fixed bottom-24 right-8 flex items-center gap-2 px-3 py-1.5 bg-green-100 text-green-700 text-xs rounded-full shadow">
-                                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                                    WebSocket 已连接
-                                </div>
-                            )}
+                            {/*/!* WebSocket连接状态指示器（已注释） *!/*/}
+                            {/*{currentTaskId && isConnected && (*/}
+                            {/*    <div className="fixed bottom-24 right-8 flex items-center gap-2 px-3 py-1.5 bg-green-100 text-green-700 text-xs rounded-full shadow">*/}
+                            {/*        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>*/}
+                            {/*        WebSocket 已连接*/}
+                            {/*    </div>*/}
+                            {/*)}*/}
                         </div>
                     </div>
 
@@ -1110,6 +1110,7 @@ function ChatFlow() {
                                                     setSelectedParentTaskId(null);
                                                     setFeedbackMode(true);
                                                     setFeedbackPanelOpen(true);
+                                                    clearUploadState();
                                                 } else {
                                                     // 已处于反馈模式，切换面板开关
                                                     setFeedbackPanelOpen(!feedbackPanelOpen);

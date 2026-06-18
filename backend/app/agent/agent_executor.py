@@ -114,6 +114,15 @@ class AgentExecutor:
                 "tempo": inter.get("tempo", 120),
                 "instrument": inter.get("instrument", "Acoustic Piano"),
             })
+            # 用用户反馈中新指定的参数覆盖父任务的旧值
+            if self.ringtone_params.instrument:
+                state["instrument"] = self.ringtone_params.instrument
+            if self.ringtone_params.tempo:
+                state["tempo"] = self.ringtone_params.tempo
+            if self.ringtone_params.duration:
+                state["duration"] = self.ringtone_params.duration
+            if self.ringtone_params.filename:
+                state["filename"] = self.ringtone_params.filename
 
         return state
 

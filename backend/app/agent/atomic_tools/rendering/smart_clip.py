@@ -163,7 +163,22 @@ async def smart_clip_with_analysis(
             top_peak_times = [valid_peak_times[i] for i in sorted_indices[:5]]
         else:
             top_peak_times = valid_peak_times
-        candidates.update(top_peak_times)
+        
+        # 构建候选起始点：改为段落的起始位置（如果存在）
+        rank_map = {}
+        for rank, t in enumerate(top_peak_times):
+            found_start = None
+            for sec in boundary_sections:
+                start = sec.get('start')
+                end = sec.get('end')
+                if start is not None and end is not None and start <= t < end:
+                    found_start = start
+                    break
+            candidate_time = found_start if found_start is not None else t
+            if candidate_time not in rank_map or rank < rank_map[candidate_time]:
+                rank_map[candidate_time] = rank
+            candidates.add(candidate_time)
+        print(f"[DEBUG] top_peak_times: {top_peak_times}, candidate_time: {candidate_time}")
 
         candidate_list = [t for t in candidates if 0 <= t <= total_duration - target_duration]
         if not candidate_list:
@@ -183,10 +198,8 @@ async def smart_clip_with_analysis(
 
         for t in candidate_list:
             is_boundary = any(abs(t - b) < 0.5 for b in boundary_times)  # 边界候选，阈值0.5秒
-            # 判断是否为能量峰值，并确定排名（0,1,2）
-            energy_rank = None
-            if t in energy_candidates:
-                energy_rank = energy_candidates.index(t)  # 0,1,2
+            # 获取能量排名（如果候选来自峰值点）
+            energy_rank = rank_map.get(t)  # 直接获取，可能为None
             if is_boundary and energy_rank is not None:
                 w = 1.2  # 重合权重
             elif is_boundary:
@@ -204,9 +217,10 @@ async def smart_clip_with_analysis(
                 # 根据分类决定选择方式
         start_time = None
         if clip_preference.get("category") == 1:
-            # 选择能量最高的候选
-            if energy_candidates:
-                start_time = energy_candidates[0]
+            # 选择排名最高的候选（即排名0对应的段落起始）
+            if rank_map:
+                best_time = min(rank_map, key=lambda k: rank_map[k])
+                start_time = best_time
                 record_thought(task_id, "render", f"根据用户偏好（能量高）选择起始点: {start_time:.2f}s")
         elif clip_preference.get("category") == 3:
             # 用户指定了时间
