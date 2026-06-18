@@ -234,6 +234,61 @@ class LLMService:
             "check_quality",
         ]
 
+    async def extract_clip_preference(self, user_request: str) -> dict:
+        """
+        解析用户请求中的截取偏好，返回分类结果。
+        返回格式: {"category": int, "value": Any}
+        category含义:
+            1: 能量高（副歌/高潮）
+            2: 特定片段（主歌/副歌等，但无法精确定位，故随机）
+            3: 特定时间（如"35-75秒"）
+            4: 无指定偏好
+        当category=3时，value应包含起始时间（秒），例如 {"category": 3, "value": 35}
+        """
+        prompt = """你是一个音乐分析助手。分析用户对截取音频片段位置的描述，并分类。
+    分类规则：
+    1. 如果用户希望截取“高潮”、“副歌”、“最精彩”、“能量最高”的部分，类别为1，value为null。
+    2. 如果用户提到“主歌”、“第一段”、“第二段”等具体段落，但无法精确定位，类别为2，value为null。
+    3. 如果用户指定了具体时间范围，如“35秒到75秒”、“从30秒开始”、“1分20秒”，类别为3，value为起始时间（秒数）。注意将“1分20秒”转换为80秒。
+    4. 如果用户没有提及任何位置偏好，类别为4，value为null。
+
+    只输出JSON对象，格式：{"category": 整数, "value": 数字或null}，例如：
+    - {"category": 1, "value": null}
+    - {"category": 3, "value": 35}
+    - {"category": 4, "value": null}
+    不要输出其他内容。"""
+        messages = [{"role": "user", "content": f"用户请求：{user_request}\n{prompt}"}]
+        try:
+            response = await self.chat(messages, temperature=0.2, max_tokens=150)
+            import re, json
+            # 清理 markdown 代码块
+            match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", response, re.DOTALL)
+            if match:
+                json_str = match.group(1).strip()
+            else:
+                json_str = response.strip()
+            result = json.loads(json_str)
+            # 验证字段
+            if isinstance(result, dict) and "category" in result:
+                category = int(result["category"])
+                if category not in [1, 2, 3, 4]:
+                    return {"category": 4, "value": None}
+                value = result.get("value")
+                if category == 3:
+                    # 尝试将value转换为浮点数，若失败则回退None
+                    try:
+                        value = float(value)
+                    except (TypeError, ValueError):
+                        value = None
+                else:
+                    value = None
+                return {"category": category, "value": value}
+            else:
+                return {"category": 4, "value": None}
+        except Exception as e:
+            print(f"[LLM] extract_clip_preference failed: {e}")
+            return {"category": 4, "value": None}
+
     async def reflect_on_quality(
         self,
         quality_result: dict,

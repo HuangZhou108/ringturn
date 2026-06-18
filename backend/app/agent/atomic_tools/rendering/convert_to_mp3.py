@@ -28,7 +28,7 @@ async def convert_wav_to_mp3(wav_path: str, mp3_path: str, bitrate: str = "192k"
         except ImportError:
             raise RuntimeError("ffmpeg not found and pydub not installed")
     subprocess.run(
-        [ffmpeg, "-i", wav_path, "-codec:a", "libmp3lame", "-b:a", bitrate, mp3_path],
+        [ffmpeg, "-y", "-i", wav_path, "-codec:a", "libmp3lame", "-b:a", bitrate, mp3_path],
         check=True,
         capture_output=True
     )
