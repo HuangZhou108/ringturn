@@ -23,6 +23,11 @@ async def render_node(state: AgentState) -> dict:
     if not Path(midi_path).exists():
         raise FileNotFoundError(f"渲染输入 MIDI 不存在: {midi_path}")
     target_duration = state.get("duration", settings.DEFAULT_RINGTONE_DURATION)
+    # 确保 target_duration 为数值类型
+    try:
+        target_duration = float(target_duration)
+    except (ValueError, TypeError):
+        target_duration = float(settings.DEFAULT_RINGTONE_DURATION)
     task_id = state["task_id"]
     task_dir = Path(settings.RINGTONES_DIR) / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
