@@ -15,7 +15,7 @@ import ReactFlow, {
 } from 'reactflow';
 import dagre from 'dagre';
 import 'reactflow/dist/style.css';
-import { updateToolPreference } from '../../api/profile';
+import { updateToolPreference, deleteToolPreference } from '../../api/profile';
 
 interface GraphViewerProps {
     graphConfig: {
@@ -31,6 +31,8 @@ interface GraphViewerProps {
     graphName: string;
     height?: number;
     onSaveSuccess?: () => void;
+    onResetDefault?: () => void;
+    isCustomConfig: boolean;
 }
 
 // 节点样式
@@ -86,7 +88,7 @@ function getLayoutedElements(
     return { nodes: layoutedNodes, edges };
 }
 
-export default function GraphViewer({ graphConfig, profileId, graphName, height = 400, onSaveSuccess }: GraphViewerProps) {
+export default function GraphViewer({ graphConfig, profileId, graphName, height = 400, onSaveSuccess, onResetDefault, isCustomConfig }: GraphViewerProps) {
     const [nodes, setNodes] = useNodesState([]);
     const [edges, setEdges] = useEdgesState([]);
     const [disabledNodes, setDisabledNodes] = useState<Set<string>>(new Set());
@@ -96,9 +98,15 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
     const [saving, setSaving] = useState(false);
     const [currentConfig, setCurrentConfig] = useState<any>(null);
     const [showFullscreen, setShowFullscreen] = useState(false);
+    const [isDefaultConfig, setIsDefaultConfig] = useState(!isCustomConfig);
     const initialLoadRef = useRef(false);
 
-    // 获取所有边的原始定义（不包括重连逻辑）
+    // 当父组件传入的 isCustomConfig 变化时，更新 isDefaultConfig
+    useEffect(() => {
+        setIsDefaultConfig(!isCustomConfig);
+    }, [isCustomConfig]);
+
+    // 获取所有边的原始定义
     const getAllEdges = useCallback((config: GraphViewerProps['graphConfig']) => {
         const edges = config.edges || [];
         const condEdges = (config.conditional_edges || []).flatMap(ce =>
@@ -108,7 +116,7 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
         return [...edges, ...condEdges, ...defaultEdges];
     }, []);
 
-    // 根据禁用集生成有效边（串行节点自动重连）
+    // 根据禁用集生成有效边
     const getEffectiveEdges = useCallback((nodes: { id: string }[], edges: { from: string; to: string }[], disabled: Set<string>) => {
         let remaining = edges.filter(e => !disabled.has(e.from) && !disabled.has(e.to));
         for (const nodeId of disabled) {
@@ -191,7 +199,7 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
         return newDisabled;
     }, [disabledNodes]);
 
-    // 切换节点禁用状态
+    // 切换节点禁用状态（修改时标记非默认）
     const toggleNode = useCallback((nodeId: string) => {
         const allEdges = getAllEdges(graphConfig);
         let newDisabled: Set<string>;
@@ -203,6 +211,7 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
         }
         setDisabledNodes(newDisabled);
         setHasUnsavedChanges(true);
+        setIsDefaultConfig(false);   // 用户修改 → 不再是默认配置
 
         const effectiveEdges = getEffectiveEdges(graphConfig.nodes, allEdges, newDisabled);
         const connectivityOk = validateConnectivity(
@@ -218,10 +227,11 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
         setCurrentConfig(newConfig);
     }, [disabledNodes, graphConfig, getAllEdges, cascadeDisable, getEffectiveEdges, validateConnectivity, generateConfigFromState]);
 
-    // 重置为默认状态（清除所有禁用）
+    // 重置为默认状态（清除所有禁用，标记为默认）
     const loadDefaultConfig = useCallback(() => {
         setDisabledNodes(new Set());
         setHasUnsavedChanges(false);
+        setIsDefaultConfig(!isCustomConfig);   // 根据当前是否为自定义配置设置
         const allEdges = getAllEdges(graphConfig);
         const effectiveEdges = getEffectiveEdges(graphConfig.nodes, allEdges, new Set());
         const connectivityOk = validateConnectivity(
@@ -236,8 +246,8 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
         setCurrentConfig(defaultConfig);
     }, [graphConfig, getAllEdges, getEffectiveEdges, validateConnectivity, generateConfigFromState]);
 
-    // 保存配置
-    const handleSave = async () => {
+    // 保存配置（抛出异常以便调用者捕获）
+    const handleSave = useCallback(async () => {
         if (!currentConfig) return;
         setSaving(true);
         try {
@@ -248,21 +258,31 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
         } catch (err) {
             console.error('保存失败', err);
             alert('保存失败');
+            throw err;   // 抛出异常
         } finally {
             setSaving(false);
         }
-    };
+    }, [currentConfig, profileId, graphName, onSaveSuccess]);
 
-    // 退出编辑模式
-    const handleExitEditMode = () => {
-        if (hasUnsavedChanges) {
-            if (confirm('有未保存的修改，是否保存？')) {
-                handleSave();
-            } else {
-                loadDefaultConfig();
-            }
+    // 恢复默认配置
+    const handleResetDefault = async () => {
+        if (!profileId || !graphName) return;
+        if (!confirm('确定要恢复默认配置吗？自定义修改将丢失。')) return;
+        setSaving(true);
+        try {
+            await deleteToolPreference(profileId, graphName);
+            // 通知父组件重新加载默认配置
+            if (onResetDefault) onResetDefault();
+            // 本地重置状态（父组件重新加载后会再次调用 loadDefaultConfig，届时 isDefaultConfig 会重新设为 true）
+            setDisabledNodes(new Set());
+            setHasUnsavedChanges(false);
+            setEditMode(false);
+        } catch (err) {
+            console.error('恢复默认配置失败', err);
+            alert('恢复默认配置失败，请稍后重试');
+        } finally {
+            setSaving(false);
         }
-        setEditMode(false);
     };
 
     // 初次加载时生成默认 config
@@ -273,14 +293,13 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
         }
     }, [graphConfig, loadDefaultConfig]);
 
-    // 根据禁用集动态渲染图（包含条件边样式）
+    // 根据禁用集动态渲染图
     useEffect(() => {
         if (!graphConfig || !graphConfig.nodes) return;
         const allEdges = getAllEdges(graphConfig);
         const effectiveEdges = getEffectiveEdges(graphConfig.nodes, allEdges, disabledNodes);
         const enabledNodes = graphConfig.nodes.filter(n => !disabledNodes.has(n.id));
 
-        // 构建条件边标识集合
         const conditionalEdgeKeys = new Set<string>();
         graphConfig.conditional_edges?.forEach(ce => {
             Object.values(ce.mapping).forEach(target => {
@@ -377,41 +396,18 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
         setEdges((eds) => applyEdgeChanges(changes, eds));
     }, [setEdges]);
 
+    // 双击处理：触发全屏（放大状态）
+    const handleDoubleClick = () => {
+        setShowFullscreen(true);
+    };
+
     if (!graphConfig || !graphConfig.nodes) {
         return <div className="flex items-center justify-center h-[400px] text-gray-400">暂无图结构数据</div>;
     }
 
-    return (
-        <>
-            {/* 控制栏 */}
-            <div className="absolute top-2 left-2 z-10 flex gap-2 bg-white/80 p-2 rounded shadow">
-                <button
-                    onClick={() => setEditMode(true)}
-                    className={`px-3 py-1 rounded ${editMode ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}
-                >
-                    编辑模式
-                </button>
-                {editMode && (
-                    <>
-                        <button
-                            onClick={handleSave}
-                            disabled={!hasUnsavedChanges || !isValid || saving}
-                            className="px-3 py-1 bg-green-600 text-white rounded disabled:opacity-50"
-                        >
-                            {saving ? '保存中...' : '保存'}
-                        </button>
-                        <button
-                            onClick={handleExitEditMode}
-                            className="px-3 py-1 bg-gray-400 text-white rounded"
-                        >
-                            退出
-                        </button>
-                        {!isValid && (
-                            <span className="text-red-600 text-sm">⚠️ 当前配置无效，无法保存</span>
-                        )}
-                    </>
-                )}
-            </div>
+    // ---------- 常规视图（非全屏） ----------
+    if (!showFullscreen) {
+        return (
             <div
                 style={{
                     height: typeof height === 'number' ? `${height}px` : height,
@@ -422,6 +418,11 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
                     position: 'relative',
                 }}
             >
+                {/* 左上角文字：双击放大编辑 */}
+                <div className="absolute top-2 left-2 z-10 text-xs text-gray-400 bg-white/80 px-2 py-1 rounded shadow pointer-events-none">
+                    双击放大编辑
+                </div>
+
                 <ReactFlow
                     nodes={nodes}
                     edges={edges}
@@ -432,14 +433,19 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
                     onNodeMouseLeave={onNodeMouseLeave}
                     onEdgeMouseEnter={onEdgeMouseEnter}
                     onEdgeMouseLeave={onEdgeMouseLeave}
+                    onDoubleClick={handleDoubleClick}
+                    onPaneDoubleClick={handleDoubleClick}   // 确保点击空白区域也能触发
                     fitView
                     attributionPosition="bottom-right"
-                    minZoom={0.5}
+                    minZoom={0.2}
                     maxZoom={1.5}
+                    zoomOnDoubleClick={false}
                 >
                     <Background color="#cbd5e1" gap={16} />
                     <Controls />
                 </ReactFlow>
+
+                {/* 右上角放大按钮 */}
                 <button
                     onClick={() => setShowFullscreen(true)}
                     className="absolute top-2 right-2 z-10 p-1.5 bg-white rounded-full shadow-md hover:bg-gray-100 transition"
@@ -450,46 +456,93 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
                     </svg>
                 </button>
             </div>
+        );
+    }
 
-            {showFullscreen && (
-                <div
-                    className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-8"
+    // ---------- 全屏模态框（放大状态） ----------
+    return (
+        <div
+            className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-8"
+            onClick={() => setShowFullscreen(false)}
+        >
+            <div
+                className="bg-white rounded-xl w-[90vw] h-[85vh] relative"
+                onClick={(e) => e.stopPropagation()}
+            >
+                {/* 关闭按钮 */}
+                <button
                     onClick={() => setShowFullscreen(false)}
+                    className="absolute top-2 right-2 z-10 p-2 bg-white rounded-full shadow-md hover:bg-gray-100"
                 >
-                    <div
-                        className="bg-white rounded-xl w-[90vw] h-[85vh] relative"
-                        onClick={(e) => e.stopPropagation()}
-                    >
+                    ✕
+                </button>
+
+                {/* 控制栏（全屏模式下显示） */}
+                <div className="absolute top-2 left-2 z-10 flex flex-col gap-2 bg-white/80 p-2 rounded shadow">
+                    <div className="flex gap-2">
                         <button
-                            onClick={() => setShowFullscreen(false)}
-                            className="absolute top-2 right-2 z-10 p-2 bg-white rounded-full shadow-md hover:bg-gray-100"
+                            onClick={async () => {
+                                if (editMode) {
+                                    // 从开变为关：如果有未保存修改，自动保存
+                                    if (hasUnsavedChanges) {
+                                        try {
+                                            await handleSave();   // 保存成功后才关闭编辑模式
+                                            setEditMode(false);
+                                        } catch (e) {
+                                            // 保存失败，保持编辑模式
+                                        }
+                                    } else {
+                                        setEditMode(false);
+                                    }
+                                } else {
+                                    setEditMode(true);
+                                }
+                            }}
+                            className={`px-3 py-1 rounded ${editMode ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}
                         >
-                            ✕
+                            {editMode ? '编辑模式(开)' : '编辑模式(关)'}
                         </button>
-                        <div style={{ width: '100%', height: '100%' }}>
-                            <ReactFlow
-                                nodes={nodes}
-                                edges={edges}
-                                onNodeClick={editMode ? (_, node) => toggleNode(node.id) : undefined}
-                                onNodesChange={onNodesChange}
-                                onEdgesChange={onEdgesChange}
-                                onNodeMouseEnter={onNodeMouseEnter}
-                                onNodeMouseLeave={onNodeMouseLeave}
-                                onEdgeMouseEnter={onEdgeMouseEnter}
-                                onEdgeMouseLeave={onEdgeMouseLeave}
-                                fitView
-                                attributionPosition="bottom-right"
-                                minZoom={0.5}
-                                maxZoom={2}
-                            >
-                                <Background color="#cbd5e1" gap={16} />
-                                <Controls />
-                                <MiniMap nodeStrokeWidth={3} zoomable pannable />
-                            </ReactFlow>
-                        </div>
+                        {!isValid && editMode && (
+                            <span className="text-red-600 text-sm">⚠️ 当前配置无效，无法保存</span>
+                        )}
                     </div>
+                    {/* 恢复默认配置按钮（仅当编辑模式开启且不是默认配置时显示） */}
+                    {editMode && !isDefaultConfig && (
+                        <div className="flex gap-2 mt-1">
+                            <button
+                                onClick={handleResetDefault}
+                                disabled={saving}
+                                className="px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-50"
+                            >
+                                {saving ? '处理中...' : '恢复默认配置'}
+                            </button>
+                        </div>
+                    )}
                 </div>
-            )}
-        </>
+
+                {/* ReactFlow 画布 */}
+                <div style={{ width: '100%', height: '100%' }}>
+                    <ReactFlow
+                        nodes={nodes}
+                        edges={edges}
+                        onNodeClick={editMode ? (_, node) => toggleNode(node.id) : undefined}
+                        onNodesChange={onNodesChange}
+                        onEdgesChange={onEdgesChange}
+                        onNodeMouseEnter={onNodeMouseEnter}
+                        onNodeMouseLeave={onNodeMouseLeave}
+                        onEdgeMouseEnter={onEdgeMouseEnter}
+                        onEdgeMouseLeave={onEdgeMouseLeave}
+                        fitView
+                        attributionPosition="bottom-right"
+                        minZoom={0.2}
+                        maxZoom={2}
+                    >
+                        <Background color="#cbd5e1" gap={16} />
+                        <Controls />
+                        <MiniMap nodeStrokeWidth={3} zoomable pannable />
+                    </ReactFlow>
+                </div>
+            </div>
+        </div>
     );
 }
