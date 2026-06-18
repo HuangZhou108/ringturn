@@ -3,10 +3,11 @@ stages:
   - build
   - test
 
-# 全局缓存：让各个 job 共享 node_modules，避免每次从零下载
+# 全局缓存
 cache:
   paths:
     - frontend/node_modules/
+    - .cache/pip/
 
 
 # ============================================
@@ -20,9 +21,6 @@ lint-backend:
     - ruff check app/ --select=F821,F822,F823 --ignore=I
   tags:
     - shell
-  rules:
-    - if: $CI_MERGE_REQUEST_IID
-    - if: $CI_COMMIT_BRANCH != "main"
 
 lint-frontend:
   stage: lint
@@ -33,13 +31,23 @@ lint-frontend:
     - npm run lint
   tags:
     - shell
-  rules:
-    - if: $CI_MERGE_REQUEST_IID
-    - if: $CI_COMMIT_BRANCH != "main"
 
 # ============================================
 # 阶段 2: 构建
 # ============================================
+build-backend:
+  stage: build
+  script:
+    - cd backend
+    - pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --upgrade pip setuptools wheel build
+    - python3 -m build --sdist --wheel -o dist
+  artifacts:
+    paths:
+      - backend/dist/
+    expire_in: 1 week
+  tags:
+    - shell
+
 build-frontend:
   stage: build
   script:
@@ -48,9 +56,6 @@ build-frontend:
     - npx vite build
   tags:
     - shell
-  rules:
-    - if: $CI_MERGE_REQUEST_IID
-    - if: $CI_COMMIT_BRANCH != "main"
 
 # ============================================
 # 阶段 3: 测试
@@ -64,6 +69,3 @@ test-backend:
     - python3 -m pytest tests/ -v --tb=short
   tags:
     - shell
-  rules:
-    - if: $CI_MERGE_REQUEST_IID
-    - if: $CI_COMMIT_BRANCH != "main"
