@@ -141,7 +141,7 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
                     <svg className="w-4 h-4 text-[#00639d]" fill="currentColor" viewBox="0 0 20 20">
                         <path d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" />
                     </svg>
-                    AI 智能推荐
+                    {t('preference.aiRecommendation')}
                 </h4>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                     <div className="text-gray-500">乐器</div>
@@ -160,14 +160,14 @@ export default function PreferencePanel({ profileId, onSave, t }: PreferencePane
             {/* 用户覆盖区 */}
             <div className="border border-gray-200 rounded-xl p-4">
                 <div className="flex items-center justify-between mb-4">
-                    <h4 className="text-sm font-semibold text-gray-700">个人偏好设置</h4>
+                    <h4 className="text-sm font-semibold text-gray-700">{t('preference.personalSettings')}</h4>
                     {prefData?.user_overrides !== null && (
                         <button
                             onClick={handleReset}
                             disabled={saving}
                             className="text-xs text-red-500 hover:text-red-700 transition disabled:opacity-50"
                         >
-                            恢复 AI 推荐
+                            {t('preference.resetAI')}
                         </button>
                     )}
                 </div>

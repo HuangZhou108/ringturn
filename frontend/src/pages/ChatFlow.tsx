@@ -202,7 +202,7 @@ function ChatFlow() {
             }
         } catch (err) {
             console.error('Failed to load conversation:', err)
-            showToast('加载会话失败')
+            showToast(t('conversation.loadFailed'))
         }
     }, [uploadedFileName])
 
@@ -210,14 +210,14 @@ function ChatFlow() {
     const handleTitleDoubleClick = () => {
         if (currentConversation) {
             setIsEditingTitle(true);
-            setEditingTitleValue(currentConversation.title || '未命名会话');
+            setEditingTitleValue(currentConversation.title || t('chat.untitledConversation'));
         }
     };
 
     // 保存标题
     const handleTitleSave = async () => {
         if (!currentConversation) return;
-        const newTitle = editingTitleValue.trim() || '未命名会话';
+        const newTitle = editingTitleValue.trim() || t('chat.untitledConversation');
         try {
             const res = await conversationApi.updateTitle(currentConversation.conversation_id, newTitle);
             if (res.code === 200) {
@@ -227,11 +227,11 @@ function ChatFlow() {
                 setRefreshSidebar(prev => prev + 1);
                 setIsEditingTitle(false);
             } else {
-                showToast(res.message || '更新标题失败');
+                showToast(res.message || t('conversation.updateTitleFailed'));
             }
         } catch (err) {
             console.error('更新标题失败:', err);
-            showToast('更新标题失败');
+            showToast(t('conversation.updateTitleFailed'));
         }
     };
 
@@ -421,7 +421,7 @@ function ChatFlow() {
                 requestAnimationFrame(() => {
                     setAvailableParentTasks(prev => {
                         if (prev.some(t => t.task_id === taskId)) return prev; // 避免重复
-                        return [...prev, { task_id: taskId, user_request: userRequest || '已完成的改编任务' }];
+                        return [...prev, { task_id: taskId, user_request: userRequest || t('chat.feedbackDefaultTaskName') }];
                     });
                 });
             }
@@ -500,7 +500,7 @@ function ChatFlow() {
             }
         } catch (err) {
             console.error('Failed to fetch task info:', err)
-            showToast('加载任务失败')
+            showToast(t('conversation.loadFailed'))
         }
     }
 
@@ -511,7 +511,7 @@ function ChatFlow() {
         // 反馈模式
         if (feedbackMode) {
             if (!selectedParentTaskId) {
-                showToast('请选择要反馈的任务');
+                showToast(t('chat.feedbackSelectTaskHint'));
                 return;
             }
             // 收集当前参数
@@ -540,7 +540,7 @@ function ChatFlow() {
                         type: 'ai',
                         taskId: newTaskId,
                         deepThinking: t('chat.deepThinking'),
-                        content: '根据您的反馈正在优化...',
+                        content: t('chat.optimizing'),
                         thinkingProcess: [],
                     };
                     setMessages((prev) => [...prev, processingMsg]);
@@ -553,7 +553,7 @@ function ChatFlow() {
                     setRefreshSidebar(prev => prev + 1);
                     if (currentConversationId) loadConversation(currentConversationId);
                 } else {
-                    showToast(res.message || '反馈提交失败');
+                    showToast(res.message || t('common.saveFailed'));
                 }
             } catch (err) {
                 console.error(err);
@@ -1026,7 +1026,7 @@ function ChatFlow() {
                                             onDoubleClick={handleTitleDoubleClick}
                                             title="双击编辑标题"
                                         >
-                                            {currentConversation.title || '未命名会话'}
+                                            {currentConversation.title || t('chat.untitledConversation')}
                                         </h2>
                                     )}
                                     <div className="flex items-center justify-center gap-2 mt-1">
@@ -1036,10 +1036,10 @@ function ChatFlow() {
                                                 ? 'bg-green-100 text-green-600'
                                                 : 'bg-gray-100 text-gray-500'
                                         }`}>
-                {currentConversation.status === 'active' ? '进行中' : '已完成'}
+                {currentConversation.status === 'active' ? t('chat.statusActive') : t('chat.statusCompleted')}
             </span>
                                         <span className="text-xs text-gray-400">
-                {currentConversation.messages.length} 条消息
+                {t('chat.messagesCount', { count: currentConversation.messages.length })}
             </span>
                                     </div>
                                 </div>
@@ -1119,7 +1119,7 @@ function ChatFlow() {
                                             title={
                                                 selectedParentTaskId
                                                     ? availableParentTasks.find(t => t.task_id === selectedParentTaskId)?.user_request || '已选择任务'
-                                                    : '重做'
+                                                    : {t('chat.feedbackRetry')}
                                             }
                                             className={`px-4 py-2 rounded-md border transition-all duration-200 font-medium text-sm whitespace-nowrap ${
                                                 feedbackMode
@@ -1140,7 +1140,7 @@ function ChatFlow() {
                                                 }}
                                                 className="px-3 py-2 text-sm text-gray-500 hover:text-red-600 transition"
                                             >
-                                                取消
+                                                {t('profile.cancel')}
                                             </button>
                                         )}
 
@@ -1158,7 +1158,7 @@ function ChatFlow() {
                                                     }}
                                                     className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
                                                 >
-                                                    <option value="">选择任务</option>
+                                                    <option value="">{t('chat.feedbackSelectTask')}</option>
                                                     {availableParentTasks.map((task) => (
                                                         <option key={task.task_id} value={task.task_id}>
                                                             {task.user_request.length > 40

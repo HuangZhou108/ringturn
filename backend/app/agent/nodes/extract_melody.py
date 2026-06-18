@@ -34,7 +34,7 @@ async def extract_melody_node(state: AgentState) -> dict:
                 separate_sources_demucs,
                 audio_path=audio_path,
                 stems="vocals",
-                model="htdemucs_ft"
+                model="htdemucs"
             )
             state["demucs_separated"] = True
             state["vocals_path"] = result.get("vocals_path")

@@ -73,7 +73,7 @@ export default function Sidebar({
         e.stopPropagation()
         e.preventDefault()
 
-        if (!confirm('确定删除该会话？')) return
+        if (!confirm(t('sidebar.deleteConfirm'))) return
 
         try {
             const res = await conversationApi.delete(id)
@@ -221,7 +221,7 @@ export default function Sidebar({
                             filter === 'all' ? 'bg-[#00639d] text-white' : 'text-gray-500 hover:bg-gray-50'
                         }`}
                     >
-                        全部
+                        {t('sidebar.filterAll')}
                     </button>
                     <button
                         onClick={() => setFilter('active')}
@@ -229,7 +229,7 @@ export default function Sidebar({
                             filter === 'active' ? 'bg-[#00639d] text-white' : 'text-gray-500 hover:bg-gray-50'
                         }`}
                     >
-                        进行中
+                        {t('sidebar.filterActive')}
                     </button>
                     <button
                         onClick={() => setFilter('completed')}
@@ -237,7 +237,7 @@ export default function Sidebar({
                             filter === 'completed' ? 'bg-[#00639d] text-white' : 'text-gray-500 hover:bg-gray-50'
                         }`}
                     >
-                        已完成
+                        {t('sidebar.filterCompleted')}
                     </button>
                 </div>
 
@@ -250,7 +250,7 @@ export default function Sidebar({
                         onClick={loadConversations}
                         disabled={isLoading}
                         className="p-1 hover:bg-gray-200 rounded transition disabled:opacity-50"
-                        title="刷新"
+                        title="{t('sidebar.refresh')}"
                     >
                         {/* 图标来自：https://heroicons.com/ */}
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor" className={`size-4 ${isLoading ? 'animate-spin' : ''}`}>

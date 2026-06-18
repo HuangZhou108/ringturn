@@ -100,7 +100,7 @@ function ThinkingProcess({ entries, t }: { entries: ThinkingEntry[]; t: (key: st
                         !isDeepExpanded ? 'underline' : ''
                     }`}
                 >
-                    深度思考过程
+                    {t('chat.deepThinking')}
                 </p>
                 <span className="text-xs text-gray-400">
                     {isDeepExpanded ? '▼' : '▶'}
@@ -295,7 +295,7 @@ export default function MessageList({ messages, t }: MessageListProps) {
                                                 }
                                                 className="px-3 py-1.5 bg-[#0284c7] text-white text-xs font-medium rounded-lg hover:bg-[#0369a1] transition"
                                             >
-                                                下载
+                                                {t('chat.download')}
                                             </button>
                                         </div>
                                     </div>

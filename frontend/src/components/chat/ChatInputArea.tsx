@@ -314,7 +314,7 @@ export default function ChatInputArea({
                         <button
                             onClick={() => {
                                 if (feedbackMode) {
-                                    alert('反馈模式下不可上传文件');
+                                    alert('t(\'chat.uploadDisabled\')');
                                     return;
                                 }
                                 if (!fileInputRef.current) {
@@ -348,7 +348,7 @@ export default function ChatInputArea({
                     <button
                         onClick={() => setShowParams(!showParams)}
                         className="w-11 h-11 bg-[#f0f9ff] rounded-2xl flex items-center justify-center shadow-[inset_0px_2px_4px_0px_#0000000D] hover:bg-[#e0f2fe] transition"
-                        title={t('chat.showParams') || '参数设置'}
+                        title={t('chat.showParams') || '{t(\'chat.showParams\')}'}
                     >
                         {OpenParaIcon}
                     </button>

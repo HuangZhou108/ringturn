@@ -121,7 +121,7 @@ export default function TrackParams({
                                         <div className="p-2 border-b border-gray-100">
                                             <input
                                                 type="text"
-                                                placeholder="搜索乐器..."
+                                                placeholder={t('params.searchInstrument')}
                                                 value={searchTerm}
                                                 onChange={(e) => setSearchTerm(e.target.value)}
                                                 className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#00639d]"
@@ -131,7 +131,7 @@ export default function TrackParams({
                                         {/* 滚动列表，最大高度约 200px，显示约 4-5 项 */}
                                         <div className="max-h-48 overflow-y-auto">
                                             {filteredInstruments.length === 0 ? (
-                                                <div className="px-4 py-2 text-sm text-gray-400">无匹配乐器</div>
+                                                <div className="px-4 py-2 text-sm text-gray-400">{t('params.noMatchInstrument')}</div>
                                             ) : (
                                                 filteredInstruments.map((inst) => (
                                                     <button
@@ -196,7 +196,7 @@ export default function TrackParams({
                     </div>
                     <p className="text-[11px] font-semibold uppercase tracking-[2.2px] text-[#94a3b8]">{t('params.duration')}</p>
                     {audioDuration && (
-                        <span className="text-[10px] text-gray-400 ml-1">(最长 {Math.floor(audioDuration)}s)</span>
+                        <span className="text-[10px] text-gray-400 ml-1">{t('params.maxDuration', { duration: Math.floor(audioDuration) })}</span>
                     )}
                 </div>
 
