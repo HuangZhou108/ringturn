@@ -40,6 +40,16 @@ async def analyze_structure_msaf(
     except ImportError:
         raise RuntimeError("MSAF not found. Please install with: pip install msaf")
     
+    # 全域清理临时目录，防止任务失败
+    import glob
+    import shutil
+    # 删除所有 estimations 目录
+    for d in glob.glob("**/estimations", recursive=True):
+        shutil.rmtree(d)
+    # 删除所有 .features_msaf_tmp.json
+    # for f in glob.glob("**/.features_msaf_tmp.json", recursive=True):
+    #     f.unlink()
+    
     # 加载音频文件并运行结构分割
     # MSAF 内部会使用默认特征（PCP + MFCC 混合），无需手动指定特征提取器。
     # 如需自定义特征（如 'pcp'、'mfcc'）或算法（boundaries_id/labels_id），可参考官方文档：https://msaf.readthedocs.io/

@@ -27,7 +27,7 @@ async def extract_melody_node(state: AgentState) -> dict:
 
     # 如果 analysis 未执行（analysis_result 为 None），则主动进行 Demucs 分离
     if state.get("analysis_result") is None:
-        record_thought(task_id, "extract_melody", "analysis 未执行，主动进行 Demucs 音源分离")
+        record_thought(task_id, "extract_melody", "发现analysis 未执行demucs，主动进行 Demucs 音源分离")
         try:
             from app.agent.atomic_tools.analysis.demucs_separate import separate_sources_demucs
             result = await asyncio.to_thread(
@@ -65,6 +65,6 @@ async def extract_melody_node(state: AgentState) -> dict:
     if not melody_data.get("midi_path"):
         melody_data["midi_path"] = audio_path.replace(".mp3", "_melody.mid").replace(".wav", "_melody.mid")
         Path(melody_data["midi_path"]).parent.mkdir(parents=True, exist_ok=True)
-
+    print(f"[DEBUG] extract_melody_node returning melody_data with keys: {melody_data.keys() if melody_data else None}")
     record_thought(task_id, "extract_melody", f"旋律提取完成，音符数: {len(melody_data.get('melody_notes', []))}")
     return {"melody_data": melody_data}

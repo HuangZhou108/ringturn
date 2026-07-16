@@ -23,6 +23,7 @@ async def node_separate_demucs(state: AgentState) -> dict:
         )
         vocals_path = result.get("vocals_path")
         other_path = result.get("other_path")
+        print(f"[DEBUG DEMUCS]demucs运行成功， vocals_path= {vocals_path}")
         if not vocals_path or not other_path:
             raise RuntimeError("Demucs 分离未生成所需轨道")
         if task_id:

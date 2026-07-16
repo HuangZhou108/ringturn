@@ -3,6 +3,11 @@ from app.agent.state import AgentState
 
 @register_condition("analysis_route_separation")
 def route_separation(state: AgentState) -> str:
+    should = state.get("should_separate", False)
+    print(f"[DEBUG] route_separation: state keys: {list(state.keys())}")
+    print(f"[DEBUG] route_separation: should_separate={should}")
+    result = "separate" if should else "no_separate"
+    print(f"[DEBUG] route_separation: returning {result}")
     return "separate" if state.get("should_separate") else "no_separate"
 
 @register_condition("analysis_after_separation")

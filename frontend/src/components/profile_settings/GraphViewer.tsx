@@ -167,7 +167,7 @@ export default function GraphViewer({ graphConfig, profileId, graphName, height 
     // 生成保存的图配置
     const generateConfigFromState = useCallback((originalConfig: any, disabled: Set<string>, effectiveEdges: any[]) => {
         const enabledNodes = originalConfig.nodes.filter((n: any) => !disabled.has(n.id));
-        const newConditionalEdges = (originalConfig.conditional_edges || []).map((ce: any) => ({
+        const newConditionalEdges = (originalConfig.conditional_edges || []).filter((ce: any) => !disabled.has(ce.from)).map((ce: any) => ({
             ...ce,
             mapping: Object.fromEntries(
                 Object.entries(ce.mapping).filter(([_, target]) => !disabled.has(target as string))

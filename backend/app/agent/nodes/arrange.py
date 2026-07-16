@@ -27,8 +27,12 @@ async def arrange_node(state: AgentState) -> dict:
     if "arrange" not in plan:   
         return {}
     midi_path = state["midi_path"]
+    if not midi_path:
+        melody_data = state.get("melody_data")
+        if isinstance(melody_data, dict):
+            midi_path = melody_data.get("midi_path")
     if not midi_path or not Path(midi_path).exists():
-        raise ValueError(f"MIDI 文件不存在: {midi_path}")
+        raise ValueError(f"[Arrange] MIDI 文件不存在: {midi_path}")
     
     profile_id = state.get("profile_id")
     # 准备工具链图需要的状态（原样传递）
