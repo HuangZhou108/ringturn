@@ -2,6 +2,8 @@
 [![en](https://img.shields.io/badge/lang-English-red.svg)](./README.en.md)
 [![zh](https://img.shields.io/badge/lang-中文-blue.svg)](./README.md)
 
+*This document was translated with the assistance of AI and has been reviewed by human contributors.*
+
 ## Disclaimer
 
 **This project is a course project for the undergraduate course *Software Engineering and Computing III* at the School of Intelligent Software and Engineering, Nanjing University. It is for educational purposes only.**
@@ -19,6 +21,8 @@
 RingTurn is an AI-powered music adaptation application that allows users to upload audio, set parameters, and describe their needs in natural language. The system automatically performs music analysis, melody extraction, MIDI generation, instrument arrangement, and audio rendering.
 
 The project includes a frontend (React + Vite) and a backend (FastAPI + LangGraph).
+
+This project is designed to run locally by default, with no user registration, login, or cloud account system. Therefore, instead of a traditional User module, we use Profiles to manage user-specific configurations. Profiles only store local preference data such as instrument choices and default parameters. They collect no personally identifiable information, which reduces deployment complexity and avoids additional privacy compliance overhead. For details, please refer to [Profile and Local Storage Design Document](./docs/设计说明文档：Profile模块与本地存储方案.md) (Chinese only).
 
 ### Project Background and Motivation
 
