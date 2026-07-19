@@ -31,7 +31,7 @@ export default function UserManualModal({ isOpen, onClose }: UserManualModalProp
 
                 {/* 内容区域 */}
                 <div className="flex-1 overflow-y-auto p-6">
-                    <div className="text-center text-gray-500 text-sm leading-relaxed">
+                    <div className="text-gray-500 text-sm leading-relaxed whitespace-pre-wrap">
                         {t('manual.content')}
                     </div>
                 </div>

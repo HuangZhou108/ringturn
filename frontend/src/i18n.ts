@@ -347,9 +347,15 @@ i18n
                         loadFailed: "Failed to load conversation",
                         updateTitleFailed: "Failed to update title",
                     },
-                    manual: {
-                        title: 'User Manual',
-                        content: 'Welcome to RingTurn for music adaptation. Currently, we recommend adapting pop songs with simple structures, using orchestral instruments such as violin and flute, with BPM between 80 and 120. For best results, we strongly suggest setting the generated audio length to 15–30 seconds.'
+                    "manual": {
+                        "title": "User Manual",
+                        "content": "Welcome to RingTurn, an AI-powered music adaptation tool.\n\n" +
+                            "⚠️ Copyright Disclaimer:\n" +
+                            "• You are responsible for ensuring you have the legal right to use any audio you upload.\n" +
+                            "• Generated ringtones are for personal use only. Commercial use or public distribution is prohibited.\n" +
+                            "• This software is provided 'AS IS', without any warranty.\n\n" +
+                            "For best results, we recommend adapting pop songs with simple structures, using orchestral instruments such as violin and flute, with BPM between 80 and 120. We strongly suggest setting the generated audio length to 15–30 seconds.\n\n" +
+                            "You can reopen this manual at any time by clicking the \"? Support\" button in the sidebar."
                     },
                 },
             },
@@ -693,10 +699,16 @@ i18n
                         loadFailed: "加载会话失败",
                         updateTitleFailed: "更新标题失败",
                     },
-                    manual: {
-                        title: '用户手册',
-                        content: '欢迎使用转铃进行音乐改编。现阶段，我们推荐改编结构较为简单的流行乐，乐器选用小提琴、长笛等管弦乐器，BPM 控制在 80–120 之间。强烈建议将生成音频的长度设置为 15–30 秒，以获得最佳效果。'
-                    },
+                    "manual": {
+                        "title": "用户手册",
+                        "content": "欢迎使用 RingTurn，一款 AI 音乐改编工具。\n\n" +
+                            "⚠️ 版权声明：\n" +
+                            "• 您需确保自己拥有所上传音频的合法使用权。\n" +
+                            "• 生成的铃声音频仅供个人使用，不得用于商业目的或公开传播。\n" +
+                            "• 本软件按“原样”提供，不提供任何担保。\n\n" +
+                            "现阶段，我们推荐改编结构较为简单的流行乐，乐器选用小提琴、长笛等管弦乐器，BPM 控制在 80–120 之间。强烈建议将生成音频的长度设置为 15–30 秒，以获得最佳效果。\n\n" +
+                            "您随时可以点击侧边栏的“？支持”按钮重新打开本手册。"
+                    }
                 },
             },
         },
