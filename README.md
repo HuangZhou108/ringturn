@@ -1,4 +1,6 @@
 # RingTurn
+[![en](https://img.shields.io/badge/lang-English-red.svg)](./README.en.md)
+[![zh](https://img.shields.io/badge/lang-中文-blue.svg)](./README.md)
 ## 免责声明
 
 **本项目为南京大学智能软件与工程学院本科《软件工程与计算Ⅲ》课程项目，仅供学习使用。**
