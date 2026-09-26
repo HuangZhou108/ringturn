@@ -28,12 +28,14 @@ async def check_quality_node(state: AgentState) -> dict:
     task_id = state["task_id"]
     profile_id = state.get("profile_id")
 
-    # 准备子状态
+    # 准备子状态（传 melody_data / analysis_result 这两个「已声明」字段，供音乐性评估用）
     sub_state = {
         "task_id": task_id,
         "final_audio_path": audio_path,
         "max_retries": state.get("max_retries", 0),
         "step_results": state.get("step_results", {}),
+        "melody_data": state.get("melody_data"),
+        "analysis_result": state.get("analysis_result"),
     }
 
     graph = await get_quality_graph()

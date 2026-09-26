@@ -51,11 +51,8 @@ def separate_sources_demucs(
             - other_path: 其他乐器轨道路径
             - accompaniment_path: 伴奏轨道路径（所有非人声轨道混合）
     """
-    # 确保 demucs 可用
-    import shutil
-    demucs_path = shutil.which("demucs")
-    if not demucs_path:
-        raise RuntimeError("Demucs not found. Please install with: pip install demucs")
+    # 用当前解释器的 demucs.separate 模块调用（不依赖 PATH 中的 demucs.exe）
+    import sys
 
     # 设置输出目录
     if output_dir is None:
@@ -63,7 +60,7 @@ def separate_sources_demucs(
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     # 构建命令行参数
-    cmd = [demucs_path, "-n", model, "-o", output_dir]
+    cmd = [sys.executable, "-m", "demucs.separate", "-n", model, "-o", output_dir]
 
     # 根据 stems 参数决定是否使用 --two-stems 或完整分离
     if stems == "vocals":

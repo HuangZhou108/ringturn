@@ -15,6 +15,7 @@
     { "id": "spectral", "type": "regular" },
     { "id": "sections", "type": "regular" },
     { "id": "msaf", "type": "regular" },
+    { "id": "harmony", "type": "regular" },
     { "id": "optional_decision", "type": "regular" },
     { "id": "infer_mood", "type": "regular" },
     { "id": "detect_effects", "type": "regular" },
@@ -28,7 +29,8 @@
     { "from": "loudness", "to": "merge" },
     { "from": "spectral", "to": "merge" },
     { "from": "sections", "to": "merge" },
-    { "from": "msaf", "to": "merge" }
+    { "from": "msaf", "to": "merge" },
+    { "from": "harmony", "to": "merge" }
   ],
   "conditional_edges": [
     {
@@ -65,6 +67,7 @@
     { "from": "fork", "to": "spectral" },
     { "from": "fork", "to": "sections" },
     { "from": "fork", "to": "msaf" },
+    { "from": "fork", "to": "harmony" },
     { "from": "fork", "to": "optional_decision" },
     { "from": "infer_mood", "to": "merge" },
     { "from": "detect_effects", "to": "merge" }

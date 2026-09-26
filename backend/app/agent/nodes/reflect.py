@@ -49,13 +49,24 @@ async def reflect_node(state: AgentState) -> dict:
 
     new_retry_count = retry_count + 1 if needs_revision else 0
     reflection_data = {"reason": reason, "suggestions": suggestions}
-    
+
+    # 根据质量问题给出纠正动作，让重试真正能改善结果
+    correction = None
     if needs_revision:
-        record_thought(
-            state["task_id"],
-            "reflect",
-            f"质量不达标，将进行第 {state['retry_count']} 次重试。原因: {reason}",
-        )
+        correction = "snap_to_key"  # 重新做调性校正（含八度校正）
+        will_retry = (retry_count + 1) <= max_retries
+        if will_retry:
+            record_thought(
+                state["task_id"],
+                "reflect",
+                f"质量不达标，将进行第 {retry_count + 1} 次重试。原因: {reason}，纠正动作: {correction}",
+            )
+        else:
+            record_thought(
+                state["task_id"],
+                "reflect",
+                f"质量不达标，但已达最大重试次数({max_retries})，任务结束。原因: {reason}",
+            )
     else:
         record_thought(state["task_id"], "reflect", "质量检查通过，无需重试")
 
@@ -63,4 +74,5 @@ async def reflect_node(state: AgentState) -> dict:
         "needs_revision": needs_revision,
         "reflection": reflection_data,
         "retry_count": new_retry_count,
+        "correction": correction,
     }

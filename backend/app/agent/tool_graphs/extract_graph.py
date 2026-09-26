@@ -2,11 +2,10 @@
 旋律提取工具链图
 
 将原有子 Agent 的流程固化到 LangGraph 中：
-1. 分离人声在analysis已处理。
-2. 使用 Basic Pitch 提取旋律
-   根据用户指定的 duration（目标铃声时长）判断是否需要双轨提取：
-      - 如果 duration > 30 秒，则同时提取人声轨道和伴奏轨道的旋律，合并后作为 melody_data
-      - 否则只提取人声轨道（如果存在）或原始音频
+1. 分离人声在 analysis 已处理。
+2. 使用 Basic Pitch 提取旋律（单一主旋律源，禁止双轨拼接）：
+      - 若已分离且存在人声轨 → 只提取人声轨（人声即主旋律）
+      - 否则 → 提取原始音频（纯音乐 / 分离失败时）
 3. 若 Basic Pitch 失败或返回空，降级使用 librosa 提取
 4. 过滤短音符
 5. 量化音符（若有 BPM 信息）
@@ -23,9 +22,12 @@ from langgraph.graph import StateGraph, END
 from app.agent.state import AgentState
 from app.agent.atomic_tools.melody.vocal_separation import separate_vocals
 from app.agent.atomic_tools.melody.extract_with_basic_pitch import extract_melody_basic_pitch
+from app.agent.atomic_tools.melody.extract_with_crepe import extract_melody_crepe
 from app.agent.atomic_tools.melody.extract_with_librosa import extract_melody_librosa
 from app.agent.atomic_tools.melody.filter_short_notes import filter_short_notes
 from app.agent.atomic_tools.melody.quantize_notes import quantize_notes
+from app.agent.atomic_tools.melody.merge_notes import merge_notes
+from app.agent.atomic_tools.melody.snap_to_key import snap_to_key
 from app.agent.thinking_utils import record_thought
 from app.agent.utils import log_tool_call
 from app.agent.utils import clean_state
@@ -41,37 +43,27 @@ _extract_graph_cache = {}
 @register_node("prepare_source")
 async def node_prepare_extract_source(state: AgentState) -> Dict[str, Any]:
     """
-    根据分离标志和用户目标时长决定提取源和策略。
+    决定旋律提取源和策略。
+
+    旋律提取只认单一主旋律源，禁止双轨拼接。
+    - 若已分离且存在伴奏/器乐轨（other.wav）→ 只提取伴奏轨（改编伴奏/纯音乐场景）
+    - 否则 → 提取原始音频（分离失败时）
     """
     demucs_separated = state.get("demucs_separated", False)
-    vocals_path = state.get("vocals_path")
     accompaniment_path = state.get("accompaniment_path")
     original_audio_path = state.get("audio_path")
-    # 用户指定的目标时长（秒），默认为 30
-    target_duration = state.get("duration", 30)
 
     print(f"[DEBUG] state keys: {state.keys()}")
     print(f"[DEBUG] audio_path={state.get('audio_path')}, vocals_path={state.get('vocals_path')}, accompaniment_path={state.get('accompaniment_path')}, demucs_separated={state.get('demucs_separated')}")
 
-    # 初始默认：使用原始音频
-    source_for_melody = original_audio_path
-    use_vocal_and_accompaniment = False
-
-    if demucs_separated and vocals_path and accompaniment_path:
-        # 根据目标时长判断是否需要双轨提取
-        if target_duration > 30:
-            use_vocal_and_accompaniment = True
-        else:
-            # 只提取人声轨道
-            source_for_melody = vocals_path
+    # 单一主旋律源：默认取伴奏/器乐轨（other.wav），否则取原始音频
+    source_for_melody = accompaniment_path if (demucs_separated and accompaniment_path) else original_audio_path
 
     print(f"[DEBUG] source_for_melody = {source_for_melody}")
-    print(f"[DEBUG] use_vocal_and_accompaniment = {use_vocal_and_accompaniment}")
 
     return {
         "source_for_melody": source_for_melody,
-        "use_vocal_and_accompaniment": use_vocal_and_accompaniment,
-        "vocals_path": vocals_path,
+        "vocals_path": state.get("vocals_path"),
         "accompaniment_path": accompaniment_path,
     }
 
@@ -97,74 +89,29 @@ async def node_separate_vocals(state: AgentState) -> Dict[str, Any]:
 @register_node("basic_pitch")
 async def node_basic_pitch(state: AgentState) -> Dict[str, Any]:
     """
-    使用 Basic Pitch 提取旋律。
-    如果是双轨模式，分别提取人声和伴奏，然后合并音符。
+    使用 Basic Pitch 做多音转录（适配多声部伴奏）。
+
+    只处理单一来源（伴奏/器乐轨），不再双轨拼接。
     """
     task_id = state.get("task_id")
-    use_both = state.get("use_vocal_and_accompaniment", False)
-    print(f"[DEBUG basic_pitch] use_both = {use_both}, source_for_melody = {state.get('source_for_melody')}, vocals_path = {state.get('vocals_path')}")
-
-    if use_both:
-        vocals_path = state.get("vocals_path")
-        accompaniment_path = state.get("accompaniment_path")
-        record_thought(task_id, "extract_melody", "双轨模式：分别提取人声和伴奏旋律")
-
-        # 提取人声旋律
-        vocal_melody = await log_tool_call(
-            task_id=task_id,
-            step_name="extract_melody",
-            tool_func=extract_melody_basic_pitch,
-            audio_path=vocals_path,
-            tool_name="extract_melody_basic_pitch"
-        )
-        # 提取伴奏旋律
-        accomp_melody = await log_tool_call(
-            task_id=task_id,
-            step_name="extract_melody",
-            tool_func=extract_melody_basic_pitch,
-            audio_path=accompaniment_path,
-            tool_name="extract_melody_basic_pitch"
-        )
-
-        # 合并音符列表
-        merged_notes = vocal_melody.get("melody_notes", []) + accomp_melody.get("melody_notes", [])
-        # 按开始时间排序
-        merged_notes.sort(key=lambda x: x["start"])
-        # 合并后的置信度取平均
-        conf = (vocal_melody.get("confidence", 0.8) + accomp_melody.get("confidence", 0.8)) / 2
-        # MIDI 路径：使用原始音频目录下的合并文件
-        original_path = state.get("audio_path", "")
-        if original_path:
-            midi_path = str(Path(original_path).with_suffix("")) + "_merged.mid"
-        else:
-            midi_path = "merged.mid"
-        Path(midi_path).parent.mkdir(parents=True, exist_ok=True)
-
-        melody_data = {
-            "melody_notes": merged_notes,
-            "confidence": conf,
-            "midi_path": midi_path,
-        }
-        return {"melody_data": melody_data}
-    else:
-        source = state.get("source_for_melody")
-        if not source:
-            # 降级1：如果有人声轨道，使用人声轨道
-            source = state.get("vocals_path")
-        if not source:
-            # 降级2：使用当前音频路径（可能是伴奏或原始音频）
-            source = state.get("audio_path")
-        if not source:
-            raise ValueError("未找到待提取旋律的音频源，且无可用降级路径")
-        record_thought(task_id, "extract_melody", f"单轨模式：提取 {source} 的旋律")
-        melody_data = await log_tool_call(
-            task_id=task_id,
-            step_name="extract_melody",
-            tool_func=extract_melody_basic_pitch,
-            audio_path=source,
-            tool_name="extract_melody_basic_pitch"
-        )
-        return {"melody_data": melody_data}
+    source = state.get("source_for_melody")
+    if not source:
+        # 降级1：如果有伴奏/器乐轨道，使用它
+        source = state.get("accompaniment_path")
+    if not source:
+        # 降级2：使用当前音频路径
+        source = state.get("audio_path")
+    if not source:
+        raise ValueError("未找到待提取旋律的音频源，且无可用降级路径")
+    record_thought(task_id, "extract_melody", f"Basic Pitch 多音转录 {source}")
+    melody_data = await log_tool_call(
+        task_id=task_id,
+        step_name="extract_melody",
+        tool_func=extract_melody_basic_pitch,
+        audio_path=source,
+        tool_name="extract_melody_basic_pitch"
+    )
+    return {"melody_data": melody_data}
 
 
 @register_node("check_result")
@@ -181,30 +128,17 @@ async def node_check_basic_pitch_result(state: AgentState) -> Dict[str, Any]:
 
 @register_node("librosa_fallback")
 async def node_librosa_fallback(state: AgentState) -> Dict[str, Any]:
-    """降级：使用 librosa 提取旋律（双轨模式下降级到只提取人声）"""
+    """降级：使用 librosa 提取旋律（单一主旋律源）"""
     task_id = state.get("task_id")
-    use_both = state.get("use_vocal_and_accompaniment", False)
-
-    if use_both:
-        vocals_path = state.get("vocals_path")
-        record_thought(task_id, "extract_melody", "Basic Pitch 双轨失败，降级为仅使用 librosa 提取人声旋律")
-        melody_data = await log_tool_call(
-            task_id=task_id,
-            step_name="extract_melody",
-            tool_func=extract_melody_librosa,
-            audio_path=vocals_path,
-            tool_name="extract_melody_librosa"
-        )
-    else:
-        source = state.get("source_for_melody") or state.get("audio_path")
-        record_thought(task_id, "extract_melody", "Basic Pitch 失败，降级使用 librosa 提取旋律")
-        melody_data = await log_tool_call(
-            task_id=task_id,
-            step_name="extract_melody",
-            tool_func=extract_melody_librosa,
-            audio_path=source,
-            tool_name="extract_melody_librosa"
-        )
+    source = state.get("source_for_melody") or state.get("audio_path")
+    record_thought(task_id, "extract_melody", "Basic Pitch 失败，降级使用 librosa 提取旋律")
+    melody_data = await log_tool_call(
+        task_id=task_id,
+        step_name="extract_melody",
+        tool_func=extract_melody_librosa,
+        audio_path=source,
+        tool_name="extract_melody_librosa"
+    )
     return {"melody_data": melody_data}
 
 
@@ -252,6 +186,54 @@ async def node_quantize_notes(state: AgentState) -> Dict[str, Any]:
         tool_name="quantize_notes"
     )
     melody_data["melody_notes"] = quantized_notes
+    return {"melody_data": melody_data}
+
+
+@register_node("merge")
+async def node_merge_notes(state: AgentState) -> Dict[str, Any]:
+    """合并碎片化的相邻同音高音符，提升旋律连贯性"""
+    melody_data = state.get("melody_data")
+    if not melody_data or not melody_data.get("melody_notes"):
+        return {"melody_data": melody_data}
+
+    notes = melody_data["melody_notes"]
+    merged = await log_tool_call(
+        task_id=state.get("task_id"),
+        step_name="extract_melody",
+        tool_func=merge_notes,
+        melody_notes=notes,
+        merge_gap=0.05,
+        tool_name="merge_notes"
+    )
+    melody_data["melody_notes"] = merged
+    return {"melody_data": melody_data}
+
+
+@register_node("snap")
+async def node_snap_to_key(state: AgentState) -> Dict[str, Any]:
+    """调性校正：修复八度误判 + snap 到调内音阶"""
+    melody_data = state.get("melody_data")
+    if not melody_data or not melody_data.get("melody_notes"):
+        return {"melody_data": melody_data}
+
+    harmony = (state.get("analysis_result") or {}).get("harmony") or {}
+    key_midi = harmony.get("key_midi")
+    mode = harmony.get("mode", "major")
+    if key_midi is None:
+        # 无调性信息则跳过
+        return {"melody_data": melody_data}
+
+    notes = melody_data["melody_notes"]
+    snapped = await log_tool_call(
+        task_id=state.get("task_id"),
+        step_name="extract_melody",
+        tool_func=snap_to_key,
+        melody_notes=notes,
+        key_midi=key_midi,
+        mode=mode,
+        tool_name="snap_to_key"
+    )
+    melody_data["melody_notes"] = snapped
     return {"melody_data": melody_data}
 
 

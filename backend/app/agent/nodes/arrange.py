@@ -33,7 +33,52 @@ async def arrange_node(state: AgentState) -> dict:
             midi_path = melody_data.get("midi_path")
     if not midi_path or not Path(midi_path).exists():
         raise ValueError(f"[Arrange] MIDI 文件不存在: {midi_path}")
-    
+
+    # 纠正性重试：若 reflect 指出质量问题，对旋律重新做调性校正并重建 MIDI
+    correction = state.get("correction")
+    if correction and state.get("melody_data"):
+        try:
+            from app.agent.atomic_tools.melody.snap_to_key import snap_to_key
+            from app.agent.atomic_tools.midi.create_from_notes import create_midi_from_notes
+            melody_notes = state["melody_data"].get("melody_notes", [])
+            harmony = (state.get("analysis_result") or {}).get("harmony") or {}
+            detected_bpm = ((state.get("analysis_result") or {}).get("tempo_beats") or {}).get("bpm") or 120
+            corrected = await snap_to_key(
+                melody_notes,
+                key_midi=harmony.get("key_midi"),
+                mode=harmony.get("mode", "major"),
+                snap_threshold=1.0,   # 重试时启用调性 snap（默认是关闭的）
+            )
+            task_dir = Path(settings.RINGTONES_DIR) / state["task_id"]
+            task_dir.mkdir(parents=True, exist_ok=True)
+            corrected_midi = str(task_dir / "corrected_melody.mid")
+            await create_midi_from_notes(
+                corrected,
+                bpm=float(detected_bpm),
+                output_path=corrected_midi,
+                legato_overlap=0.03,
+                legato_max_gap=0.08,
+            )
+            midi_path = corrected_midi
+            record_thought(state["task_id"], "arrange", f"纠正性重试：已对旋律重新调性校正并重建 MIDI（{correction}）")
+        except Exception as e:
+            record_thought(state["task_id"], "arrange", f"纠正性重试失败(忽略): {e}")
+
+    # ---- 自主改编（function calling）：LLM 自主决定工具序列，失败则回退确定性 arrange ----
+    try:
+        from app.agent.nodes.autonomous_arrange import autonomous_arrange_node
+        auto_result = await autonomous_arrange_node(state)
+        auto_path = auto_result.get("arranged_midi_path")
+        if auto_path and Path(auto_path).exists():
+            try:
+                mido.MidiFile(auto_path)
+                record_thought(state["task_id"], "arrange", "采用自主改编（function calling）结果")
+                return {"arranged_midi_path": auto_path}
+            except Exception as e:
+                record_thought(state["task_id"], "arrange", f"自主改编结果无效，回退确定性: {e}")
+    except Exception as e:
+        record_thought(state["task_id"], "arrange", f"自主改编异常，回退确定性: {e}")
+
     profile_id = state.get("profile_id")
     # 准备工具链图需要的状态（原样传递）
     sub_state = {
@@ -66,7 +111,46 @@ async def arrange_node(state: AgentState) -> dict:
         mido.MidiFile(arranged_path)
     except Exception as e:
         raise RuntimeError(f"改编后的 MIDI 无效: {e}")
-    
+
+    # ---- LLM 决策的移调（若 analysis 阶段给出了 transpose_semitones）----
+    transpose = (state.get("arrangement_params") or {}).get("transpose_semitones", 0)
+    if transpose:
+        try:
+            from app.agent.atomic_tools.arrangement.transpose_pitch import transpose_pitch
+            transposed_path = str(Path(arranged_path).with_name("arrange_transposed.mid"))
+            await transpose_pitch(
+                midi_path=arranged_path,
+                output_path=transposed_path,
+                semitones=int(transpose),
+            )
+            arranged_path = transposed_path
+            record_thought(state["task_id"], "arrange", f"已按 LLM 决策移调 {int(transpose)} 半音")
+        except Exception as e:
+            record_thought(state["task_id"], "arrange", f"移调失败(忽略): {e}")
+
+    # ---- 多轨和声编曲：添加低音轨 + 和弦垫轨 ----
+    # 已禁用：chroma 和弦检测过于简陋，调性稳定的歌会检测出同一根音，
+    # 导致低音/垫变成"同一个音反复循环"，反而盖住旋律。后续如需和声层再重新实现。
+    harmony = (state.get("analysis_result") or {}).get("harmony") or {}
+    chords = harmony.get("chords") or []
+    if False and chords:
+        try:
+            from app.agent.atomic_tools.arrangement.harmonize_midi import harmonize_midi
+            detected_bpm = ((state.get("analysis_result") or {}).get("tempo_beats") or {}).get("bpm") or 120
+            harmonized_path = str(Path(arranged_path).with_name("arrange_harmonized.mid"))
+            await harmonize_midi(
+                midi_path=arranged_path,
+                chords=chords,
+                output_path=harmonized_path,
+                bpm=float(detected_bpm),
+            )
+            arranged_path = harmonized_path
+            record_thought(state["task_id"], "arrange", f"已添加低音轨+和弦垫轨（{len(chords)} 个和弦段）")
+        except Exception as e:
+            record_thought(state["task_id"], "arrange", f"和声编曲失败(忽略): {e}")
+    else:
+        record_thought(state["task_id"], "arrange", "未检测到和弦信息，跳过和声编曲")
+
     # ---- 改编结束说明 ----
     # 收集实际发生的改编
     changes = []

@@ -45,7 +45,8 @@ async def render_midi_with_fluidsynth(
     # 最后添加音色库和 MIDI 文件
     cmd.extend([soundfont_path, midi_path])
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    import asyncio
+    result = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"FluidSynth error: {result.stderr}")
     return output_wav_path

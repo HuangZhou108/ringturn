@@ -11,6 +11,7 @@ CLAP 音频理解原子工具
 
 import os
 import contextlib
+import asyncio
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -277,7 +278,7 @@ async def classify_vocal_presence(
             "singing, vocals, human vocal, human voice",
             "no vocal, only instruments"
         ]
-    return await _clap_binary_classify(audio_path, labels)
+    return await asyncio.to_thread(_clap_binary_classify, audio_path, labels)
 
 
 async def classify_piano_presence(
@@ -297,7 +298,7 @@ async def classify_piano_presence(
             "prominent piano melody, piano is a main instrument, clear piano part",
             "no piano, or piano not important, piano is background or absent"
         ]
-    return await _clap_binary_classify(audio_path, labels)
+    return await asyncio.to_thread(_clap_binary_classify, audio_path, labels)
 
 
 async def classify_guitar_presence(
@@ -317,12 +318,13 @@ async def classify_guitar_presence(
             "prominent guitar melody, guitar is a main instrument, clear guitar part",
             "no guitar, or guitar not important, guitar is background or absent"
         ]
-    return await _clap_binary_classify(audio_path, labels)
+    return await asyncio.to_thread(_clap_binary_classify, audio_path, labels)
 
 
-async def _clap_binary_classify(audio_path: str, labels: List[str]) -> Dict[str, Any]:
+def _clap_binary_classify(audio_path: str, labels: List[str]) -> Dict[str, Any]:
     """
     内部通用二分类函数，复用模型加载和推理逻辑。
+    （同步函数，调用方须用 asyncio.to_thread 在子线程执行，避免阻塞事件循环。）
     """
     try:
         import laion_clap

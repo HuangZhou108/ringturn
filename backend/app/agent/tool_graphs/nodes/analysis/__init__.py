@@ -10,6 +10,7 @@ from app.agent.tool_graphs.nodes.analysis import (
     clap_classify_node,
     decide_separation_node,
     separate_demucs_node,
+    harmony_node,
     fork_node,
     optional_decision_node,
     infer_mood_node,

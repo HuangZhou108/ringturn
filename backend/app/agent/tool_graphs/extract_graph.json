@@ -10,6 +10,8 @@
     { "id": "librosa_fallback", "type": "regular" },
     { "id": "filter_short", "type": "regular" },
     { "id": "quantize", "type": "regular" },
+    { "id": "merge", "type": "regular" },
+    { "id": "snap", "type": "regular" },
     { "id": "ensure_midi", "type": "regular" }
   ],
   "edges": [
@@ -29,6 +31,8 @@
   "default_edges": [
     { "from": "librosa_fallback", "to": "filter_short" },
     { "from": "filter_short", "to": "quantize" },
-    { "from": "quantize", "to": "ensure_midi" }
+    { "from": "quantize", "to": "merge" },
+    { "from": "merge", "to": "snap" },
+    { "from": "snap", "to": "ensure_midi" }
   ]
 }

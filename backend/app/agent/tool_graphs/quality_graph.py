@@ -32,14 +32,19 @@ async def node_evaluate_quality(state: AgentState) -> Dict[str, Any]:
 
     record_thought(task_id, "check_quality", f"开始评估音频质量: {audio_path}")
     try:
+        melody_data = state.get("melody_data") or {}
+        harmony = (state.get("analysis_result") or {}).get("harmony") or {}
         quality = await log_tool_call(
             task_id=task_id,
             step_name="check_quality",
             tool_func=evaluate_overall_quality,
             audio_path=audio_path,
+            melody_notes=melody_data.get("melody_notes"),
+            key_midi=harmony.get("key_midi"),
+            mode=harmony.get("mode", "major"),
             tool_name="evaluate_overall_quality"
         )
-        record_thought(task_id, "check_quality", f"评估完成，总体得分: {quality.get('overall_score', 0)}，通过: {quality.get('passed', False)}")
+        record_thought(task_id, "check_quality", f"评估完成，总体得分: {quality.get('overall_score', 0)}，音乐性: {quality.get('musicality', 0)}，通过: {quality.get('passed', False)}")
     except Exception as e:
         record_thought(task_id, "check_quality", f"评估工具调用失败: {e}，使用默认质量结果")
         # 降级：返回一个合格的质量结果（避免因工具失败导致流程卡死）
@@ -49,6 +54,7 @@ async def node_evaluate_quality(state: AgentState) -> Dict[str, Any]:
             "musicality": 3.7,
             "clarity": 3.9,
             "quality_issues": [],
+            "musicality_metrics": {},
             "passed": True,
         }
     return {"quality_report": quality}

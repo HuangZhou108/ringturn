@@ -155,14 +155,19 @@ async def smart_clip_with_analysis(
         frame_times = librosa.times_like(rms, sr=sr_full, hop_length=hop_length)
         peaks, _ = find_peaks(rms, height=0.1 * np.max(rms), distance=10)
         peak_times = frame_times[peaks]
-        valid_peak_times = [t for t in peak_times if 0 <= t <= total_duration - target_duration]
+        peak_rms = rms[peaks]
 
-        if len(valid_peak_times) > 3:
-            peak_rms = rms[peaks]
-            sorted_indices = np.argsort(peak_rms)[::-1]
-            top_peak_times = [valid_peak_times[i] for i in sorted_indices[:5]]
+        # 先按有效时间范围过滤峰值，再按 RMS 排序。
+        # 注意：不能在全量 peaks 上排序后再映射到过滤后的列表，否则索引错位会越界。
+        valid_idx = np.where((peak_times >= 0) & (peak_times <= total_duration - target_duration))[0]
+        valid_peak_times = peak_times[valid_idx]
+        valid_peak_rms = peak_rms[valid_idx]
+
+        if len(valid_idx) > 3:
+            order = np.argsort(valid_peak_rms)[::-1]
+            top_peak_times = list(valid_peak_times[order[:5]])
         else:
-            top_peak_times = valid_peak_times
+            top_peak_times = list(valid_peak_times)
         
         # 构建候选起始点：改为段落的起始位置（如果存在）
         rank_map = {}
@@ -216,13 +221,15 @@ async def smart_clip_with_analysis(
 
                 # 根据分类决定选择方式
         start_time = None
-        if clip_preference.get("category") == 1:
-            # 选择排名最高的候选（即排名0对应的段落起始）
-            if rank_map:
-                best_time = min(rank_map, key=lambda k: rank_map[k])
-                start_time = best_time
-                record_thought(task_id, "render", f"根据用户偏好（能量高）选择起始点: {start_time:.2f}s")
-        elif clip_preference.get("category") == 3:
+        category = clip_preference.get("category")
+        if category in (1, 4):
+            # category 1 = 能量高（副歌/高潮）；category 4 = 无偏好，默认也选能量最高段
+            # 直接用最高能量峰值时间，不做段落边界 snap（detect_sections 可能给出错误边界，导致截到开头静音）
+            if top_peak_times:
+                start_time = top_peak_times[0]
+                desc = "能量高" if category == 1 else "无偏好，默认能量最高段"
+                record_thought(task_id, "render", f"根据用户偏好（{desc}）选择起始点: {start_time:.2f}s")
+        elif category == 3:
             # 用户指定了时间
             specified_time = clip_preference.get("value")
             if specified_time is not None and 0 <= specified_time <= total_duration - target_duration:
@@ -230,10 +237,10 @@ async def smart_clip_with_analysis(
                 record_thought(task_id, "render", f"根据用户指定时间选择起始点: {start_time:.2f}s")
             else:
                 record_thought(task_id, "render", "用户指定时间无效，回退到随机选择")
-        # 其他情况（category 2 或 4）走随机
+        # category 2（指定段落但无法精确定位）仍走随机
 
         if start_time is None:
-            # 随机选择逻辑
+            # 随机选择逻辑（仅 category 2 或 rank_map 为空时进入）
             exp_weights = np.exp(np.array(weights))
             probs = exp_weights / np.sum(exp_weights)
             selected_idx = np.random.choice(len(candidate_list), p=probs)

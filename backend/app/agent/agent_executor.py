@@ -26,7 +26,7 @@ class RingtoneParams:
         self.tempo = params.get("tempo", 120)
         self.filename = params.get("filename", "ringtone")
         self.file_id = task.source_value
-        self.max_retries = params.get("max_retries", 0)  # 用户可配置重试次数
+        self.max_retries = params.get("max_retries", 1)  # 用户可配置重试次数，默认允许重试 1 次
         self.raw_params = params
 
 class AgentExecutor:
@@ -132,6 +132,16 @@ class AgentExecutor:
         from app.services.llm_service import llm_service
 
         user_request = self.state["user_request"]
+
+        # 解析自然语言中的时长（如"60s左右"/"1分钟"），覆盖 UI 默认值
+        try:
+            nl_duration = await llm_service.extract_duration(user_request)
+            if nl_duration and nl_duration > 0:
+                self.state["duration"] = int(nl_duration)
+                self._add_thinking_step("规划", f"从自然语言识别到目标时长: {int(nl_duration)} 秒")
+        except Exception as e:
+            print(f"[PLAN] extract_duration failed: {e}")
+
         ringtone_params = self.ringtone_params.raw_params
         param_desc = ""
         if ringtone_params:
@@ -143,11 +153,13 @@ class AgentExecutor:
         self._add_thinking_step("规划", f"分析用户需求: {user_request[:50]}...")
         plan = await llm_service.generate_plan(full_prompt)
 
-        # 生成自然语言思考
+        # 生成自然语言思考（仅展示性初步思路，不涉及具体乐器/速度等最终决策）
         thoughts_prompt = (
             f"用户想要将一首歌曲改编为手机铃声。需求：{user_request}。"
-            f"参数：{param_desc if param_desc else '无'}。"
-            "请你用简短的自然语言描述一下你会如何改编，比如选择什么乐器、调整速度、截取片段等。"
+            f"目标时长：{self.state['duration']} 秒。"
+            "请用简短的自然语言描述你的整体改编思路（比如截取哪个部分、营造什么情绪氛围）。"
+            "注意：这只是初步规划，具体的乐器、速度、移调会在音频分析后由系统自动决定，"
+            "请不要断言具体的乐器名或 BPM 数值。"
         )
         try:
             thinking_msg = await llm_service.chat(
@@ -173,6 +185,15 @@ class AgentExecutor:
     async def execute(self) -> dict:
         """执行任务：调用 LangGraph 图"""
         try:
+            # 注入 Agent 记忆（全局偏好 + 历史画像），供本次任务所有 LLM 调用使用
+            try:
+                from app.services.memory import build_agent_context, set_agent_context
+                ctx = await asyncio.to_thread(build_agent_context, self.state.get("profile_id"))
+                if ctx:
+                    set_agent_context(ctx)
+            except Exception as e:
+                print(f"[MEMORY] build_agent_context failed: {e}")
+
             # 检查是否已取消
             if self.task.status == TaskStatus.cancelled:
                 return {"success": False, "reason": "cancelled"}

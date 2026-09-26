@@ -66,6 +66,12 @@ class LLMService:
         model = model or settings.LLM_MODEL
         last_error = None
 
+        # 注入 Agent 记忆（全局偏好指令 + 历史画像），作为最高优先级的 system 指令
+        from app.services.memory import get_agent_context
+        ctx = get_agent_context()
+        if ctx:
+            messages = [{"role": "system", "content": ctx}] + list(messages)
+
         for attempt in range(MAX_RETRIES):
             # 检查当前任务是否被取消
             if asyncio.current_task() and asyncio.current_task().cancelled():
@@ -81,7 +87,21 @@ class LLMService:
                     max_tokens=max_tokens,
                 )
                 print(f"[LLM RESPONSE] {response}")
-                return response.choices[0].message.content
+                content = response.choices[0].message.content
+                finish_reason = response.choices[0].finish_reason
+                # 推理模型（deepseek-flash 等）在 max_tokens 被推理（reasoning_content）耗尽时，
+                # 最终 content 为空且 finish_reason='length'。此时自动放大 max_tokens 重试一次，避免返回空内容。
+                if (not content or not content.strip()) and finish_reason == "length":
+                    retry_tokens = max(max_tokens * 4, 2000)
+                    print(f"[LLM RETRY] content 为空且被截断，用 max_tokens={retry_tokens} 重试")
+                    response = await self.client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=retry_tokens,
+                    )
+                    return response.choices[0].message.content
+                return content
             except asyncio.CancelledError:
                 raise
             except RateLimitError as e:
@@ -154,6 +174,41 @@ class LLMService:
                 "special_requirements": user_request,
             }
 
+    async def extract_duration(self, user_request: str) -> int | None:
+        """
+        从用户自然语言请求中提取目标铃声时长（秒）。
+        未明确提及时长时返回 None（避免用默认值覆盖 UI 设置）。
+        """
+        import json
+        import re
+
+        system_prompt = """从用户请求中提取目标铃声时长（秒）。
+如果用户提到了时长（如"60秒"、"60s"、"1分钟"、"一分半"、"1分20秒"、"40s左右"、"一分钟左右"），提取为秒数。
+如果用户没有提及任何时长，返回 null。
+转换规则："1分钟"=60，"1分20秒"=80，"一分半"=90，"2分钟"=120，"半分钟"=30。
+只输出 JSON：{"duration": 数字或null}"""
+
+        try:
+            response = await self.chat(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"用户请求：{user_request}"},
+                ],
+                temperature=0.1,
+                max_tokens=2000,
+            )
+            match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", response, re.DOTALL)
+            json_str = match.group(1).strip() if match else response.strip()
+            result = json.loads(json_str)
+            dur = result.get("duration")
+            if dur is None:
+                return None
+            dur = int(float(dur))
+            return dur if dur > 0 else None
+        except Exception as e:
+            print(f"[LLM] extract_duration failed: {e}")
+            return None
+
     async def extract_style_and_mood(self, user_request: str) -> dict:
         """
         仅提取用户请求中的音乐风格和情感。
@@ -206,7 +261,7 @@ class LLMService:
 要求：
 1. 通常包含：fetch_source、analyze_structure、extract_melody、generate_midi、arrange、render（这些是基本流程）。
 2. 如果用户明确说“不需要分析”、“跳过分析”、“无需解析”、“直接替换”或类似表述，则可以省略 analyze_structure。
-3. 如果用户要求“检查质量”、“评估音质”、“确保质量”、“保证质量”，则包含 check_quality；否则通常省略。
+3. 默认包含 check_quality（对结果做质量评估与反思），除非用户明确说”不需要质量检查/跳过质量检查”。
 4. 只返回 JSON 数组，例如：["fetch_source", "extract_melody", "generate_midi", "arrange", "render"]
    不要包含任何解释、参数或代码块标记。
 """
@@ -239,9 +294,128 @@ class LLMService:
         if isinstance(plan, list):
             filtered = [item for item in plan if isinstance(item, str) and item in valid_steps]
             if filtered:
+                if "check_quality" not in filtered:
+                    filtered.append("check_quality")  # 默认执行质量检查
                 return filtered
         # 解析失败或结果为空，返回完整默认计划（所有步骤）
         return valid_steps
+
+    async def plan_arrangement(
+        self,
+        user_request: str,
+        analysis_result: dict,
+        current: dict,
+    ) -> dict:
+        """
+        根据音频分析结果和用户需求，决定最终改编参数（乐器/速度/移调）。
+
+        这是让 LLM 真正参与改编决策的入口：在分析阶段结束后调用，
+        由 LLM 结合检测到的 BPM / 人声 / 情绪风格，产出可落地的改编参数。
+        失败时返回空 dict（调用方沿用用户参数）。
+
+        Returns:
+            {"instrument": str, "tempo": int, "transpose_semitones": int}
+        """
+        import json
+        import re
+
+        system_prompt = """你是编曲助手。根据音频分析结果和用户需求，决定最终的改编参数。
+
+你会拿到：
+- 分析结果：BPM、是否有人声/钢琴/吉他、情绪风格（含 mood、energy_level 1-10、genre 等）
+- 用户需求（可能包含情绪描述，如"青春洋溢""温柔""欢快""忧伤"）
+- 用户当前的参数（可能是默认值）
+
+请先综合「用户需求中的情绪词」和「分析结果的 mood / energy_level」判断目标情绪，再据此选择乐器和速度：
+
+【情绪 → 乐器/速度 映射】
+- 青春洋溢 / 欢快 / 活力 / 明亮 / energetic / happy（energy_level ≥ 7）：
+  乐器倾向明亮清脆型：Music Box、Glockenspiel、Bright Acoustic Piano、Electric Piano、Marimba、Vibraphone；
+  速度偏快：略高于检测 BPM（例如检测 96 可用 104~120）。
+- 温柔 / 舒缓 / 抒情 / 安静 / calm / soothing（energy_level ≤ 4）：
+  乐器倾向柔美型：Acoustic Grand Piano、Celesta、Orchestral Harp、Warm Pad、Music Box；
+  速度偏慢（80~96）。
+- 忧伤 / 伤感 / melancholic / sad：
+  乐器倾向温暖低沉型：Cello、Acoustic Grand Piano、Clarinet、String Ensemble；
+  速度偏慢。
+- 激昂 / 史诗 / epic / dramatic：
+  乐器倾向 Brass Section、String Ensemble、Overdriven Guitar；速度中快。
+- 无法判断：保持 Acoustic Piano，速度贴合检测 BPM。
+
+输出 JSON：
+{"instrument": "GM 乐器英文名", "tempo": 整数BPM, "transpose_semitones": 整数}
+
+规则：
+1. 若用户已明确指定乐器/速度（速度不是默认的 120），必须严格保持原值，绝对不要改动。
+2. 仅当速度为默认值 120 时，才按上面的映射推荐，且速度调整幅度控制在检测 BPM 的 ±20% 左右，不要大幅偏离。
+3. transpose_semitones：旋律整体偏低可 +12，偏高可 -12，没把握填 0（范围 -12~+12）。
+只输出 JSON，不要任何解释。"""
+
+        # RAG：检索相关知识，注入提示词（让决策有知识库支撑，而非仅靠硬编码映射）
+        try:
+            from app.services.knowledge_base import retrieve_knowledge, format_knowledge
+            mood = (analysis_result or {}).get("mood_style", {}).get("mood", "")
+            query = f"{user_request} {mood}"
+            docs = retrieve_knowledge(query, top_k=3)
+            knowledge = format_knowledge(docs)
+            print(f"[RAG] plan_arrangement 检索到 {len(docs)} 篇知识: {[d['title'] for d in docs]}")
+        except Exception as e:
+            print(f"[RAG] plan_arrangement 检索失败: {e}")
+            knowledge = ""
+
+        user_prompt = (
+            f"用户需求：{user_request}\n"
+            f"音频分析结果：{json.dumps(analysis_result, ensure_ascii=False, default=str)}\n"
+            f"当前参数：{json.dumps(current, ensure_ascii=False, default=str)}"
+            + (f"\n\n【相关知识库检索结果】\n{knowledge}" if knowledge else "")
+        )
+
+        try:
+            response = await self.chat(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3,
+                max_tokens=2000,
+            )
+            match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", response, re.DOTALL)
+            json_str = match.group(1).strip() if match else response.strip()
+            result = json.loads(json_str)
+
+            out = {}
+            if isinstance(result.get("instrument"), str) and result["instrument"].strip():
+                out["instrument"] = result["instrument"].strip()
+
+            # 速度：用户明确设置（非默认 120）时强制保持；否则限制在检测 BPM 附近
+            user_tempo = current.get("tempo")
+            try:
+                user_tempo = int(user_tempo) if user_tempo is not None else None
+            except (TypeError, ValueError):
+                user_tempo = None
+            try:
+                out["tempo"] = int(result.get("tempo"))
+            except (TypeError, ValueError):
+                out["tempo"] = user_tempo or 120
+
+            if user_tempo and user_tempo != 120:
+                out["tempo"] = user_tempo  # 用户明确指定速度，强制保持
+            else:
+                detected = analysis_result.get("bpm")
+                if detected:
+                    lo = max(60, int(float(detected) * 0.8))
+                    hi = min(200, int(float(detected) * 1.25))
+                    out["tempo"] = max(lo, min(hi, out["tempo"]))
+
+            try:
+                trans = int(result.get("transpose_semitones"))
+                out["transpose_semitones"] = max(-12, min(12, trans))
+            except (TypeError, ValueError):
+                out["transpose_semitones"] = 0
+            return out
+        except Exception as e:
+            print(f"[LLM] plan_arrangement failed: {e}")
+            return {}
 
     async def extract_clip_preference(self, user_request: str) -> dict:
         """

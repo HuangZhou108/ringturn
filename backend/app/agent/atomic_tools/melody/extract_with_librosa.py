@@ -19,15 +19,17 @@ async def extract_melody_librosa(
     Returns:
         dict: melody_notes (list), confidence (float), midi_path (str)
     """
+    import asyncio
     # 1. 加载音频（单声道，22050 Hz 便于音高追踪）
-    y, sr = librosa.load(audio_path, sr=22050, mono=True)
+    y, sr = await asyncio.to_thread(librosa.load, audio_path, sr=22050, mono=True)
 
     # 2. PYIN 提取基频 (f0) 和有声概率
-    f0, voiced_flag, voiced_prob = librosa.pyin(
+    f0, voiced_flag, voiced_prob = await asyncio.to_thread(
+        librosa.pyin,
         y,
-        fmin=librosa.note_to_hz('A0'),   # ~27.5 Hz
-        fmax=librosa.note_to_hz('C8'),   # ~4186 Hz
-        sr=sr
+        fmin=librosa.note_to_hz('E2'),   # ~82 Hz，过滤贝斯等低频
+        fmax=librosa.note_to_hz('F#6'),  # ~1480 Hz，覆盖主旋律范围
+        sr=sr,
     )
     f0 = np.nan_to_num(f0)
     times = librosa.times_like(f0, sr=sr)

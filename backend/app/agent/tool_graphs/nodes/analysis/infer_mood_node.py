@@ -16,7 +16,7 @@ async def node_infer_mood(state: AgentState) -> dict:
         "key": analysis.get("harmony", {}).get("key")
     }
     try:
-        result = await infer_mood_style_tool.func(audio_path=audio_path, user_request=user_request, features=features)
+        result = await infer_mood_style_tool.coroutine(audio_path=audio_path, user_request=user_request, features=features)
         if task_id:
             record_thought(task_id, "analysis", f"mood_style: {result}")
     except Exception as e:

@@ -60,7 +60,7 @@ class AgentState(TypedDict, total=False):
     midi_path: str | None
 
     # 旋律提取
-    use_vocal_and_accompaniment: bool        # 是否双轨提取旋律
+    use_vocal_and_accompaniment: bool        # 已废弃：旋律提取已改为单一主旋律源（P0-1），不再双轨拼接
     source_for_melody: str | None            # 单轨模式下的提取源
 
     # 改编参数
@@ -79,10 +79,18 @@ class AgentState(TypedDict, total=False):
     plan: list[str]
     step_results: dict
 
+    # 子图内部状态通道（必须在 state 中声明，否则 LangGraph 不会在节点间正确传递）
+    should_separate: bool            # analysis 图：是否执行音源分离
+    optional_decisions: dict         # analysis 图：是否做情绪/特效分析
+    use_basic_pitch: bool            # extract 图：Basic Pitch 是否成功
+    basic_pitch_failed: bool         # extract 图：Basic Pitch 是否失败
+    quality_report: dict | None      # quality 图：质量评估报告
+
     # 反思和反馈
     feedback_history: list[dict]
     reflection: str | None
     needs_revision: bool
+    correction: str | None                # 重试时的纠正动作（如 snap_to_key）
     user_approve_retry: bool   # 用户是否允许重试，默认 False
     max_retries: int  # 最大重试次数（用户可配置，默认0）
 

@@ -65,4 +65,34 @@ async def analyze_structure_node(state: AgentState) -> dict:
             default_summary = f"已对音频进行了{tool_list}等方面的分析，这些信息将有助于后续的旋律提取和改编。"
             record_thought(state["task_id"], "analysis", default_summary)
 
+    # ---- LLM 改编决策：结合分析结果 + 用户需求，决定乐器/速度/移调 ----
+    try:
+        compact = {
+            "bpm": (analysis_result.get("tempo_beats") or {}).get("bpm"),
+            "has_vocal": analysis_result.get("vocal_presence"),
+            "has_piano": analysis_result.get("piano_presence"),
+            "has_guitar": analysis_result.get("guitar_presence"),
+            "mood_style": analysis_result.get("mood_style"),
+        }
+        current = {
+            "instrument": state.get("instrument", "Acoustic Piano"),
+            "tempo": state.get("tempo", 120),
+        }
+        arrangement = await llm_service.plan_arrangement(
+            state.get("user_request", ""),
+            compact,
+            current,
+        )
+        record_thought(state["task_id"], "analysis", f"LLM 改编决策: {arrangement}")
+    except Exception as e:
+        record_thought(state["task_id"], "analysis", f"LLM 改编决策失败，沿用用户参数: {e}")
+        arrangement = {}
+
+    if arrangement:
+        updates["arrangement_params"] = arrangement
+        if arrangement.get("instrument"):
+            updates["instrument"] = arrangement["instrument"]
+        if arrangement.get("tempo"):
+            updates["tempo"] = arrangement["tempo"]
+
     return updates

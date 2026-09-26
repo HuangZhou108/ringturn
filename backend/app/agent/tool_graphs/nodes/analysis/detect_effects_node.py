@@ -8,7 +8,7 @@ async def node_detect_effects(state: AgentState) -> dict:
     audio_path = state.get("audio_path")
     task_id = state.get("task_id")
     try:
-        result = await detect_special_effects_tool.func(audio_path=audio_path)
+        result = await detect_special_effects_tool.coroutine(audio_path=audio_path)
         if task_id:
             record_thought(task_id, "analysis", f"special_effects: {result}")
     except Exception as e:

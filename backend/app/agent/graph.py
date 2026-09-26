@@ -81,7 +81,7 @@ async def build_agent_graph():
             return END
         retry_count = state.get("retry_count", 0)
         max_retries = state.get("max_retries", 0)
-        if retry_count >= max_retries:
+        if retry_count > max_retries:
             return END
         return NODE_ARRANGE
 
