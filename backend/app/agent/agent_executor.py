@@ -81,8 +81,14 @@ class AgentExecutor:
             "file_id": self.ringtone_params.file_id,
             "max_retries": self.ringtone_params.max_retries,
             "audio_path": None,
+            "demucs_separated": False,
+            "vocals_path": None,
+            "accompaniment_path": None,
             "analysis_result": None,
             "melody_data": None,
+            "melody_source_path": None,
+            "harmony_source_path": None,
+            "source_for_melody": None,
             "midi_path": None,
             "arrangement_params": None,
             "arranged_midi_path": None,
@@ -108,8 +114,14 @@ class AgentExecutor:
             print(f"[DEBUG] intermediate_data: {inter}")
             state.update({
                 "audio_path": inter.get("audio_path"),
+                "demucs_separated": inter.get("demucs_separated", False),
+                "vocals_path": inter.get("vocals_path"),
+                "accompaniment_path": inter.get("accompaniment_path"),
                 "analysis_result": inter.get("analysis_result"),
                 "melody_data": inter.get("melody_data"),
+                "melody_source_path": inter.get("melody_source_path"),
+                "harmony_source_path": inter.get("harmony_source_path"),
+                "source_for_melody": inter.get("source_for_melody"),
                 "midi_path": inter.get("midi_path"),
                 "arranged_midi_path": inter.get("arranged_midi_path"),
                 "tempo": inter.get("tempo", 120),
@@ -234,8 +246,28 @@ class AgentExecutor:
                 self.state["resume_from_node"] = self.task.resume_from_node
             self.task.intermediate_data = {
                 "audio_path": final_state.get("audio_path") or self.state.get("audio_path"),
+                "demucs_separated": final_state.get(
+                    "demucs_separated", self.state.get("demucs_separated", False)
+                ),
+                "vocals_path": final_state.get("vocals_path") or self.state.get("vocals_path"),
+                "accompaniment_path": (
+                    final_state.get("accompaniment_path")
+                    or self.state.get("accompaniment_path")
+                ),
                 "analysis_result": final_state.get("analysis_result") or self.state.get("analysis_result"),
                 "melody_data": final_state.get("melody_data") or self.state.get("melody_data"),
+                "melody_source_path": (
+                    final_state.get("melody_source_path")
+                    or self.state.get("melody_source_path")
+                ),
+                "harmony_source_path": (
+                    final_state.get("harmony_source_path")
+                    or self.state.get("harmony_source_path")
+                ),
+                "source_for_melody": (
+                    final_state.get("source_for_melody")
+                    or self.state.get("source_for_melody")
+                ),
                 "midi_path": midi_path,
                 "arranged_midi_path": arranged_midi_path,
                 "tempo": final_state.get("tempo") or self.state.get("tempo"),
