@@ -20,6 +20,7 @@ import json
 from langgraph.graph import StateGraph, END
 
 from app.agent.state import AgentState
+from app.agent.melody_source import select_melody_sources
 from app.agent.atomic_tools.melody.vocal_separation import separate_vocals
 from app.agent.atomic_tools.melody.extract_with_basic_pitch import extract_melody_basic_pitch
 from app.agent.atomic_tools.melody.extract_with_crepe import extract_melody_crepe
@@ -43,28 +44,35 @@ _extract_graph_cache = {}
 @register_node("prepare_source")
 async def node_prepare_extract_source(state: AgentState) -> Dict[str, Any]:
     """
-    决定旋律提取源和策略。
+    分别决定旋律提取源与和声上下文源。
 
     旋律提取只认单一主旋律源，禁止双轨拼接。
-    - 若已分离且存在伴奏/器乐轨（other.wav）→ 只提取伴奏轨（改编伴奏/纯音乐场景）
-    - 否则 → 提取原始音频（分离失败时）
+    - 若已分离且存在有效的人声轨（vocals.wav）→ 从人声提取主旋律
+    - 若人声轨不可用 → 回退原始音频，保持完整时间轴
+    - 伴奏 stem 只作为和声上下文，不参与本节点的旋律提取
     """
-    demucs_separated = state.get("demucs_separated", False)
-    accompaniment_path = state.get("accompaniment_path")
-    original_audio_path = state.get("audio_path")
+    selection = select_melody_sources(
+        original_audio_path=state.get("audio_path"),
+        vocals_path=state.get("vocals_path"),
+        accompaniment_path=state.get("accompaniment_path"),
+        demucs_separated=state.get("demucs_separated", False),
+    )
+    melody_source_path = selection["melody_source_path"]
+    harmony_source_path = selection["harmony_source_path"]
 
-    print(f"[DEBUG] state keys: {state.keys()}")
-    print(f"[DEBUG] audio_path={state.get('audio_path')}, vocals_path={state.get('vocals_path')}, accompaniment_path={state.get('accompaniment_path')}, demucs_separated={state.get('demucs_separated')}")
-
-    # 单一主旋律源：默认取伴奏/器乐轨（other.wav），否则取原始音频
-    source_for_melody = accompaniment_path if (demucs_separated and accompaniment_path) else original_audio_path
-
-    print(f"[DEBUG] source_for_melody = {source_for_melody}")
+    record_thought(
+        state.get("task_id"),
+        "extract_melody",
+        f"旋律源: {melody_source_path}；和声源: {harmony_source_path}；策略: {selection['reason']}",
+    )
 
     return {
-        "source_for_melody": source_for_melody,
+        "melody_source_path": melody_source_path,
+        "harmony_source_path": harmony_source_path,
+        # 保留旧字段，兼容已有 checkpoint 和用户自定义的 extract graph。
+        "source_for_melody": melody_source_path,
         "vocals_path": state.get("vocals_path"),
-        "accompaniment_path": accompaniment_path,
+        "accompaniment_path": state.get("accompaniment_path"),
     }
 
 # 人声分离节点，已不再使用
@@ -89,18 +97,16 @@ async def node_separate_vocals(state: AgentState) -> Dict[str, Any]:
 @register_node("basic_pitch")
 async def node_basic_pitch(state: AgentState) -> Dict[str, Any]:
     """
-    使用 Basic Pitch 做多音转录（适配多声部伴奏）。
+    使用 Basic Pitch 转录主旋律源。
 
-    只处理单一来源（伴奏/器乐轨），不再双轨拼接。
+    只处理单一来源（优先人声轨），不再双轨拼接。
     """
     task_id = state.get("task_id")
-    source = state.get("source_for_melody")
-    if not source:
-        # 降级1：如果有伴奏/器乐轨道，使用它
-        source = state.get("accompaniment_path")
-    if not source:
-        # 降级2：使用当前音频路径
-        source = state.get("audio_path")
+    source = (
+        state.get("melody_source_path")
+        or state.get("source_for_melody")
+        or state.get("audio_path")
+    )
     if not source:
         raise ValueError("未找到待提取旋律的音频源，且无可用降级路径")
     record_thought(task_id, "extract_melody", f"Basic Pitch 多音转录 {source}")
@@ -130,7 +136,13 @@ async def node_check_basic_pitch_result(state: AgentState) -> Dict[str, Any]:
 async def node_librosa_fallback(state: AgentState) -> Dict[str, Any]:
     """降级：使用 librosa 提取旋律（单一主旋律源）"""
     task_id = state.get("task_id")
-    source = state.get("source_for_melody") or state.get("audio_path")
+    source = (
+        state.get("melody_source_path")
+        or state.get("source_for_melody")
+        or state.get("audio_path")
+    )
+    if not source:
+        raise ValueError("未找到 librosa 降级提取所需的音频源")
     record_thought(task_id, "extract_melody", "Basic Pitch 失败，降级使用 librosa 提取旋律")
     melody_data = await log_tool_call(
         task_id=task_id,
