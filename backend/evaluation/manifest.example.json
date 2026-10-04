@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "ringturn-local-melody-regression",
+  "cases": [
+    {
+      "id": "replace-me-vocal",
+      "enabled": false,
+      "audio_path": "datasets/audio/replace-me.wav",
+      "audio_duration": 30.0,
+      "reference_path": "datasets/references/replace-me.notes.json",
+      "source_kind": "vocals",
+      "tags": ["vocal", "local"],
+      "analysis": {
+        "bpm": 120,
+        "key_midi": 60,
+        "mode": "major"
+      },
+      "predictions": {
+        "basic_pitch": "datasets/predictions/replace-me.basic_pitch.json",
+        "librosa": "datasets/predictions/replace-me.librosa.json"
+      }
+    }
+  ]
+}
