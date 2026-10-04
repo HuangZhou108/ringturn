@@ -7,7 +7,7 @@
       - 若已分离且存在人声轨 → 只提取人声轨（人声即主旋律）
       - 否则 → 提取原始音频（纯音乐 / 分离失败时）
 3. 若 Basic Pitch 失败或返回空，降级使用 librosa 提取
-4. 过滤短音符
+4. 在量化前稳定化单旋律，抑制短碎音、叠音和颤音误检
 5. 量化音符（若有 BPM 信息）
 6. 输出最终的 melody_data
 """
@@ -25,7 +25,7 @@ from app.agent.atomic_tools.melody.vocal_separation import separate_vocals
 from app.agent.atomic_tools.melody.extract_with_basic_pitch import extract_melody_basic_pitch
 from app.agent.atomic_tools.melody.extract_with_crepe import extract_melody_crepe
 from app.agent.atomic_tools.melody.extract_with_librosa import extract_melody_librosa
-from app.agent.atomic_tools.melody.filter_short_notes import filter_short_notes
+from app.agent.atomic_tools.melody.stabilize_notes import stabilize_melody_notes
 from app.agent.atomic_tools.melody.quantize_notes import quantize_notes
 from app.agent.atomic_tools.melody.merge_notes import merge_notes
 from app.agent.atomic_tools.melody.snap_to_key import snap_to_key
@@ -38,6 +38,16 @@ from app.models import ToolPreference
 
 _EXTRACT_GRAPH_JSON = Path(__file__).parent / "extract_graph.json"
 _extract_graph_cache = {}
+
+
+def _same_audio_path(first: str | None, second: str | None) -> bool:
+    """跨平台比较两个音频路径，不要求文件仍然存在。"""
+    if not first or not second:
+        return False
+    return os.path.normcase(os.path.abspath(first)) == os.path.normcase(
+        os.path.abspath(second)
+    )
+
 
 # ---------- 节点定义 ----------
 
@@ -156,21 +166,37 @@ async def node_librosa_fallback(state: AgentState) -> Dict[str, Any]:
 
 @register_node("filter_short")
 async def node_filter_short_notes(state: AgentState) -> Dict[str, Any]:
-    """过滤时长过短的音符（默认 <0.05 秒）"""
+    """量化前稳定化主旋律，避免极短误检被放大成可听见的碎音。"""
     melody_data = state.get("melody_data")
     if not melody_data or not melody_data.get("melody_notes"):
         return {"melody_data": melody_data}
 
     notes = melody_data["melody_notes"]
-    filtered = await log_tool_call(
+    is_vocal_source = _same_audio_path(
+        state.get("melody_source_path") or state.get("source_for_melody"),
+        state.get("vocals_path"),
+    )
+    # 人声中的辅音、滑音和颤音更容易触发短误检；原始混音降级路径保持
+    # 较保守的阈值，避免误删纯器乐中的快速经过音。
+    min_duration = 0.1 if is_vocal_source else 0.05
+    stabilized = await log_tool_call(
         task_id=state.get("task_id"),
         step_name="extract_melody",
-        tool_func=filter_short_notes,
+        tool_func=stabilize_melody_notes,
         melody_notes=notes,
-        min_duration=0.05,
-        tool_name="filter_short_notes"
+        min_duration=min_duration,
+        onset_tolerance=0.04 if is_vocal_source else 0.025,
+        merge_gap=0.1 if is_vocal_source else 0.05,
+        blip_duration=0.18 if is_vocal_source else 0.12,
+        tool_name="stabilize_melody_notes"
     )
-    melody_data["melody_notes"] = filtered
+    record_thought(
+        state.get("task_id"),
+        "extract_melody",
+        f"旋律稳定化: {len(notes)} → {len(stabilized)} 个音符"
+        f"（{'人声' if is_vocal_source else '通用'}参数）",
+    )
+    melody_data["melody_notes"] = stabilized
     return {"melody_data": melody_data}
 
 
