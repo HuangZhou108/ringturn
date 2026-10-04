@@ -89,6 +89,10 @@ class AgentExecutor:
             "melody_source_path": None,
             "harmony_source_path": None,
             "source_for_melody": None,
+            "melody_extractor": None,
+            "melody_candidates": {},
+            "melody_candidate_summary": {},
+            "selected_melody_extractor": None,
             "midi_path": None,
             "arrangement_params": None,
             "arranged_midi_path": None,
@@ -122,6 +126,9 @@ class AgentExecutor:
                 "melody_source_path": inter.get("melody_source_path"),
                 "harmony_source_path": inter.get("harmony_source_path"),
                 "source_for_melody": inter.get("source_for_melody"),
+                "melody_extractor": inter.get("melody_extractor"),
+                "melody_candidate_summary": inter.get("melody_candidate_summary", {}),
+                "selected_melody_extractor": inter.get("selected_melody_extractor"),
                 "midi_path": inter.get("midi_path"),
                 "arranged_midi_path": inter.get("arranged_midi_path"),
                 "tempo": inter.get("tempo", 120),
@@ -267,6 +274,19 @@ class AgentExecutor:
                 "source_for_melody": (
                     final_state.get("source_for_melody")
                     or self.state.get("source_for_melody")
+                ),
+                "melody_extractor": (
+                    final_state.get("melody_extractor")
+                    or self.state.get("melody_extractor")
+                ),
+                "melody_candidate_summary": (
+                    final_state.get("melody_candidate_summary")
+                    or self.state.get("melody_candidate_summary")
+                    or {}
+                ),
+                "selected_melody_extractor": (
+                    final_state.get("selected_melody_extractor")
+                    or self.state.get("selected_melody_extractor")
                 ),
                 "midi_path": midi_path,
                 "arranged_midi_path": arranged_midi_path,

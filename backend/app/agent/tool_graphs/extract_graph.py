@@ -12,6 +12,7 @@
 6. 输出最终的 melody_data
 """
 
+import copy
 import os
 from pathlib import Path
 from typing import Any, Dict
@@ -29,6 +30,10 @@ from app.agent.atomic_tools.melody.stabilize_notes import stabilize_melody_notes
 from app.agent.atomic_tools.melody.quantize_notes import quantize_notes
 from app.agent.atomic_tools.melody.merge_notes import merge_notes
 from app.agent.atomic_tools.melody.snap_to_key import snap_to_key
+from app.agent.atomic_tools.melody.candidate_selection import (
+    select_best_melody_candidate,
+    should_run_fallback_candidate,
+)
 from app.agent.atomic_tools.quality.melody_quality import evaluate_melody_quality
 from app.agent.thinking_utils import record_thought
 from app.agent.utils import log_tool_call
@@ -48,6 +53,62 @@ def _same_audio_path(first: str | None, second: str | None) -> bool:
     return os.path.normcase(os.path.abspath(first)) == os.path.normcase(
         os.path.abspath(second)
     )
+
+
+def _candidate_midi_path(source: str, extractor: str) -> str:
+    """为每个提取器生成互不覆盖、跨平台的候选 MIDI 路径。"""
+    source_path = Path(source)
+    return str(source_path.with_name(f"{source_path.stem}_{extractor}_candidate.mid"))
+
+
+def _analysis_audio_duration(state: AgentState) -> float | None:
+    analysis = state.get("analysis_result") or {}
+    metadata = (analysis.get("metadata") or {}) if isinstance(analysis, dict) else {}
+    return metadata.get("duration") if isinstance(metadata, dict) else None
+
+
+def _store_candidate(
+    state: AgentState,
+    extractor: str,
+    melody_data: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    data = copy.deepcopy(melody_data or {"melody_notes": []})
+    report = evaluate_melody_quality(
+        data.get("melody_notes"),
+        audio_duration=_analysis_audio_duration(state),
+    )
+    data["melody_quality_report"] = report
+    candidates = dict(state.get("melody_candidates") or {})
+    candidates[extractor] = {
+        "melody_data": data,
+        "quality_report": report,
+    }
+    return data, candidates
+
+
+def _cleanup_unselected_candidate_artifacts(
+    candidates: dict[str, dict[str, Any]],
+    selected_extractor: str,
+    keep_selected: bool,
+) -> list[str]:
+    """只删除本子图明确标记的、未选中的自动生成 MIDI。"""
+    removed: list[str] = []
+    for extractor, candidate in candidates.items():
+        if keep_selected and extractor == selected_extractor:
+            continue
+        melody_data = candidate.get("melody_data") or {}
+        artifact = melody_data.get("candidate_artifact_path")
+        if not artifact:
+            continue
+        artifact_path = Path(artifact)
+        try:
+            if artifact_path.is_file():
+                artifact_path.unlink()
+                removed.append(str(artifact_path))
+        except OSError:
+            # 清理失败不应覆盖已完成的候选选择。
+            continue
+    return removed
 
 
 # ---------- 节点定义 ----------
@@ -120,15 +181,32 @@ async def node_basic_pitch(state: AgentState) -> Dict[str, Any]:
     )
     if not source:
         raise ValueError("未找到待提取旋律的音频源，且无可用降级路径")
+    output_path = _candidate_midi_path(source, "basic_pitch")
     record_thought(task_id, "extract_melody", f"Basic Pitch 多音转录 {source}")
-    melody_data = await log_tool_call(
-        task_id=task_id,
-        step_name="extract_melody",
-        tool_func=extract_melody_basic_pitch,
-        audio_path=source,
-        tool_name="extract_melody_basic_pitch"
-    )
-    return {"melody_data": melody_data}
+    try:
+        melody_data = await log_tool_call(
+            task_id=task_id,
+            step_name="extract_melody",
+            tool_func=extract_melody_basic_pitch,
+            audio_path=source,
+            output_midi_path=output_path,
+            tool_name="extract_melody_basic_pitch"
+        )
+        melody_data["candidate_artifact_path"] = output_path
+    except Exception as error:
+        record_thought(
+            task_id,
+            "extract_melody",
+            f"Basic Pitch 候选提取失败: {error}，将尝试 librosa",
+        )
+        melody_data = {
+            "melody_notes": [],
+            "confidence": 0.0,
+            "midi_path": output_path,
+            "candidate_artifact_path": output_path,
+            "extraction_error": str(error),
+        }
+    return {"melody_data": melody_data, "melody_extractor": "basic_pitch"}
 
 
 @register_node("check_result")
@@ -140,12 +218,18 @@ async def node_check_basic_pitch_result(state: AgentState) -> Dict[str, Any]:
         # print(f"[DEBUG check_result] melody_notes length: {len(melody_data.get('melody_notes', []))}")
         return {"use_basic_pitch": True}
     else:
-        return {"use_basic_pitch": False, "basic_pitch_failed": True}
+        stored_data, candidates = _store_candidate(state, "basic_pitch", melody_data)
+        return {
+            "melody_data": stored_data,
+            "melody_candidates": candidates,
+            "use_basic_pitch": False,
+            "basic_pitch_failed": True,
+        }
 
 
 @register_node("librosa_fallback")
 async def node_librosa_fallback(state: AgentState) -> Dict[str, Any]:
-    """降级：使用 librosa 提取旋律（单一主旋律源）"""
+    """按需使用 librosa 提取第二个单旋律候选。"""
     task_id = state.get("task_id")
     source = (
         state.get("melody_source_path")
@@ -154,15 +238,35 @@ async def node_librosa_fallback(state: AgentState) -> Dict[str, Any]:
     )
     if not source:
         raise ValueError("未找到 librosa 降级提取所需的音频源")
-    record_thought(task_id, "extract_melody", "Basic Pitch 失败，降级使用 librosa 提取旋律")
-    melody_data = await log_tool_call(
-        task_id=task_id,
-        step_name="extract_melody",
-        tool_func=extract_melody_librosa,
-        audio_path=source,
-        tool_name="extract_melody_librosa"
+    output_path = _candidate_midi_path(source, "librosa")
+    primary = (state.get("melody_candidates") or {}).get("basic_pitch") or {}
+    primary_score = (primary.get("quality_report") or {}).get("score")
+    reason = (
+        f"Basic Pitch 质量得分 {primary_score}，尝试 librosa 候选"
+        if primary_score is not None
+        else "Basic Pitch 无有效结果，降级使用 librosa"
     )
-    return {"melody_data": melody_data}
+    record_thought(task_id, "extract_melody", reason)
+    try:
+        melody_data = await log_tool_call(
+            task_id=task_id,
+            step_name="extract_melody",
+            tool_func=extract_melody_librosa,
+            audio_path=source,
+            output_midi_path=output_path,
+            tool_name="extract_melody_librosa"
+        )
+        melody_data["candidate_artifact_path"] = output_path
+    except Exception as error:
+        record_thought(task_id, "extract_melody", f"librosa 候选提取失败: {error}")
+        melody_data = {
+            "melody_notes": [],
+            "confidence": 0.0,
+            "midi_path": output_path,
+            "candidate_artifact_path": output_path,
+            "extraction_error": str(error),
+        }
+    return {"melody_data": melody_data, "melody_extractor": "librosa"}
 
 
 @register_node("filter_short")
@@ -276,6 +380,73 @@ async def node_snap_to_key(state: AgentState) -> Dict[str, Any]:
     return {"melody_data": melody_data}
 
 
+@register_node("evaluate_candidate")
+async def node_evaluate_candidate(state: AgentState) -> Dict[str, Any]:
+    """对经过同一后处理链的当前候选评分并保存快照。"""
+    extractor = state.get("melody_extractor") or "unknown"
+    melody_data, candidates = _store_candidate(
+        state,
+        extractor,
+        state.get("melody_data"),
+    )
+    report = melody_data["melody_quality_report"]
+    record_thought(
+        state.get("task_id"),
+        "extract_melody",
+        f"{extractor} 候选得分: {report['score']}，"
+        f"通过: {report['passed']}，可用: {report['usable']}，"
+        f"问题: {report['issue_codes']}",
+    )
+    return {
+        "melody_data": melody_data,
+        "melody_candidates": candidates,
+    }
+
+
+@register_node("select_candidate")
+async def node_select_candidate(state: AgentState) -> Dict[str, Any]:
+    """选择质量最好的旋律候选，并清理未选中的自动生成 MIDI。"""
+    candidates = state.get("melody_candidates") or {}
+    selection = select_best_melody_candidate(candidates)
+    selected_extractor = selection["selected_extractor"]
+    melody_data = selection["melody_data"]
+    report = selection["quality_report"]
+    melody_data["melody_quality_report"] = report
+    melody_data["selected_extractor"] = selected_extractor
+    melody_data["candidate_selection"] = {
+        "reason": selection["reason"],
+        "selected_extractor": selected_extractor,
+        "candidates": selection["candidate_summaries"],
+    }
+
+    removed = _cleanup_unselected_candidate_artifacts(
+        candidates,
+        selected_extractor,
+        keep_selected=bool(report.get("usable")),
+    )
+    if removed:
+        record_thought(
+            state.get("task_id"),
+            "extract_melody",
+            f"已清理 {len(removed)} 个未选中候选 MIDI",
+        )
+
+    record_thought(
+        state.get("task_id"),
+        "extract_melody",
+        f"选择 {selected_extractor} 旋律候选，得分 {report['score']}；"
+        f"原因: {selection['reason']}",
+    )
+    return {
+        "melody_data": melody_data,
+        "melody_extractor": selected_extractor,
+        "selected_melody_extractor": selected_extractor,
+        "melody_candidate_summary": melody_data["candidate_selection"],
+        # 最终 checkpoint 只保留摘要，避免重复保存多份完整音符列表。
+        "melody_candidates": {},
+    }
+
+
 @register_node("ensure_midi")
 async def node_ensure_midi_path(state: AgentState) -> Dict[str, Any]:
     """执行旋律可用性门禁，并确保 melody_data 包含有效 midi_path。"""
@@ -330,6 +501,18 @@ def extract_route_after_check(state: AgentState) -> str:
         return "filter_short"
     else:
         return "librosa_fallback"
+
+
+@register_condition("extract_route_after_candidate")
+def extract_route_after_candidate(state: AgentState) -> str:
+    """Basic Pitch 不达标时才尝试 librosa；librosa 评分后结束候选循环。"""
+    extractor = state.get("melody_extractor")
+    melody_data = state.get("melody_data") or {}
+    report = melody_data.get("melody_quality_report") or {}
+    candidates = state.get("melody_candidates") or {}
+    if should_run_fallback_candidate(extractor, report, candidates):
+        return "librosa_fallback"
+    return "select_candidate"
     
 
 # ---------- 构建图 ----------
