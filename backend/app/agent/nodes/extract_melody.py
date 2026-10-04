@@ -75,6 +75,9 @@ async def extract_melody_node(state: AgentState) -> dict:
         "melody_data": melody_data,
         "melody_source_path": melody_source_path,
         "harmony_source_path": harmony_source_path,
+        "melody_extractor": final_state.get("melody_extractor"),
+        "selected_melody_extractor": final_state.get("selected_melody_extractor"),
+        "melody_candidate_summary": final_state.get("melody_candidate_summary") or {},
         # 保留旧字段，兼容已有 checkpoint 和用户自定义的 extract graph。
         "source_for_melody": melody_source_path,
     }

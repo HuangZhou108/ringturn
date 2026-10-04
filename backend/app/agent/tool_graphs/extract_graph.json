@@ -12,6 +12,8 @@
     { "id": "quantize", "type": "regular" },
     { "id": "merge", "type": "regular" },
     { "id": "snap", "type": "regular" },
+    { "id": "evaluate_candidate", "type": "regular" },
+    { "id": "select_candidate", "type": "regular" },
     { "id": "ensure_midi", "type": "regular" }
   ],
   "edges": [
@@ -26,6 +28,14 @@
         "filter_short": "filter_short",
         "librosa_fallback": "librosa_fallback"
       }
+    },
+    {
+      "from": "evaluate_candidate",
+      "condition": "extract_route_after_candidate",
+      "mapping": {
+        "librosa_fallback": "librosa_fallback",
+        "select_candidate": "select_candidate"
+      }
     }
   ],
   "default_edges": [
@@ -33,6 +43,7 @@
     { "from": "filter_short", "to": "quantize" },
     { "from": "quantize", "to": "merge" },
     { "from": "merge", "to": "snap" },
-    { "from": "snap", "to": "ensure_midi" }
+    { "from": "snap", "to": "evaluate_candidate" },
+    { "from": "select_candidate", "to": "ensure_midi" }
   ]
 }

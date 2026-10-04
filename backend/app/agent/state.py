@@ -64,6 +64,10 @@ class AgentState(TypedDict, total=False):
     melody_source_path: str | None           # 主旋律提取源：优先 vocals.wav，否则原音频
     harmony_source_path: str | None          # 和声上下文源：优先伴奏 stem，否则原音频
     source_for_melody: str | None            # 兼容旧 checkpoint / 自定义子图的旋律源别名
+    melody_extractor: str | None             # 当前正在处理的旋律提取器
+    melody_candidates: dict                  # 提取子图内的候选结果（选择后清空）
+    melody_candidate_summary: dict           # 候选分数、问题与选择原因
+    selected_melody_extractor: str | None    # 最终选中的提取器
 
     # 改编参数
     arrange_temp_path: str | None
