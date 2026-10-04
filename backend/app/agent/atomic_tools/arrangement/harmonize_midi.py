@@ -14,6 +14,7 @@ from pathlib import Path
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
+from app.agent.atomic_tools.arrangement.gap_accompaniment import select_accompaniment_channels
 
 
 def _build_track(events: List[tuple]) -> mido.MidiTrack:
@@ -58,8 +59,31 @@ async def harmonize_midi(
     def s2t(seconds: float) -> int:
         return int(round(seconds * ticks_per_beat * (bpm / 60.0)))
 
-    bass_events = [(0, mido.Message('program_change', program=bass_program, time=0))]
-    pad_events = [(0, mido.Message('program_change', program=pad_program, time=0))]
+    # MIDI program 是按 channel 生效的。伴奏若与旋律共用 channel，Pad/Bass 的
+    # program_change 会覆盖原音色，因此优先选择两个未占用的非鼓组 channel。
+    used_channels = {
+        msg.channel
+        for track in mid.tracks
+        for msg in track
+        if hasattr(msg, "channel")
+    }
+    bass_channel, pad_channel = select_accompaniment_channels(used_channels)
+    bass_events = [
+        (
+            0,
+            mido.Message(
+                'program_change', channel=bass_channel, program=bass_program, time=0
+            ),
+        )
+    ]
+    pad_events = [
+        (
+            0,
+            mido.Message(
+                'program_change', channel=pad_channel, program=pad_program, time=0
+            ),
+        )
+    ]
 
     for ch in chords:
         root = int(ch["root_midi"])
@@ -71,14 +95,50 @@ async def harmonize_midi(
         # 低音：根音低八度
         bass_note = root - 12
         if 0 <= bass_note <= 127:
-            bass_events.append((start, mido.Message('note_on', note=bass_note, velocity=bass_velocity, time=0)))
-            bass_events.append((end, mido.Message('note_off', note=bass_note, velocity=0, time=0)))
+            bass_events.append(
+                (
+                    start,
+                    mido.Message(
+                        'note_on',
+                        channel=bass_channel,
+                        note=bass_note,
+                        velocity=bass_velocity,
+                        time=0,
+                    ),
+                )
+            )
+            bass_events.append(
+                (
+                    end,
+                    mido.Message(
+                        'note_off', channel=bass_channel, note=bass_note, velocity=0, time=0
+                    ),
+                )
+            )
 
         # 和弦垫：根音 + 五度
         for pn in (root, root + 7):
             if 0 <= pn <= 127:
-                pad_events.append((start, mido.Message('note_on', note=pn, velocity=pad_velocity, time=0)))
-                pad_events.append((end, mido.Message('note_off', note=pn, velocity=0, time=0)))
+                pad_events.append(
+                    (
+                        start,
+                        mido.Message(
+                            'note_on',
+                            channel=pad_channel,
+                            note=pn,
+                            velocity=pad_velocity,
+                            time=0,
+                        ),
+                    )
+                )
+                pad_events.append(
+                    (
+                        end,
+                        mido.Message(
+                            'note_off', channel=pad_channel, note=pn, velocity=0, time=0
+                        ),
+                    )
+                )
 
     mid.tracks.append(_build_track(bass_events))
     mid.tracks.append(_build_track(pad_events))

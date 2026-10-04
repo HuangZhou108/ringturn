@@ -16,6 +16,61 @@ import mido
 from app.agent.tool_graphs.arrange_graph import get_arrange_graph
 settings = get_settings()
 
+
+async def _apply_gap_accompaniment(state: AgentState, arranged_path: str) -> str:
+    """只在长旋律休止中添加低力度伴奏；失败时保留原编曲结果。"""
+    from app.agent.atomic_tools.arrangement.gap_accompaniment import plan_gap_accompaniment
+    from app.agent.atomic_tools.arrangement.harmonize_midi import harmonize_midi
+
+    try:
+        analysis = state.get("analysis_result") or {}
+        if not isinstance(analysis, dict):
+            raise TypeError("analysis_result 不是字典")
+        harmony = analysis.get("harmony") or {}
+        melody_data = state.get("melody_data") or {}
+        if not isinstance(harmony, dict) or not isinstance(melody_data, dict):
+            raise TypeError("旋律或和声状态格式无效")
+        plan = plan_gap_accompaniment(
+            melody_notes=melody_data.get("melody_notes") or [],
+            chords=harmony.get("chords") or [],
+            key_midi=harmony.get("key_midi"),
+            mode=harmony.get("mode", "major"),
+            target_duration=state.get("duration"),
+        )
+    except Exception as e:
+        record_thought(state["task_id"], "arrange", f"长休止伴奏规划失败，安全跳过: {e}")
+        return arranged_path
+
+    if not plan["segments"]:
+        record_thought(
+            state["task_id"],
+            "arrange",
+            f"跳过长休止伴奏：{plan['reason']}（长休止 {plan['gap_count']} 段）",
+        )
+        return arranged_path
+
+    try:
+        detected_bpm = (analysis.get("tempo_beats") or {}).get("bpm") or 120
+        harmonized_path = str(Path(arranged_path).with_name("arrange_gap_harmonized.mid"))
+        await harmonize_midi(
+            midi_path=arranged_path,
+            chords=plan["segments"],
+            output_path=harmonized_path,
+            bpm=float(detected_bpm),
+            bass_velocity=42,
+            pad_velocity=28,
+        )
+        mido.MidiFile(harmonized_path)
+        record_thought(
+            state["task_id"],
+            "arrange",
+            f"已为 {len(plan['segments'])} 个长休止添加低力度伴奏（策略: {plan['reason']}）",
+        )
+        return harmonized_path
+    except Exception as e:
+        record_thought(state["task_id"], "arrange", f"长休止伴奏失败，保留原编曲结果: {e}")
+        return arranged_path
+
 @clean_state
 async def arrange_node(state: AgentState) -> dict:
     """
@@ -73,6 +128,7 @@ async def arrange_node(state: AgentState) -> dict:
             try:
                 mido.MidiFile(auto_path)
                 record_thought(state["task_id"], "arrange", "采用自主改编（function calling）结果")
+                auto_path = await _apply_gap_accompaniment(state, auto_path)
                 return {"arranged_midi_path": auto_path}
             except Exception as e:
                 record_thought(state["task_id"], "arrange", f"自主改编结果无效，回退确定性: {e}")
@@ -128,28 +184,8 @@ async def arrange_node(state: AgentState) -> dict:
         except Exception as e:
             record_thought(state["task_id"], "arrange", f"移调失败(忽略): {e}")
 
-    # ---- 多轨和声编曲：添加低音轨 + 和弦垫轨 ----
-    # 已禁用：chroma 和弦检测过于简陋，调性稳定的歌会检测出同一根音，
-    # 导致低音/垫变成"同一个音反复循环"，反而盖住旋律。后续如需和声层再重新实现。
-    harmony = (state.get("analysis_result") or {}).get("harmony") or {}
-    chords = harmony.get("chords") or []
-    if False and chords:
-        try:
-            from app.agent.atomic_tools.arrangement.harmonize_midi import harmonize_midi
-            detected_bpm = ((state.get("analysis_result") or {}).get("tempo_beats") or {}).get("bpm") or 120
-            harmonized_path = str(Path(arranged_path).with_name("arrange_harmonized.mid"))
-            await harmonize_midi(
-                midi_path=arranged_path,
-                chords=chords,
-                output_path=harmonized_path,
-                bpm=float(detected_bpm),
-            )
-            arranged_path = harmonized_path
-            record_thought(state["task_id"], "arrange", f"已添加低音轨+和弦垫轨（{len(chords)} 个和弦段）")
-        except Exception as e:
-            record_thought(state["task_id"], "arrange", f"和声编曲失败(忽略): {e}")
-    else:
-        record_thought(state["task_id"], "arrange", "未检测到和弦信息，跳过和声编曲")
+    # ---- 长休止伴奏：仅填补人声句间的显著空档，不覆盖持续旋律 ----
+    arranged_path = await _apply_gap_accompaniment(state, arranged_path)
 
     # ---- 改编结束说明 ----
     # 收集实际发生的改编
