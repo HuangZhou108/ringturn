@@ -40,6 +40,7 @@ async def node_evaluate_quality(state: AgentState) -> Dict[str, Any]:
             tool_func=evaluate_overall_quality,
             audio_path=audio_path,
             melody_notes=melody_data.get("melody_notes"),
+            melody_quality_report=melody_data.get("melody_quality_report"),
             key_midi=harmony.get("key_midi"),
             mode=harmony.get("mode", "major"),
             tool_name="evaluate_overall_quality"
