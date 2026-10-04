@@ -2,3 +2,5 @@ default.sf2
 venv/
 .vscode
 static
+backend/benchmark-results/
+backend/evaluation/datasets/
