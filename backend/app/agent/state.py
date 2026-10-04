@@ -52,7 +52,7 @@ class AgentState(TypedDict, total=False):
     # Demucs 分离结果（由 analysis 节点填充）
     demucs_separated: bool              # 是否执行了分离
     vocals_path: str | None             # 人声轨道路径（如果有分离）
-    accompaniment_path: str | None      # 伴奏轨道路径（other.wav，如果有分离）
+    accompaniment_path: str | None      # 伴奏轨道路径（如 no_vocals.wav / other.wav）
     demucs_stems: str | None            # 使用的分离模式（'4' 或 None）
     # 分析结果
     analysis_result: Annotated[dict | None, merge_dicts]
@@ -61,7 +61,9 @@ class AgentState(TypedDict, total=False):
 
     # 旋律提取
     use_vocal_and_accompaniment: bool        # 已废弃：旋律提取已改为单一主旋律源（P0-1），不再双轨拼接
-    source_for_melody: str | None            # 单轨模式下的提取源
+    melody_source_path: str | None           # 主旋律提取源：优先 vocals.wav，否则原音频
+    harmony_source_path: str | None          # 和声上下文源：优先伴奏 stem，否则原音频
+    source_for_melody: str | None            # 兼容旧 checkpoint / 自定义子图的旋律源别名
 
     # 改编参数
     arrange_temp_path: str | None

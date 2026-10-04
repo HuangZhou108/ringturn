@@ -21,8 +21,6 @@ async def extract_melody_node(state: AgentState) -> dict:
     task_id = state["task_id"]
     profile_id = state.get("profile_id") 
     
-    user_request = state.get("user_request", "")
-
     record_thought(task_id, "extract_melody", f"开始提取旋律：")
 
     # 如果 analysis 未执行（analysis_result 为 None），则主动进行 Demucs 分离
@@ -55,11 +53,17 @@ async def extract_melody_node(state: AgentState) -> dict:
     final_state = await graph.ainvoke(sub_state)
 
     melody_data = final_state.get("melody_data")
+    melody_source_path = (
+        final_state.get("melody_source_path")
+        or final_state.get("source_for_melody")
+        or audio_path
+    )
+    harmony_source_path = final_state.get("harmony_source_path") or audio_path
     if not melody_data:
         # 降级保险：直接调用 Basic Pitch
         from app.agent.atomic_tools.melody.extract_with_basic_pitch import extract_melody_basic_pitch
-        melody_data = await extract_melody_basic_pitch(audio_path)
-        record_thought(task_id, "extract_melody", "降级：直接调用 Basic Pitch 成功")
+        melody_data = await extract_melody_basic_pitch(melody_source_path)
+        record_thought(task_id, "extract_melody", f"降级：使用旋律源 {melody_source_path} 直接调用 Basic Pitch 成功")
 
     # 确保 melody_data 包含 midi_path（即使未生成也放一个占位）
     if not melody_data.get("midi_path"):
@@ -67,4 +71,10 @@ async def extract_melody_node(state: AgentState) -> dict:
         Path(melody_data["midi_path"]).parent.mkdir(parents=True, exist_ok=True)
     print(f"[DEBUG] extract_melody_node returning melody_data with keys: {melody_data.keys() if melody_data else None}")
     record_thought(task_id, "extract_melody", f"旋律提取完成，音符数: {len(melody_data.get('melody_notes', []))}")
-    return {"melody_data": melody_data}
+    return {
+        "melody_data": melody_data,
+        "melody_source_path": melody_source_path,
+        "harmony_source_path": harmony_source_path,
+        # 保留旧字段，兼容已有 checkpoint 和用户自定义的 extract graph。
+        "source_for_melody": melody_source_path,
+    }
