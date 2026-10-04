@@ -29,6 +29,7 @@ from app.agent.atomic_tools.melody.stabilize_notes import stabilize_melody_notes
 from app.agent.atomic_tools.melody.quantize_notes import quantize_notes
 from app.agent.atomic_tools.melody.merge_notes import merge_notes
 from app.agent.atomic_tools.melody.snap_to_key import snap_to_key
+from app.agent.atomic_tools.quality.melody_quality import evaluate_melody_quality
 from app.agent.thinking_utils import record_thought
 from app.agent.utils import log_tool_call
 from app.agent.utils import clean_state
@@ -277,13 +278,33 @@ async def node_snap_to_key(state: AgentState) -> Dict[str, Any]:
 
 @register_node("ensure_midi")
 async def node_ensure_midi_path(state: AgentState) -> Dict[str, Any]:
-    """确保 melody_data 中包含有效的 midi_path，若缺失则根据音符重建"""
+    """执行旋律可用性门禁，并确保 melody_data 包含有效 midi_path。"""
     melody_data = state.get("melody_data")
     if not melody_data:
         raise ValueError("melody_data 为空，无法生成 MIDI 路径")
 
+    analysis = state.get("analysis_result") or {}
+    metadata = (analysis.get("metadata") or {}) if isinstance(analysis, dict) else {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    quality_report = evaluate_melody_quality(
+        melody_data.get("melody_notes"),
+        audio_duration=metadata.get("duration"),
+    )
+    melody_data["melody_quality_report"] = quality_report
+    record_thought(
+        state.get("task_id"),
+        "extract_melody",
+        f"旋律质量得分: {quality_report['score']}，"
+        f"通过: {quality_report['passed']}，可继续: {quality_report['usable']}，"
+        f"问题: {quality_report['issue_codes']}",
+    )
+    if not quality_report["usable"]:
+        messages = [issue["message"] for issue in quality_report["issues"]]
+        raise RuntimeError(f"旋律质量门禁未通过: {'；'.join(messages)}")
+
     if melody_data.get("midi_path") and Path(melody_data["midi_path"]).exists():
-        return {}  # 已有有效路径
+        return {"melody_data": melody_data}  # 已有有效路径，仍需持久化质量报告
 
     # 尝试从音频路径推断或创建默认 MIDI 路径
     audio_path = state.get("audio_path")
