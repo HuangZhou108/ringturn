@@ -17,6 +17,27 @@ export type TaskStatus =
 // 来源类型
 export type SourceType = 'upload' | 'link' | 'search'
 
+export interface AgentTraceError {
+    code: string
+    type: string
+    message: string
+    retryable: boolean
+}
+
+export interface AgentTraceEvent {
+    version: number
+    event_id: string
+    kind: 'lifecycle' | 'node' | 'tool' | 'routing'
+    name: string
+    status: 'running' | 'success' | 'failed' | 'cancelled'
+    parent_name?: string
+    started_at: string
+    finished_at?: string
+    duration_ms?: number
+    metadata?: Record<string, unknown>
+    error?: AgentTraceError
+}
+
 // 任务创建请求
 export interface CreateTaskRequest {
     user_request: string

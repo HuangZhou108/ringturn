@@ -4,6 +4,7 @@ from langchain_core.outputs import LLMResult
 from typing import Any, Dict, Optional, List
 from uuid import UUID
 from .thinking_utils import record_thought
+from .observability import finish_trace_event, new_trace_event, record_trace_event, summarize
 
 
 class ThinkingCallbackHandler(AsyncCallbackHandler):
@@ -117,4 +118,70 @@ class ThinkingCallbackHandler(AsyncCallbackHandler):
             f"工具执行失败: {str(error)[:200]}",
             type="tool_result",
             status="failed"
+        )
+
+
+class ToolTraceCallbackHandler(AsyncCallbackHandler):
+    """Record function-calling tool lifecycle without storing LLM messages."""
+
+    def __init__(self, task_id: str, step_name: str):
+        self.task_id = task_id
+        self.step_name = step_name
+        self._tool_runs: dict[str, dict[str, Any]] = {}
+
+    async def on_tool_start(
+        self,
+        serialized: Dict[str, Any],
+        input_str: str,
+        *,
+        run_id: UUID,
+        parent_run_id: Optional[UUID] = None,
+        inputs: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> None:
+        name = (serialized or {}).get("name") or "unknown_tool"
+        event = new_trace_event(
+            kind="tool",
+            name=name,
+            parent_name=self.step_name,
+            metadata={
+                "input_summary": summarize(inputs if inputs is not None else input_str),
+                "langchain_run_id": str(run_id),
+            },
+        )
+        self._tool_runs[str(run_id)] = event
+        record_trace_event(self.task_id, event)
+
+    async def on_tool_end(
+        self,
+        output: Any,
+        *,
+        run_id: UUID,
+        parent_run_id: Optional[UUID] = None,
+        **kwargs: Any,
+    ) -> None:
+        event = self._tool_runs.pop(str(run_id), None)
+        if not event:
+            return
+        completed = finish_trace_event(
+            event,
+            status="success",
+            metadata={"output_summary": summarize(output)},
+        )
+        record_trace_event(self.task_id, completed)
+
+    async def on_tool_error(
+        self,
+        error: BaseException,
+        *,
+        run_id: UUID,
+        parent_run_id: Optional[UUID] = None,
+        **kwargs: Any,
+    ) -> None:
+        event = self._tool_runs.pop(str(run_id), None)
+        if not event:
+            return
+        record_trace_event(
+            self.task_id,
+            finish_trace_event(event, status="failed", error=error),
         )

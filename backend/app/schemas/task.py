@@ -31,6 +31,27 @@ class TaskCreateResponse(BaseModel):
     status: str
     created_at: datetime
 
+
+class AgentTraceError(BaseModel):
+    code: str
+    type: str
+    message: str
+    retryable: bool = False
+
+
+class AgentTraceEvent(BaseModel):
+    version: int = 1
+    event_id: str
+    kind: Literal["lifecycle", "node", "tool", "routing"]
+    name: str
+    status: Literal["running", "success", "failed", "cancelled"]
+    parent_name: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+    duration_ms: int | None = None
+    metadata: Dict[str, Any] | None = None
+    error: AgentTraceError | None = None
+
 class TaskDetailResponse(BaseModel):
     """任务详情响应"""
     task_id: str
@@ -58,6 +79,12 @@ class TaskResultResponse(BaseModel):
     audio_url: str | None = None
     duration: float | None = None
     format: str = "mp3"
+
+
+class TaskTraceResponse(BaseModel):
+    task_id: str
+    status: str
+    events: list[AgentTraceEvent] = Field(default_factory=list)
 
 class TaskCancelResponse(BaseModel):
     """任务取消响应"""

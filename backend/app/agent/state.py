@@ -13,6 +13,12 @@ def merge_dicts(left: dict, right: dict) -> dict:
     merged.update(right)
     return merged
 
+
+def append_trace_events(left: list[dict] | None, right: list[dict] | None) -> list[dict]:
+    """Append-only reducer for JSON-serializable Agent execution events."""
+    return list(left or []) + list(right or [])
+
+
 class TaskStep(str, Enum):
     """子步骤枚举"""
     FETCH_SOURCE = "fetch_source"
@@ -84,6 +90,9 @@ class AgentState(TypedDict, total=False):
     current_step_index: int
     plan: list[str]
     step_results: dict
+
+    # 工程可观测性（与面向用户的 thinking_process 分离）
+    execution_trace: Annotated[list[dict], append_trace_events]
 
     # 子图内部状态通道（必须在 state 中声明，否则 LangGraph 不会在节点间正确传递）
     should_separate: bool            # analysis 图：是否执行音源分离

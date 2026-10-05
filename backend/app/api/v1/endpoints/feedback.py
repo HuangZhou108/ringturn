@@ -13,6 +13,7 @@ from app.schemas import (
 )
 from app.services.llm_service import llm_service
 from app.agent.agent_executor import AgentExecutor
+from app.agent.observability import TRACE_KEY
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -108,7 +109,11 @@ async def submit_feedback(
     record_thought(new_task_id, "feedback", f"根据反馈 '{request.feedback}'，选择从节点 '{resume_node}' 重新开始。")
 
     # 3. 从父任务复制中间数据
-    child_task.intermediate_data = parent_task.intermediate_data
+    child_intermediate = dict(parent_task.intermediate_data or {})
+    # A feedback task starts a new execution run; keep reusable audio state but
+    # do not mix the parent's diagnostic events into the child trace.
+    child_intermediate.pop(TRACE_KEY, None)
+    child_task.intermediate_data = child_intermediate
 
     # 4. 在同一会话中添加消息
     conv_msg = db.query(ConversationMessage).filter(

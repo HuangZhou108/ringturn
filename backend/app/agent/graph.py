@@ -10,6 +10,12 @@ from pathlib import Path
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from app.agent.state import AgentState
+from app.agent.observability import (
+    finish_trace_event,
+    new_trace_event,
+    record_trace_event,
+    traced_node,
+)
 from app.agent.nodes import (
     fetch_source_node,
     analyze_structure_node,
@@ -43,23 +49,48 @@ _graph_lock = asyncio.Lock()
 def entry_router(state: AgentState) -> str:
     """根据 state 中的 resume_from_node 决定从哪个节点开始"""
     target = state.get("resume_from_node", NODE_FETCH)
-    print(f"[ROUTER] resume_from_node = {target}")
     # 确保目标节点存在于图中
     return target if target in ALL_NODES else NODE_FETCH
+
+
+async def entry_router_node(state: AgentState) -> dict:
+    """Record the selected resume route without changing routing semantics."""
+    requested = state.get("resume_from_node", NODE_FETCH)
+    target = entry_router(state)
+    event = new_trace_event(kind="routing", name="entry_router")
+    event = finish_trace_event(
+        event,
+        status="success",
+        metadata={"requested": requested, "selected": target},
+    )
+    record_trace_event(str(state.get("task_id") or ""), event)
+    return {"execution_trace": [event]}
 
 async def build_agent_graph():
     """异步构建并编译LangGraph状态图"""
     workflow = StateGraph(AgentState)
 
     # 注册节点（所有节点已修改为只接收 state 参数）
-    workflow.add_node(NODE_FETCH, fetch_source_node)
-    workflow.add_node(NODE_ANALYZE, analyze_structure_node)
-    workflow.add_node(NODE_EXTRACT, extract_melody_node)
-    workflow.add_node(NODE_GEN_MIDI, generate_midi_node)
-    workflow.add_node(NODE_ARRANGE, arrange_node)
-    workflow.add_node(NODE_RENDER, render_node)
-    workflow.add_node(NODE_CHECK, check_quality_node)
-    workflow.add_node(NODE_REFLECT, reflect_node)
+    node_specs = [
+        (NODE_FETCH, fetch_source_node, 0, 10),
+        (NODE_ANALYZE, analyze_structure_node, 10, 30),
+        (NODE_EXTRACT, extract_melody_node, 30, 50),
+        (NODE_GEN_MIDI, generate_midi_node, 50, 60),
+        (NODE_ARRANGE, arrange_node, 60, 75),
+        (NODE_RENDER, render_node, 75, 90),
+        (NODE_CHECK, check_quality_node, 90, 97),
+        (NODE_REFLECT, reflect_node, 97, 100),
+    ]
+    for node_name, node_func, progress_start, progress_end in node_specs:
+        workflow.add_node(
+            node_name,
+            traced_node(
+                node_name,
+                node_func,
+                progress_start=progress_start,
+                progress_end=progress_end,
+            ),
+        )
 
     # 固定边（顺序执行）
     workflow.add_edge(NODE_FETCH, NODE_ANALYZE)
@@ -72,18 +103,36 @@ async def build_agent_graph():
 
     # 添加路由入口
     workflow.set_entry_point("entry_router")
-    workflow.add_node("entry_router", lambda state: {})  # 空节点
+    workflow.add_node("entry_router", entry_router_node)
     workflow.add_conditional_edges("entry_router", entry_router, {node: node for node in ALL_NODES})
 
     # 条件边：根据反思结果决定是否重试
     def should_retry(state: AgentState) -> str:
         if not state.get("needs_revision", False):
-            return END
-        retry_count = state.get("retry_count", 0)
-        max_retries = state.get("max_retries", 0)
-        if retry_count > max_retries:
-            return END
-        return NODE_ARRANGE
+            selected = END
+            reason = "quality_passed"
+        else:
+            retry_count = state.get("retry_count", 0)
+            max_retries = state.get("max_retries", 0)
+            if retry_count > max_retries:
+                selected = END
+                reason = "retry_limit_reached"
+            else:
+                selected = NODE_ARRANGE
+                reason = "quality_revision"
+        event = new_trace_event(kind="routing", name="quality_retry_router")
+        event = finish_trace_event(
+            event,
+            status="success",
+            metadata={
+                "selected": "end" if selected == END else selected,
+                "reason": reason,
+                "retry_count": state.get("retry_count", 0),
+                "max_retries": state.get("max_retries", 0),
+            },
+        )
+        record_trace_event(str(state.get("task_id") or ""), event)
+        return selected
 
     workflow.add_conditional_edges(
         NODE_REFLECT,

@@ -22,6 +22,7 @@ from app.schemas import (
 )
 from app.services.file_service import file_service
 from app.agent.agent_executor import AgentExecutor
+from app.agent.observability import get_execution_trace
 from app.api.v1.endpoints.profiles import get_active_profile as get_active_profile_from_db
 from app.core.exceptions import (
     TaskNotFoundException,
@@ -247,6 +248,26 @@ async def get_task_status(
             "thinking_process": task.thinking_process or [],
         },
         "message": message,
+    }
+
+
+@router.get("/{task_id}/trace")
+async def get_task_trace(
+    task_id: str,
+    db: Session = Depends(get_db),
+):
+    """获取结构化 Agent 执行轨迹（不包含模型提示词或隐藏推理）。"""
+    task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+    if not task:
+        raise TaskNotFoundException(task_id)
+    return {
+        "code": 200,
+        "data": {
+            "task_id": task.id,
+            "status": task.status.value,
+            "events": get_execution_trace(task),
+        },
+        "message": "获取 Agent 执行轨迹成功。",
     }
 
 @router.get("/{task_id}/result")

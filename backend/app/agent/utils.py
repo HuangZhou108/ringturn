@@ -4,6 +4,7 @@ from typing import Any, Dict, Callable
 import re
 import json
 from .thinking_utils import record_thought
+from .observability import finish_trace_event, new_trace_event, record_trace_event, summarize
 import inspect
 import asyncio
 
@@ -71,6 +72,16 @@ async def log_tool_call(
         type="tool_call",
         status="pending"
     )
+    trace_event = new_trace_event(
+        kind="tool",
+        name=tool_name,
+        parent_name=step_name,
+        metadata={
+            "args_summary": summarize(args),
+            "kwargs_summary": summarize(kwargs),
+        },
+    )
+    record_trace_event(task_id, trace_event)
     try:
         # result = await tool_func(*args, **kwargs)
         if inspect.iscoroutinefunction(tool_func):
@@ -84,6 +95,14 @@ async def log_tool_call(
             type="tool_result",
             status="success"
         )
+        record_trace_event(
+            task_id,
+            finish_trace_event(
+                trace_event,
+                status="success",
+                metadata={"output_summary": summarize(result)},
+            ),
+        )
         return result
     except Exception as e:
         record_thought(
@@ -92,5 +111,9 @@ async def log_tool_call(
             f"工具执行失败: {str(e)}",
             type="tool_result",
             status="failed"
+        )
+        record_trace_event(
+            task_id,
+            finish_trace_event(trace_event, status="failed", error=e),
         )
         raise
