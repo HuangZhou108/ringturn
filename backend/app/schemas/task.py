@@ -1,7 +1,8 @@
-from pydantic import BaseModel, Field
-from typing import Literal, Optional, Dict, Any
-from datetime import datetime
 import json
+from datetime import datetime
+from typing import Any, Dict, Literal, Optional
+
+from pydantic import BaseModel, Field
 
 # 子步骤定义
 SUBTASKS = [
@@ -31,27 +32,6 @@ class TaskCreateResponse(BaseModel):
     status: str
     created_at: datetime
 
-
-class AgentTraceError(BaseModel):
-    code: str
-    type: str
-    message: str
-    retryable: bool = False
-
-
-class AgentTraceEvent(BaseModel):
-    version: int = 1
-    event_id: str
-    kind: Literal["lifecycle", "node", "tool", "routing"]
-    name: str
-    status: Literal["running", "success", "failed", "cancelled"]
-    parent_name: str | None = None
-    started_at: datetime
-    finished_at: datetime | None = None
-    duration_ms: int | None = None
-    metadata: Dict[str, Any] | None = None
-    error: AgentTraceError | None = None
-
 class TaskDetailResponse(BaseModel):
     """任务详情响应"""
     task_id: str
@@ -73,18 +53,15 @@ class TaskStatusResponse(BaseModel):
     subtask_progress: float = 0.0
     message: str | None = None
     thinking_process: list[dict] | None = None  # 思考过程
+    trace_event_count: int = 0
+    latest_trace_event: dict | None = None
+    execution_error: dict | None = None
 
 class TaskResultResponse(BaseModel):
     """任务结果响应"""
     audio_url: str | None = None
     duration: float | None = None
     format: str = "mp3"
-
-
-class TaskTraceResponse(BaseModel):
-    task_id: str
-    status: str
-    events: list[AgentTraceEvent] = Field(default_factory=list)
 
 class TaskCancelResponse(BaseModel):
     """任务取消响应"""

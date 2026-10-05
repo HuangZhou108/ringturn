@@ -21,7 +21,6 @@ from app.agent.atomic_tools.arrangement import (
 from app.agent.atomic_tools.knowledge.search_knowledge import search_knowledge_tool
 from app.services.llm_service import get_llm
 from app.agent.thinking_utils import record_thought
-from app.agent.callbacks import ToolTraceCallbackHandler
 from app.agent.utils import clean_state
 from app.core.config import get_settings
 
@@ -75,10 +74,9 @@ async def autonomous_arrange_node(state: AgentState) -> dict:
     record_thought(task_id, "arrange", "自主改编：LLM 用 function calling 决定工具序列")
     try:
         agent = create_react_agent(llm, tools)
-        trace_callback = ToolTraceCallbackHandler(task_id, "arrange")
         result = await agent.ainvoke(
             {"messages": [("user", prompt)]},
-            config={"recursion_limit": 30, "callbacks": [trace_callback]},
+            config={"recursion_limit": 30},
         )
         text = str(result["messages"][-1].content) if result.get("messages") else ""
         record_thought(task_id, "arrange", f"自主改编完成，LLM 输出: {text[:200]}")

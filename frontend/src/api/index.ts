@@ -1,7 +1,7 @@
 import type { ApiResponse, CreateTaskRequest, CreateTaskResponse,
     Task, TaskStatusInfo, TaskResult, TaskCancelResult,TaskListResponse, UploadResult,
     ConversationListItem, ConversationDetail, ConversationMessage, Profile,
-    ProfilePreferences, ProfileTasksResponse, AgentTraceEvent} from '../types'
+    ProfilePreferences, ProfileTasksResponse} from '../types'
 
 const BASE_URL = '/api/v1'
 
@@ -35,12 +35,6 @@ export const api = {
     // 获取任务状态
     getTaskStatus: (taskId: string) =>
         request<TaskStatusInfo>(`/tasks/${taskId}/status`),
-
-    // 获取结构化 Agent 执行轨迹（开发/诊断用途）
-    getTaskTrace: (taskId: string) =>
-        request<{ task_id: string; status: string; events: AgentTraceEvent[] }>(
-            `/tasks/${taskId}/trace`,
-        ),
 
     // 获取生成结果
     getTaskResult: (taskId: string) =>

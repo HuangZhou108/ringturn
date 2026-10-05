@@ -1,12 +1,18 @@
 # backend/app/agent/utils.py
-import numpy as np
-from typing import Any, Dict, Callable
-import re
-import json
-from .thinking_utils import record_thought
-from .observability import finish_trace_event, new_trace_event, record_trace_event, summarize
-import inspect
 import asyncio
+import inspect
+import json
+import re
+import time
+from typing import Any, Callable, Dict
+
+import numpy as np
+
+from .thinking_utils import record_thought
+from .trace import (build_execution_error, create_trace_event,
+                    persist_trace_event, redact_text, summarize_result,
+                    summarize_tool_input)
+
 
 def convert_numpy_to_native(obj: Any) -> Any:
     """递归地将 numpy 类型转换为 Python 原生类型"""
@@ -62,26 +68,23 @@ async def log_tool_call(
 ):
     """记录工具调用的开始、结果/异常，并返回工具返回值。"""
     tool_name = tool_name or getattr(tool_func, "__name__", "unknown_tool")
-    # 截断参数避免记录过长
-    args_str = str(args)[:200]
-    kwargs_str = str(kwargs)[:200]
+    trace_started = create_trace_event(
+        task_id=task_id,
+        kind="tool",
+        name=tool_name,
+        status="running",
+        details={"step": step_name, "input": summarize_tool_input(args, kwargs)},
+    )
+    persist_trace_event(task_id, trace_started)
+    started_at = time.perf_counter()
+    input_summary = summarize_tool_input(args, kwargs)
     record_thought(
         task_id,
         step_name,
-        f"调用工具: {tool_name} (参数: {args_str}, {kwargs_str})",
+        f"调用工具: {tool_name} (参数值已省略: {input_summary})",
         type="tool_call",
         status="pending"
     )
-    trace_event = new_trace_event(
-        kind="tool",
-        name=tool_name,
-        parent_name=step_name,
-        metadata={
-            "args_summary": summarize(args),
-            "kwargs_summary": summarize(kwargs),
-        },
-    )
-    record_trace_event(task_id, trace_event)
     try:
         # result = await tool_func(*args, **kwargs)
         if inspect.iscoroutinefunction(tool_func):
@@ -91,29 +94,45 @@ async def log_tool_call(
         record_thought(
             task_id,
             step_name,
-            f"工具返回: {str(result)[:300]}",
+            f"工具返回结构: {summarize_result(result)}",
             type="tool_result",
             status="success"
         )
-        record_trace_event(
+        persist_trace_event(
             task_id,
-            finish_trace_event(
-                trace_event,
-                status="success",
-                metadata={"output_summary": summarize(result)},
+            create_trace_event(
+                task_id=task_id,
+                kind="tool",
+                name=tool_name,
+                status="succeeded",
+                duration_ms=(time.perf_counter() - started_at) * 1000,
+                details={"step": step_name, "output": summarize_result(result)},
             ),
         )
         return result
     except Exception as e:
+        normalized_error = build_execution_error(
+            e,
+            scope="tool",
+            component=tool_name,
+        )
         record_thought(
             task_id,
             step_name,
-            f"工具执行失败: {str(e)}",
+            f"工具执行失败: {redact_text(e)}",
             type="tool_result",
             status="failed"
         )
-        record_trace_event(
+        persist_trace_event(
             task_id,
-            finish_trace_event(trace_event, status="failed", error=e),
+            create_trace_event(
+                task_id=task_id,
+                kind="tool",
+                name=tool_name,
+                status="failed",
+                duration_ms=(time.perf_counter() - started_at) * 1000,
+                details={"step": step_name},
+                error=normalized_error,
+            ),
         )
         raise

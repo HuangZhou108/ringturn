@@ -1,7 +1,10 @@
-from typing import TypedDict, List, Any, Annotated
-from langgraph.graph.message import add_messages
 from datetime import datetime
 from enum import Enum
+from typing import Annotated, Any, List, TypedDict
+
+from app.agent.trace import merge_trace_events
+from langgraph.graph.message import add_messages
+
 
 def merge_dicts(left: dict, right: dict) -> dict:
     """后者胜出的归约器，用于合并多个并行节点的更新。"""
@@ -12,12 +15,6 @@ def merge_dicts(left: dict, right: dict) -> dict:
     merged = left.copy()
     merged.update(right)
     return merged
-
-
-def append_trace_events(left: list[dict] | None, right: list[dict] | None) -> list[dict]:
-    """Append-only reducer for JSON-serializable Agent execution events."""
-    return list(left or []) + list(right or [])
-
 
 class TaskStep(str, Enum):
     """子步骤枚举"""
@@ -91,9 +88,6 @@ class AgentState(TypedDict, total=False):
     plan: list[str]
     step_results: dict
 
-    # 工程可观测性（与面向用户的 thinking_process 分离）
-    execution_trace: Annotated[list[dict], append_trace_events]
-
     # 子图内部状态通道（必须在 state 中声明，否则 LangGraph 不会在节点间正确传递）
     should_separate: bool            # analysis 图：是否执行音源分离
     optional_decisions: dict         # analysis 图：是否做情绪/特效分析
@@ -112,6 +106,10 @@ class AgentState(TypedDict, total=False):
     # 错误处理
     error: str | None
     retry_count: int
+
+    # 工程诊断（与面向用户的 thinking_process 分离）
+    execution_trace: Annotated[list[dict], merge_trace_events]
+    execution_error: dict | None
 
     # 元数据
     created_at: datetime

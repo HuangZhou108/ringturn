@@ -5,28 +5,20 @@ LangGraph工作流定义
 """
 
 import asyncio
-import aiosqlite
 from pathlib import Path
-from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from app.agent.state import AgentState
-from app.agent.observability import (
-    finish_trace_event,
-    new_trace_event,
-    record_trace_event,
-    traced_node,
-)
-from app.agent.nodes import (
-    fetch_source_node,
-    analyze_structure_node,
-    extract_melody_node,
-    generate_midi_node,
-    arrange_node,
-    render_node,
-    check_quality_node,
-)
+
+import aiosqlite
+from app.agent.nodes import (analyze_structure_node, arrange_node,
+                             check_quality_node, extract_melody_node,
+                             fetch_source_node, generate_midi_node,
+                             render_node)
 from app.agent.nodes.reflect import reflect_node
+from app.agent.state import AgentState
+from app.agent.trace import (create_trace_event, instrument_node,
+                             select_entry_route, select_retry_route)
 from app.core.config import get_settings
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.graph import END, StateGraph
 
 settings = get_settings()
 
@@ -41,6 +33,8 @@ NODE_CHECK = "check_quality"
 NODE_REFLECT = "reflect"
 ALL_NODES = [NODE_FETCH, NODE_ANALYZE, NODE_EXTRACT, NODE_GEN_MIDI, 
              NODE_ARRANGE, NODE_RENDER, NODE_CHECK, NODE_REFLECT]
+NODE_ENTRY_ROUTER = "entry_router"
+NODE_RETRY_ROUTER = "retry_router"
 
 _agent_graph = None
 _graph_lock = asyncio.Lock()
@@ -48,49 +42,84 @@ _graph_lock = asyncio.Lock()
 # 对于反馈任务，需要动态选择从哪个节点开始
 def entry_router(state: AgentState) -> str:
     """根据 state 中的 resume_from_node 决定从哪个节点开始"""
-    target = state.get("resume_from_node", NODE_FETCH)
-    # 确保目标节点存在于图中
-    return target if target in ALL_NODES else NODE_FETCH
+    target, _ = select_entry_route(
+        state.get("resume_from_node"),
+        allowed_nodes=ALL_NODES,
+        default_node=NODE_FETCH,
+    )
+    print(f"[ROUTER] resume_from_node = {target}")
+    return target
 
 
 async def entry_router_node(state: AgentState) -> dict:
-    """Record the selected resume route without changing routing semantics."""
-    requested = state.get("resume_from_node", NODE_FETCH)
-    target = entry_router(state)
-    event = new_trace_event(kind="routing", name="entry_router")
-    event = finish_trace_event(
-        event,
-        status="success",
-        metadata={"requested": requested, "selected": target},
+    """Record why a new or feedback task enters at a specific node."""
+    selected, reason = select_entry_route(
+        state.get("resume_from_node"),
+        allowed_nodes=ALL_NODES,
+        default_node=NODE_FETCH,
     )
-    record_trace_event(str(state.get("task_id") or ""), event)
-    return {"execution_trace": [event]}
+    return {
+        "execution_trace": [
+            create_trace_event(
+                task_id=str(state.get("task_id", "")),
+                kind="route",
+                name=NODE_ENTRY_ROUTER,
+                status="selected",
+                details={"selected": selected, "reason": reason},
+            )
+        ]
+    }
+
+
+def retry_target(state: AgentState) -> str:
+    """Pure retry decision shared by the trace node and conditional edge."""
+    selected, _ = select_retry_route(
+        needs_revision=state.get("needs_revision", False),
+        retry_count=state.get("retry_count", 0),
+        max_retries=state.get("max_retries", 0),
+        retry_node=NODE_ARRANGE,
+        end_node=END,
+    )
+    return selected
+
+
+async def retry_router_node(state: AgentState) -> dict:
+    selected, reason = select_retry_route(
+        needs_revision=state.get("needs_revision", False),
+        retry_count=state.get("retry_count", 0),
+        max_retries=state.get("max_retries", 0),
+        retry_node=NODE_ARRANGE,
+        end_node=END,
+    )
+    return {
+        "execution_trace": [
+            create_trace_event(
+                task_id=str(state.get("task_id", "")),
+                kind="route",
+                name=NODE_RETRY_ROUTER,
+                status="selected",
+                details={"selected": selected, "reason": reason},
+            )
+        ]
+    }
 
 async def build_agent_graph():
     """异步构建并编译LangGraph状态图"""
     workflow = StateGraph(AgentState)
 
     # 注册节点（所有节点已修改为只接收 state 参数）
-    node_specs = [
-        (NODE_FETCH, fetch_source_node, 0, 10),
-        (NODE_ANALYZE, analyze_structure_node, 10, 30),
-        (NODE_EXTRACT, extract_melody_node, 30, 50),
-        (NODE_GEN_MIDI, generate_midi_node, 50, 60),
-        (NODE_ARRANGE, arrange_node, 60, 75),
-        (NODE_RENDER, render_node, 75, 90),
-        (NODE_CHECK, check_quality_node, 90, 97),
-        (NODE_REFLECT, reflect_node, 97, 100),
-    ]
-    for node_name, node_func, progress_start, progress_end in node_specs:
-        workflow.add_node(
-            node_name,
-            traced_node(
-                node_name,
-                node_func,
-                progress_start=progress_start,
-                progress_end=progress_end,
-            ),
-        )
+    workflow.add_node(NODE_FETCH, instrument_node(NODE_FETCH, fetch_source_node))
+    workflow.add_node(NODE_ANALYZE, instrument_node(NODE_ANALYZE, analyze_structure_node))
+    workflow.add_node(NODE_EXTRACT, instrument_node(NODE_EXTRACT, extract_melody_node))
+    workflow.add_node(NODE_GEN_MIDI, instrument_node(NODE_GEN_MIDI, generate_midi_node))
+    workflow.add_node(NODE_ARRANGE, instrument_node(NODE_ARRANGE, arrange_node))
+    workflow.add_node(NODE_RENDER, instrument_node(NODE_RENDER, render_node))
+    workflow.add_node(NODE_CHECK, instrument_node(NODE_CHECK, check_quality_node))
+    workflow.add_node(NODE_REFLECT, instrument_node(NODE_REFLECT, reflect_node))
+    workflow.add_node(
+        NODE_RETRY_ROUTER,
+        instrument_node(NODE_RETRY_ROUTER, retry_router_node),
+    )
 
     # 固定边（顺序执行）
     workflow.add_edge(NODE_FETCH, NODE_ANALYZE)
@@ -100,43 +129,24 @@ async def build_agent_graph():
     workflow.add_edge(NODE_ARRANGE, NODE_RENDER)
     workflow.add_edge(NODE_RENDER, NODE_CHECK)
     workflow.add_edge(NODE_CHECK, NODE_REFLECT)
+    workflow.add_edge(NODE_REFLECT, NODE_RETRY_ROUTER)
 
     # 添加路由入口
-    workflow.set_entry_point("entry_router")
-    workflow.add_node("entry_router", entry_router_node)
-    workflow.add_conditional_edges("entry_router", entry_router, {node: node for node in ALL_NODES})
+    workflow.set_entry_point(NODE_ENTRY_ROUTER)
+    workflow.add_node(
+        NODE_ENTRY_ROUTER,
+        instrument_node(NODE_ENTRY_ROUTER, entry_router_node),
+    )
+    workflow.add_conditional_edges(
+        NODE_ENTRY_ROUTER,
+        entry_router,
+        {node: node for node in ALL_NODES},
+    )
 
     # 条件边：根据反思结果决定是否重试
-    def should_retry(state: AgentState) -> str:
-        if not state.get("needs_revision", False):
-            selected = END
-            reason = "quality_passed"
-        else:
-            retry_count = state.get("retry_count", 0)
-            max_retries = state.get("max_retries", 0)
-            if retry_count > max_retries:
-                selected = END
-                reason = "retry_limit_reached"
-            else:
-                selected = NODE_ARRANGE
-                reason = "quality_revision"
-        event = new_trace_event(kind="routing", name="quality_retry_router")
-        event = finish_trace_event(
-            event,
-            status="success",
-            metadata={
-                "selected": "end" if selected == END else selected,
-                "reason": reason,
-                "retry_count": state.get("retry_count", 0),
-                "max_retries": state.get("max_retries", 0),
-            },
-        )
-        record_trace_event(str(state.get("task_id") or ""), event)
-        return selected
-
     workflow.add_conditional_edges(
-        NODE_REFLECT,
-        should_retry,
+        NODE_RETRY_ROUTER,
+        retry_target,
         {
             NODE_ARRANGE: NODE_ARRANGE,
             END: END,

@@ -5,24 +5,25 @@ Agent执行器
 """
 
 import asyncio
+import time
+from asyncio import Task as AsyncioTask
 from datetime import datetime
 from typing import Optional
-from sqlalchemy.orm import Session
-from app.db.session import SessionLocal
-from app.agent.state import AgentState, TaskStep
+
 from app.agent.graph import get_agent_graph
-from app.models import Task as TaskModel, TaskStatus
+from app.agent.state import AgentState
 from app.agent.thinking_utils import record_thought
-from app.agent.observability import (
-    TRACE_KEY,
-    finish_trace_event,
-    new_trace_event,
-    record_trace_event,
-)
-from app.models import Task as TaskModel, TaskStatus, Conversation, ConversationMessage, MessageRole, ConversationStatus
-import threading
-from asyncio import Task as AsyncioTask
+from app.agent.trace import (build_execution_error, create_trace_event,
+                             merge_trace_events, persist_trace_event,
+                             redact_text)
+from app.db.session import SessionLocal
+from app.models import (Conversation, ConversationMessage, ConversationStatus,
+                        MessageRole)
+from app.models import Task as TaskModel
+from app.models import TaskStatus
 from app.services.llm_service import llm_service
+from sqlalchemy.orm import Session
+
 
 class RingtoneParams:
     def __init__(self, task: TaskModel):
@@ -109,12 +110,14 @@ class AgentExecutor:
             "current_step_index": 0,
             "plan": [],
             "step_results": {},
-            "execution_trace": [],
             "feedback_history": [],
             "reflection": None,
             "needs_revision": False,
             "error": None,
             "retry_count": 0,
+            "thread_id": self.task.id,
+            "execution_trace": [],
+            "execution_error": None,
             "created_at": self.task.created_at,
             "updated_at": datetime.utcnow(),
         }
@@ -141,6 +144,13 @@ class AgentExecutor:
                 "tempo": inter.get("tempo", 120),
                 "instrument": inter.get("instrument", "Acoustic Piano"),
             })
+            # Feedback tasks copy audio intermediates, not the parent's diagnostics.
+            state["execution_trace"] = [
+                event
+                for event in inter.get("execution_trace", [])
+                if isinstance(event, dict) and event.get("task_id") == self.task.id
+            ]
+            state["execution_error"] = None
             # 用用户反馈中新指定的参数覆盖父任务的旧值
             if self.ringtone_params.instrument:
                 state["instrument"] = self.ringtone_params.instrument
@@ -210,16 +220,24 @@ class AgentExecutor:
 
     async def execute(self) -> dict:
         """执行任务：调用 LangGraph 图"""
-        run_event = new_trace_event(
-            kind="lifecycle",
-            name="agent_run",
-            metadata={"thread_id": self.task_id},
-        )
-        record_trace_event(self.task_id, run_event)
+        execute_started_at = time.perf_counter()
         try:
+            self.task.thread_id = self.task_id
+            started_event = create_trace_event(
+                task_id=self.task_id,
+                kind="task",
+                name="agent_execution",
+                status="running",
+            )
+            self.state["execution_trace"] = merge_trace_events(
+                self.state.get("execution_trace"),
+                [started_event],
+            )
+            persist_trace_event(self.task_id, started_event)
             # 注入 Agent 记忆（全局偏好 + 历史画像），供本次任务所有 LLM 调用使用
             try:
-                from app.services.memory import build_agent_context, set_agent_context
+                from app.services.memory import (build_agent_context,
+                                                 set_agent_context)
                 ctx = await asyncio.to_thread(build_agent_context, self.state.get("profile_id"))
                 if ctx:
                     set_agent_context(ctx)
@@ -228,7 +246,7 @@ class AgentExecutor:
 
             # 检查是否已取消
             if self.task.status == TaskStatus.cancelled:
-                return {"success": False, "reason": "cancelled"}
+                raise asyncio.CancelledError()
             
             # 将反馈指定的起始节点注入 state
             if self.task.resume_from_node:
@@ -236,27 +254,7 @@ class AgentExecutor:
                 print(f"[AGENT] Will resume from node: {self.task.resume_from_node}")
 
             await self._update_task_status(TaskStatus.planning)
-            plan_event = new_trace_event(kind="lifecycle", name="planning", parent_name="agent_run")
-            record_trace_event(self.task_id, plan_event)
-            try:
-                await self._plan()
-            except BaseException as exc:
-                plan_status = "cancelled" if isinstance(exc, asyncio.CancelledError) else "failed"
-                failed_plan = finish_trace_event(
-                    plan_event,
-                    status=plan_status,
-                    error=None if plan_status == "cancelled" else exc,
-                )
-                record_trace_event(self.task_id, failed_plan)
-                raise
-            else:
-                completed_plan = finish_trace_event(
-                    plan_event,
-                    status="success",
-                    metadata={"plan_steps": len(self.state.get("plan", []))},
-                )
-                record_trace_event(self.task_id, completed_plan)
-                self.state[TRACE_KEY].append(completed_plan)
+            await self._plan()
 
             await self._update_task_status(TaskStatus.executing)
             # 异步获取图实例
@@ -273,6 +271,24 @@ class AgentExecutor:
             # 确保从 final_state 中提取有效值
             self.state.update(final_state)   # 合并最终状态
 
+            # Do not publish success if cancellation won the race with graph
+            # completion.
+            if self._cancel_event.is_set():
+                raise asyncio.CancelledError()
+
+            succeeded_event = create_trace_event(
+                task_id=self.task_id,
+                kind="task",
+                name="agent_execution",
+                status="succeeded",
+                duration_ms=(time.perf_counter() - execute_started_at) * 1000,
+            )
+            persist_trace_event(self.task_id, succeeded_event)
+            self.state["execution_trace"] = merge_trace_events(
+                self.state.get("execution_trace"),
+                [succeeded_event],
+            )
+
             # 优先使用 final_state 中的路径，其次是 self.state
             midi_path = final_state.get("midi_path") or self.state.get("midi_path")
             # 如果仍然为空，尝试从 melody_data 中提取
@@ -284,11 +300,15 @@ class AgentExecutor:
 
             if self.task.resume_from_node:
                 self.state["resume_from_node"] = self.task.resume_from_node
-            # Trace callbacks use independent short-lived sessions. Refresh here
-            # before merging intermediate outputs so their events are preserved.
-            self.db.refresh(self.task)
-            intermediate_data = dict(self.task.intermediate_data or {})
-            intermediate_data.update({
+            # Tool callbacks persist directly while the graph is running. Refresh
+            # that JSON snapshot before merging it with checkpointed node events.
+            self.db.refresh(self.task, ["intermediate_data"])
+            persisted_diagnostics = dict(self.task.intermediate_data or {})
+            execution_trace = merge_trace_events(
+                persisted_diagnostics.get("execution_trace"),
+                self.state.get("execution_trace"),
+            )
+            self.task.intermediate_data = {
                 "audio_path": final_state.get("audio_path") or self.state.get("audio_path"),
                 "demucs_separated": final_state.get(
                     "demucs_separated", self.state.get("demucs_separated", False)
@@ -329,12 +349,9 @@ class AgentExecutor:
                 "arranged_midi_path": arranged_midi_path,
                 "tempo": final_state.get("tempo") or self.state.get("tempo"),
                 "instrument": final_state.get("instrument") or self.state.get("instrument"),
-            })
-            self.task.intermediate_data = intermediate_data
-
-            # 检查是否在运行中被取消
-            if self._cancel_event.is_set():
-                raise asyncio.CancelledError()
+                "execution_trace": execution_trace,
+                "execution_error": None,
+            }
 
             # 同步结果到数据库
             self.task.final_audio_url = final_state.get("final_audio_url")
@@ -374,13 +391,6 @@ class AgentExecutor:
 
             self.db.commit()
 
-            completed_run = finish_trace_event(
-                run_event,
-                status="success",
-                metadata={"result": "completed"},
-            )
-            record_trace_event(self.task_id, completed_run, subtask_progress=100)
-
             return {
                 "success": True,
                 "audio_url": self.task.final_audio_url,
@@ -388,29 +398,89 @@ class AgentExecutor:
             }
 
         except asyncio.CancelledError:
-            cancelled_run = finish_trace_event(run_event, status="cancelled")
-            record_trace_event(self.task_id, cancelled_run)
+            cancelled_error = build_execution_error(
+                asyncio.CancelledError("Task cancelled"),
+                scope="task",
+                component="agent_execution",
+            )
+            cancelled_event = create_trace_event(
+                task_id=self.task_id,
+                kind="task",
+                name="agent_execution",
+                status="cancelled",
+                duration_ms=(time.perf_counter() - execute_started_at) * 1000,
+                error=cancelled_error,
+            )
+            persist_trace_event(self.task_id, cancelled_event)
             await self._update_task_status(TaskStatus.cancelled)
             self.task.error_message = "任务已被用户取消"
             self.db.commit()
             return {"success": False, "reason": "cancelled"}
         except Exception as e:
             if self._cancel_event.is_set():
-                cancelled_run = finish_trace_event(run_event, status="cancelled")
-                record_trace_event(self.task_id, cancelled_run)
+                cancelled_error = build_execution_error(
+                    asyncio.CancelledError("Task cancelled"),
+                    scope="task",
+                    component="agent_execution",
+                )
+                persist_trace_event(
+                    self.task_id,
+                    create_trace_event(
+                        task_id=self.task_id,
+                        kind="task",
+                        name="agent_execution",
+                        status="cancelled",
+                        duration_ms=(time.perf_counter() - execute_started_at) * 1000,
+                        error=cancelled_error,
+                    ),
+                )
                 await self._update_task_status(TaskStatus.cancelled)
                 return {"success": False, "reason": "cancelled"}
-            failed_run = finish_trace_event(run_event, status="failed", error=e)
-            record_trace_event(self.task_id, failed_run)
             self.db.refresh(self.task)
             if self.task.status == TaskStatus.cancelled:
+                persist_trace_event(
+                    self.task_id,
+                    create_trace_event(
+                        task_id=self.task_id,
+                        kind="task",
+                        name="agent_execution",
+                        status="cancelled",
+                        duration_ms=(time.perf_counter() - execute_started_at) * 1000,
+                        error=build_execution_error(
+                            asyncio.CancelledError("Task cancelled"),
+                            scope="task",
+                            component="agent_execution",
+                        ),
+                    ),
+                )
                 return {"success": False, "reason": "cancelled"}
+            execution_error = build_execution_error(
+                e,
+                scope="task",
+                component="agent_execution",
+            )
+            execution_error["task_id"] = self.task_id
+            failed_event = create_trace_event(
+                task_id=self.task_id,
+                kind="task",
+                name="agent_execution",
+                status="failed",
+                duration_ms=(time.perf_counter() - execute_started_at) * 1000,
+                error=execution_error,
+            )
+            persist_trace_event(self.task_id, failed_event)
+            # Reload the event persisted by this handler and any failing node.
+            self.db.refresh(self.task, ["intermediate_data"])
+            intermediate = dict(self.task.intermediate_data or {})
+            intermediate["execution_error"] = execution_error
+            self.task.intermediate_data = intermediate
             await self._update_task_status(TaskStatus.failed)
-            self.task.error_message = str(e)
+            public_error_message = redact_text(e)
+            self.task.error_message = public_error_message
             self.db.commit()
 
             # 记录错误消息到会话
-            self._update_assistant_message(f"任务执行失败：{str(e)}")
+            self._update_assistant_message(f"任务执行失败：{public_error_message}")
             self._complete_conversation()
             raise
         finally:
