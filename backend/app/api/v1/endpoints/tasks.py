@@ -1,39 +1,35 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
-from sqlalchemy.orm import Session
-from typing import Optional
-from datetime import datetime
-import uuid
-import json
 import asyncio
+import json
+import uuid
+from datetime import datetime
+from typing import Optional
 
-from app.db.session import get_db, SessionLocal
-from app.models import Task as TaskModel, TaskStatus, Feedback, Conversation, ConversationMessage, ConversationStatus, MessageRole, Profile
-from app.schemas import (
-    TaskCreate,
-    TaskCreateResponse,
-    TaskDetailResponse,
-    TaskStatusResponse,
-    TaskResultResponse,
-    TaskCancelResponse,
-    TaskListItem,
-    TaskListResponse,
-    SUBTASKS,
-    FeedbackCreate,
-)
-from app.services.file_service import file_service
 from app.agent.agent_executor import AgentExecutor
-from app.api.v1.endpoints.profiles import get_active_profile as get_active_profile_from_db
-from app.core.exceptions import (
-    TaskNotFoundException,
-    ProfileNotFoundException,
-    TaskCannotBeCancelledException,
-    AppException,
-)
+from app.agent.trace import get_execution_diagnostics
+from app.api.v1.endpoints.profiles import \
+    get_active_profile as get_active_profile_from_db
+from app.core.exceptions import (AppException, ProfileNotFoundException,
+                                 TaskCannotBeCancelledException,
+                                 TaskNotFoundException)
+from app.db.session import SessionLocal, get_db
+from app.models import (Conversation, ConversationMessage, ConversationStatus,
+                        Feedback, MessageRole, Profile)
+from app.models import Task as TaskModel
+from app.models import TaskStatus
+from app.schemas import (SUBTASKS, FeedbackCreate, TaskCancelResponse,
+                         TaskCreate, TaskCreateResponse, TaskDetailResponse,
+                         TaskListItem, TaskListResponse, TaskResultResponse,
+                         TaskStatusResponse)
+from app.services.file_service import file_service
+from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
+                     UploadFile)
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 # 一个全局集合，保持对后台任务的引用，防止被 GC
 _background_tasks = set()
 _running_tasks: dict[str, AgentExecutor] = {}
+
 
 @router.post("")
 async def create_task(
@@ -235,6 +231,10 @@ async def get_task_status(
     }
 
     message = status_messages.get(task.status.value, f"状态: {task.status.value}")
+    execution_trace, execution_error = get_execution_diagnostics(
+        task.intermediate_data,
+        task_id=task.id,
+    )
 
     return {
         "code": 200,
@@ -245,8 +245,39 @@ async def get_task_status(
             "subtask_progress": task.subtask_progress or 0.0,
             "message": message,
             "thinking_process": task.thinking_process or [],
+            "trace_event_count": len(execution_trace),
+            "latest_trace_event": execution_trace[-1] if execution_trace else None,
+            "execution_error": execution_error,
         },
         "message": message,
+    }
+
+
+@router.get("/{task_id}/trace")
+async def get_task_trace(
+    task_id: str,
+    db: Session = Depends(get_db),
+):
+    """Return engineering diagnostics without exposing model chain of thought."""
+    task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+    if not task:
+        raise TaskNotFoundException(task_id)
+
+    execution_trace, execution_error = get_execution_diagnostics(
+        task.intermediate_data,
+        task_id=task.id,
+    )
+    return {
+        "code": 200,
+        "data": {
+            "task_id": task.id,
+            "status": task.status.value,
+            "checkpoint_thread_id": task.thread_id or task.id,
+            "event_count": len(execution_trace),
+            "events": execution_trace,
+            "error": execution_error,
+        },
+        "message": "获取 Agent 执行轨迹成功。",
     }
 
 @router.get("/{task_id}/result")
@@ -414,7 +445,9 @@ async def run_agent_task(task_id: str):
             result = await async_task
             # 任务执行完成后，如果是成功，则更新偏好统计
             if result and result.get("success"):
-                from app.services.preference_service import update_profile_preference_stats
+                from app.services.preference_service import \
+                    update_profile_preference_stats
+
                 # 注意：需要获取 profile_id，可以从 task 中读取
                 # 由于 agent_executor 已经关闭，需要重新查询 task
                 with SessionLocal() as db2:

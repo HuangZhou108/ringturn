@@ -1,7 +1,8 @@
-from pydantic import BaseModel, Field
-from typing import Literal, Optional, Dict, Any
-from datetime import datetime
 import json
+from datetime import datetime
+from typing import Any, Dict, Literal, Optional
+
+from pydantic import BaseModel, Field
 
 # 子步骤定义
 SUBTASKS = [
@@ -52,6 +53,9 @@ class TaskStatusResponse(BaseModel):
     subtask_progress: float = 0.0
     message: str | None = None
     thinking_process: list[dict] | None = None  # 思考过程
+    trace_event_count: int = 0
+    latest_trace_event: dict | None = None
+    execution_error: dict | None = None
 
 class TaskResultResponse(BaseModel):
     """任务结果响应"""

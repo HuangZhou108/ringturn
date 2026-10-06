@@ -1,9 +1,13 @@
-from langchain_core.callbacks import AsyncCallbackHandler
-from langchain_core.messages import ToolMessage
-from langchain_core.outputs import LLMResult
-from typing import Any, Dict, Optional, List
+import time
+from typing import Any, Dict, List, Optional
 from uuid import UUID
+
+from langchain_core.callbacks import AsyncCallbackHandler
+from langchain_core.outputs import LLMResult
+
 from .thinking_utils import record_thought
+from .trace import (build_execution_error, create_trace_event,
+                    persist_trace_event, redact_text, summarize_result)
 
 
 class ThinkingCallbackHandler(AsyncCallbackHandler):
@@ -12,6 +16,7 @@ class ThinkingCallbackHandler(AsyncCallbackHandler):
     def __init__(self, task_id: str, step_name: str):
         self.task_id = task_id
         self.step_name = step_name
+        self._tool_runs: dict[str, tuple[str, float]] = {}
 
     # 新增调试日志
     async def on_llm_start(
@@ -81,24 +86,51 @@ class ThinkingCallbackHandler(AsyncCallbackHandler):
                         )
 
     async def on_tool_start(self, serialized: dict, input_str: str, **kwargs: Any) -> None:
+        tool_name = serialized.get("name") or "unknown_tool"
+        run_id = str(kwargs.get("run_id", ""))
+        if run_id:
+            self._tool_runs[run_id] = (tool_name, time.perf_counter())
         record_thought(
             self.task_id,
             self.step_name,
-            f"调用工具: {serialized.get('name')} 参数: {input_str[:200]}",
+            f"调用工具: {tool_name}（参数内容已从日志省略）",
             type="tool_call",
             status="pending"
         )
+        persist_trace_event(
+            self.task_id,
+            create_trace_event(
+                task_id=self.task_id,
+                kind="tool",
+                name=tool_name,
+                status="running",
+                details={"step": self.step_name, "input_chars": len(input_str)},
+            ),
+        )
 
     async def on_tool_end(self, output: Any, **kwargs: Any) -> None:
-        content = output.content if isinstance(output, ToolMessage) else (
-            output if isinstance(output, str) else str(output)
-        )
         record_thought(
             self.task_id,
             self.step_name,
-            f"工具返回: {content[:200]}",
+            f"工具返回结构: {summarize_result(output)}",
             type="tool_result",
             status="success"
+        )
+        run_id = str(kwargs.get("run_id", ""))
+        tool_name, started_at = self._tool_runs.pop(
+            run_id,
+            ("unknown_tool", time.perf_counter()),
+        )
+        persist_trace_event(
+            self.task_id,
+            create_trace_event(
+                task_id=self.task_id,
+                kind="tool",
+                name=tool_name,
+                status="succeeded",
+                duration_ms=(time.perf_counter() - started_at) * 1000,
+                details={"step": self.step_name, "output": summarize_result(output)},
+            ),
         )
 
     async def on_tool_error(
@@ -114,7 +146,29 @@ class ThinkingCallbackHandler(AsyncCallbackHandler):
         record_thought(
             self.task_id,
             self.step_name,
-            f"工具执行失败: {str(error)[:200]}",
+            f"工具执行失败: {redact_text(error, limit=200)}",
             type="tool_result",
             status="failed"
+        )
+        run_key = str(run_id)
+        tool_name, started_at = self._tool_runs.pop(
+            run_key,
+            ("unknown_tool", time.perf_counter()),
+        )
+        normalized_error = build_execution_error(
+            error,
+            scope="tool",
+            component=tool_name,
+        )
+        persist_trace_event(
+            self.task_id,
+            create_trace_event(
+                task_id=self.task_id,
+                kind="tool",
+                name=tool_name,
+                status="failed",
+                duration_ms=(time.perf_counter() - started_at) * 1000,
+                details={"step": self.step_name},
+                error=normalized_error,
+            ),
         )

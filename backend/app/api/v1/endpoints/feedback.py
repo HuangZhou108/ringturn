@@ -1,18 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from sqlalchemy.orm import Session
-import uuid
 import json
+import uuid
 
-from app.db.session import get_db
-from app.models import Task, TaskStatus, Feedback, ConversationMessage, MessageRole
-from app.schemas import (
-    FeedbackCreate,
-    FeedbackCreateResponse,
-    FeedbackResponse,
-    FeedbackListResponse,
-)
-from app.services.llm_service import llm_service
 from app.agent.agent_executor import AgentExecutor
+from app.agent.trace import without_execution_diagnostics
+from app.db.session import get_db
+from app.models import (ConversationMessage, Feedback, MessageRole, Task,
+                        TaskStatus)
+from app.schemas import (FeedbackCreate, FeedbackCreateResponse,
+                         FeedbackListResponse, FeedbackResponse)
+from app.services.llm_service import llm_service
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -108,7 +106,9 @@ async def submit_feedback(
     record_thought(new_task_id, "feedback", f"根据反馈 '{request.feedback}'，选择从节点 '{resume_node}' 重新开始。")
 
     # 3. 从父任务复制中间数据
-    child_task.intermediate_data = parent_task.intermediate_data
+    child_task.intermediate_data = without_execution_diagnostics(
+        parent_task.intermediate_data
+    )
 
     # 4. 在同一会话中添加消息
     conv_msg = db.query(ConversationMessage).filter(
