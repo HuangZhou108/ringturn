@@ -211,6 +211,9 @@ class TaskStep(str, Enum):
 | `failed` | 执行失败 |
 | `cancelled` | 用户取消 |
 
+`completed`、`failed` 和 `cancelled` 是终态。取消操作幂等；持久化的取消状态
+优先于迟到的成功或失败写入，后台执行器只能原子地认领 `pending` 任务。
+
 ---
 
 ## 4. 工作流设计 (graph.py)
@@ -508,6 +511,17 @@ async def _execute_step(self, step: str) -> None:
                 continue  # 重试
             raise
 ```
+
+### 8.3 任务生命周期与取消
+
+- `run_agent_task` 通过条件更新原子认领任务，只有 `pending` 能进入
+  `planning`；已取消或已被认领的任务直接跳过。
+- 取消接口先提交 `cancelled`，再向进程内注册的 `AgentExecutor` 发出信号。
+  重复取消返回成功；`completed` 和 `failed` 不允许取消。
+- 执行器绑定外层执行协程、LangGraph 图任务与受管理子进程。持久化取消状态
+  优先于迟到的完成/失败状态更新，因此并发竞态不会复活任务。
+- 控制请求与执行器退出分别记录 `control/task_cancellation` 和
+  `task/agent_execution` 取消事件；应用关闭时会取消并等待后台任务快照。
 
 ---
 

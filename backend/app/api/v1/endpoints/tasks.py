@@ -5,7 +5,8 @@ from datetime import datetime
 from typing import Optional
 
 from app.agent.agent_executor import AgentExecutor
-from app.agent.trace import get_execution_diagnostics
+from app.agent.trace import (build_execution_error, create_trace_event,
+                             get_execution_diagnostics, persist_trace_event)
 from app.api.v1.endpoints.profiles import \
     get_active_profile as get_active_profile_from_db
 from app.core.exceptions import (AppException, ProfileNotFoundException,
@@ -386,41 +387,119 @@ async def cancel_task(
     if not task:
         raise TaskNotFoundException(task_id)
 
-    if task.status in [TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled]:
+    active_statuses = {
+        TaskStatus.pending,
+        TaskStatus.planning,
+        TaskStatus.executing,
+        TaskStatus.waiting_input,
+    }
+    while task.status in active_statuses:
+        previous_status = task.status
+        updated = (
+            db.query(TaskModel)
+            .filter(
+                TaskModel.id == task_id,
+                TaskModel.status == previous_status,
+            )
+            .update(
+                {
+                    TaskModel.status: TaskStatus.cancelled,
+                    TaskModel.error_message: "任务已被用户取消",
+                    TaskModel.updated_at: datetime.utcnow(),
+                },
+                synchronize_session=False,
+            )
+        )
+        if updated == 1:
+            db.commit()
+            db.refresh(task)
+            break
+        db.rollback()
+        task = db.query(TaskModel).filter(TaskModel.id == task_id).one()
+    else:
+        if task.status == TaskStatus.cancelled:
+            return {
+                "code": 200,
+                "data": {
+                    "task_id": task.id,
+                    "previous_status": task.status.value,
+                    "current_status": task.status.value,
+                },
+                "message": "任务已取消。",
+            }
         return {
             "code": 400,
             "data": None,
-            "message": "任务已完成，无法取消。",
+            "message": "任务已结束，无法取消。",
         }
-    
-    # 查找对应的助手消息
+
+    # 状态成功落库后再更新用户可见消息。
     assistant_message = db.query(ConversationMessage).filter(
         ConversationMessage.task_id == task_id,
         ConversationMessage.role == MessageRole.assistant
     ).first()
+    if assistant_message:
+        assistant_message.content = "任务已取消"
+    db.commit()
 
-    # 如果任务正在运行，调用 executor 的 cancel
+    cancellation_error = build_execution_error(
+        asyncio.CancelledError("Task cancelled by user"),
+        scope="task",
+        component="task_cancellation",
+    )
+    persist_trace_event(
+        task_id,
+        create_trace_event(
+            task_id=task_id,
+            kind="control",
+            name="task_cancellation",
+            status="cancelled",
+            details={"previous_status": previous_status.value},
+            error=cancellation_error,
+        ),
+    )
+
+    # 如果任务已注册，取消同一个执行器的规划、主图与子进程。
     executor = _running_tasks.get(task_id)
     if executor:
         await executor.cancel()
-    else:
-        # 如果尚未开始运行或已结束但状态未更新，直接改数据库状态
-        task.status = TaskStatus.cancelled
-        db.commit()
-        # 更新助手消息
-        if assistant_message:
-            assistant_message.content = "任务已取消"
-            db.commit()
 
     return {
         "code": 200,
         "data": {
             "task_id": task.id,
-            "previous_status": task.status.value,
-            "current_status": TaskStatus.cancelled.value,
+            "previous_status": previous_status.value,
+            "current_status": task.status.value,
         },
         "message": "任务已取消。",
     }
+
+def _claim_pending_task(db: Session, task_id: str) -> TaskModel | None:
+    """Atomically move one pending task to planning, unless it was cancelled."""
+    updated = (
+        db.query(TaskModel)
+        .filter(
+            TaskModel.id == task_id,
+            TaskModel.status == TaskStatus.pending,
+        )
+        .update(
+            {
+                TaskModel.status: TaskStatus.planning,
+                TaskModel.updated_at: datetime.utcnow(),
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    if updated != 1:
+        return None
+    return (
+        db.query(TaskModel)
+        .filter(TaskModel.id == task_id)
+        .populate_existing()
+        .first()
+    )
+
 
 async def run_agent_task(task_id: str):
     """
@@ -430,16 +509,15 @@ async def run_agent_task(task_id: str):
         task_id: 任务ID
     """
     with SessionLocal(expire_on_commit=False) as db:  # SQLAlchemy 2.x 支持上下文
-        task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+        task = _claim_pending_task(db, task_id)
         if not task:
             return
-        task.status = TaskStatus.planning
-        db.commit()
 
         agent_executor = AgentExecutor(task_id=task_id, db=db)
-        _running_tasks[task_id] = agent_executor
         # 创建异步任务，并保存引用
         async_task = asyncio.create_task(agent_executor.execute())
+        agent_executor.bind_execution_task(async_task)
+        _running_tasks[task_id] = agent_executor
         _background_tasks.add(async_task)
         try:
             result = await async_task
@@ -453,19 +531,18 @@ async def run_agent_task(task_id: str):
                 with SessionLocal() as db2:
                     task2 = db2.query(TaskModel).filter(TaskModel.id == task_id).first()
                     if task2 and task2.profile_id:
-                        # 异步执行，不阻塞（使用 background_tasks 或创建新任务）
-                        if result and result.get("success"):
-                            asyncio.create_task(update_profile_preference_stats(task.profile_id, task_id))
+                        # 纳入统一后台任务集合，确保应用停机时可以等待或取消。
+                        preference_task = asyncio.create_task(
+                            update_profile_preference_stats(task2.profile_id, task_id)
+                        )
+                        _background_tasks.add(preference_task)
+                        preference_task.add_done_callback(_background_tasks.discard)
         except Exception as e:
-            print(f"[ERROR] Agent task {task_id} failed: {e}")
+            print(f"[ERROR] Agent task {task_id} failed: {type(e).__name__}")
         finally:
             _background_tasks.discard(async_task)
             agent_executor.close()  # 显式关闭内部会话（如果 db 是外部传入，则不会重复关闭）
-            if task_id in _running_tasks:
+            if _running_tasks.get(task_id) is agent_executor:
                 del _running_tasks[task_id]
             import gc
             gc.collect()
-            # 额外：强制释放 Python 的内存 arena 给操作系统（需要 ctypes）
-            import ctypes
-            libc = ctypes.CDLL("msvcrt.dll")  # Windows
-            libc._heapmin()
