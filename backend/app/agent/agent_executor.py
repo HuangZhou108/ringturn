@@ -16,7 +16,8 @@ from app.agent.state import AgentState
 from app.agent.thinking_utils import record_thought
 from app.agent.trace import (build_execution_error, create_trace_event,
                              merge_trace_events, persist_trace_event,
-                             redact_text)
+                             redact_text, reset_execution_context,
+                             set_execution_context)
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models import (Conversation, ConversationMessage, ConversationStatus,
@@ -184,7 +185,7 @@ class AgentExecutor:
                 self.state["duration"] = int(nl_duration)
                 self._add_thinking_step("规划", f"从自然语言识别到目标时长: {int(nl_duration)} 秒")
         except Exception as e:
-            print(f"[PLAN] extract_duration failed: {e}")
+            print(f"[PLAN] extract_duration failed: {type(e).__name__}")
 
         ringtone_params = self.ringtone_params.raw_params
         param_desc = ""
@@ -230,6 +231,11 @@ class AgentExecutor:
         """执行任务：调用 LangGraph 图"""
         execute_started_at = time.perf_counter()
         pipeline_deadline = execute_started_at + self._pipeline_timeout_seconds
+        execution_context_token = set_execution_context(
+            self.task_id,
+            "agent_execution",
+        )
+        memory_context_token = None
         try:
             self.task.thread_id = self.task_id
             started_event = create_trace_event(
@@ -247,14 +253,14 @@ class AgentExecutor:
             )
             persist_trace_event(self.task_id, started_event)
             # 注入 Agent 记忆（全局偏好 + 历史画像），供本次任务所有 LLM 调用使用
+            from app.services.memory import build_agent_context, set_agent_context
+
+            ctx = None
             try:
-                from app.services.memory import (build_agent_context,
-                                                 set_agent_context)
                 ctx = await asyncio.to_thread(build_agent_context, self.state.get("profile_id"))
-                if ctx:
-                    set_agent_context(ctx)
             except Exception as e:
-                print(f"[MEMORY] build_agent_context failed: {e}")
+                print(f"[MEMORY] build_agent_context failed: {type(e).__name__}")
+            memory_context_token = set_agent_context(ctx)
 
             # 检查是否已取消
             if self.task.status == TaskStatus.cancelled:
@@ -522,6 +528,11 @@ class AgentExecutor:
             self._complete_conversation()
             raise
         finally:
+            if memory_context_token is not None:
+                from app.services.memory import reset_agent_context
+
+                reset_agent_context(memory_context_token)
+            reset_execution_context(execution_context_token)
             self.close()  # 确保执行完毕后关闭会话
 
     async def _await_before_deadline(

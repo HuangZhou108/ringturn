@@ -16,9 +16,14 @@ from app.models import Profile, Preference
 _agent_context = contextvars.ContextVar("agent_context", default=None)
 
 
-def set_agent_context(ctx: str | None) -> None:
-    """设置当前任务的记忆上下文（供所有 LLM 调用注入）。"""
-    _agent_context.set(ctx)
+def set_agent_context(ctx: str | None) -> contextvars.Token:
+    """设置当前任务的记忆上下文，并返回用于恢复旧值的 token。"""
+    return _agent_context.set(ctx)
+
+
+def reset_agent_context(token: contextvars.Token) -> None:
+    """恢复设置前的记忆上下文，防止长生命周期任务串用用户偏好。"""
+    _agent_context.reset(token)
 
 
 def get_agent_context() -> str | None:

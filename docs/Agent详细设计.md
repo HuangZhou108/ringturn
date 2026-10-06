@@ -518,7 +518,7 @@ async def _execute_step(self, step: str) -> None:
 ```python
 class LLMService:
     async def chat(self, messages, model, temperature, max_tokens) -> str:
-        """带重试的 LLM 调用"""
+        """带单次超时、瞬时错误重试和脱敏 trace 的 LLM 调用"""
 
     async def parse_user_request(self, user_request: str) -> dict:
         """解析用户需求"""
@@ -536,9 +536,14 @@ def get_llm():
         base_url=settings.LLM_BASE_URL,
         model=settings.LLM_MODEL,
         temperature=0.7,
-        max_retries=5,
+        timeout=settings.LLM_REQUEST_TIMEOUT_SECONDS,
+        max_retries=settings.LLM_MAX_ATTEMPTS - 1,
     )
 ```
+
+`LLMService` 延迟初始化 SDK 客户端。直连调用只重试限流、连接、超时和
+服务端 5xx；结构化事件不保存 prompt、用户记忆或响应正文。Agent 执行器在
+任务结束时恢复记忆和 trace 的 `ContextVar`，避免并发任务上下文串用。
 
 ---
 

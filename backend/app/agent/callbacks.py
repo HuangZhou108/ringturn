@@ -17,43 +17,40 @@ class ThinkingCallbackHandler(AsyncCallbackHandler):
         self.task_id = task_id
         self.step_name = step_name
         self._tool_runs: dict[str, tuple[str, float]] = {}
+        self._llm_runs: dict[str, float] = {}
 
-    # 新增调试日志
+    def _start_llm_run(self, run_id: Any, message_count: int) -> None:
+        run_key = str(run_id or "")
+        if run_key in self._llm_runs:
+            return
+        if run_key:
+            self._llm_runs[run_key] = time.perf_counter()
+        persist_trace_event(
+            self.task_id,
+            create_trace_event(
+                task_id=self.task_id,
+                kind="llm",
+                name="langchain_chat_model",
+                status="running",
+                details={"step": self.step_name, "message_count": message_count},
+            ),
+        )
+
     async def on_llm_start(
         self, serialized: Dict[str, Any], prompts: List[str], **kwargs: Any
     ) -> None:
-        print(f"[CALLBACK DEBUG] on_llm_start triggered for task={self.task_id}, step={self.step_name}")
-    
+        self._start_llm_run(kwargs.get("run_id"), len(prompts))
+
     async def on_chat_model_start(
         self, serialized: Dict[str, Any], messages: List[List], **kwargs: Any
     ) -> None:
-        print(f"[CALLBACK DEBUG] on_chat_model_start triggered for task={self.task_id}, step={self.step_name}")
+        self._start_llm_run(
+            kwargs.get("run_id"), sum(len(batch) for batch in messages)
+        )
 
-    # 处理 Chat 模型的完结事件
-    async def on_chat_model_end(
-        self,
-        run_obj: Any,
-        **kwargs: Any
-    ) -> None:
-        """ChatOpenAI 实际触发的是此事件，而不是我们之前使用的on_llm_end"""
-        # response = run_obj
-        # if hasattr(response, 'generations'):
-        #     for gen_list in response.generations:
-        #         for gen in gen_list:
-        #             # ChatGeneration 的内容在 message.content 中
-        #             text = getattr(gen, 'message', None)
-        #             if text and hasattr(text, 'content'):
-        #                 text = text.content
-        #             elif hasattr(gen, 'text'):
-        #                 text = gen.text
-        #             if text:
-        #                 record_thought(
-        #                     self.task_id,
-        #                     self.step_name,
-        #                     f"[LLM思考] {text[:500]}"
-        #                 )
-        print(f"[CALLBACK DEBUG] on_chat_model_end triggered for task={self.task_id}, step={self.step_name}")
-        pass
+    async def on_chat_model_end(self, run_obj: Any, **kwargs: Any) -> None:
+        """兼容可能提供 chat-model 专用结束回调的实现。"""
+        return None
 
     async def on_llm_end(
         self,
@@ -64,26 +61,58 @@ class ThinkingCallbackHandler(AsyncCallbackHandler):
         tags: Optional[list[str]] = None,  # 必须与基类签名一致
         **kwargs: Any,
     ) -> None:
-        """LLM / Chat 模型结束事件。根据官方文档，异步 chat 模型不会触发
-        on_chat_model_end，统一由此方法处理。"""
-        print(f"[CALLBACK DEBUG] on_llm_end triggered for step={self.step_name}")
-        if hasattr(response, 'generations'):
-            for gen_list in response.generations:
-                for gen in gen_list:
-                    # ChatGeneration 的内容在 message.content 中
-                    text = getattr(gen, 'message', None)
-                    if text and hasattr(text, 'content'):
-                        text = text.content
-                    elif hasattr(gen, 'text'):
-                        text = gen.text
-                    if text:
-                        record_thought(
-                            self.task_id,
-                            self.step_name,
-                            f"[LLM思考] {text[:500]}",
-                            type="llm",
-                            status="success"
-                        )
+        """记录模型完成事件，但不保存响应正文或隐藏推理内容。"""
+        started_at = self._llm_runs.pop(str(run_id), time.perf_counter())
+        generations = getattr(response, "generations", []) or []
+        record_thought(
+            self.task_id,
+            self.step_name,
+            "LLM 响应已生成（正文已从诊断日志省略）",
+            type="llm",
+            status="success",
+        )
+        persist_trace_event(
+            self.task_id,
+            create_trace_event(
+                task_id=self.task_id,
+                kind="llm",
+                name="langchain_chat_model",
+                status="succeeded",
+                duration_ms=(time.perf_counter() - started_at) * 1000,
+                details={
+                    "step": self.step_name,
+                    "generation_count": sum(len(batch) for batch in generations),
+                },
+            ),
+        )
+
+    async def on_llm_error(
+        self,
+        error: BaseException,
+        *,
+        run_id: UUID,
+        parent_run_id: Optional[UUID] = None,
+        tags: Optional[list[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """记录脱敏后的 LangChain 模型故障。"""
+        from app.services.llm_service import build_llm_error
+
+        started_at = self._llm_runs.pop(str(run_id), time.perf_counter())
+        normalized_error = build_llm_error(error)
+        normalized_error["component"] = "langchain_chat_model"
+        persist_trace_event(
+            self.task_id,
+            create_trace_event(
+                task_id=self.task_id,
+                kind="llm",
+                name="langchain_chat_model",
+                status="failed",
+                duration_ms=(time.perf_counter() - started_at) * 1000,
+                details={"step": self.step_name},
+                error=normalized_error,
+            ),
+        )
 
     async def on_tool_start(self, serialized: dict, input_str: str, **kwargs: Any) -> None:
         tool_name = serialized.get("name") or "unknown_tool"

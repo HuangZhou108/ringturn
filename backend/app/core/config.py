@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_MODEL: str = "gpt-4"
     LLM_BASE_URL: str = ""  # 可选，用于自定义API端点
+    LLM_REQUEST_TIMEOUT_SECONDS: float = 60.0
+    LLM_MAX_ATTEMPTS: int = 3
+    LLM_RETRY_BACKOFF_SECONDS: float = 1.0
+    LLM_RETRY_MAX_BACKOFF_SECONDS: float = 8.0
 
     # 音频分析API
     CHORDMINI_URL: str = "http://localhost:8001"  # ChordMini服务地址

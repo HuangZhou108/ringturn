@@ -34,6 +34,18 @@ class AgentTraceSchemaTests(unittest.TestCase):
         self.assertEqual(event["thread_id"], "task-1")
         self.assertEqual(event["duration_ms"], 12.346)
 
+    def test_execution_context_can_be_restored(self):
+        self.assertIsNone(_TRACE.get_execution_context())
+        token = _TRACE.set_execution_context("task-1", "planning")
+        try:
+            self.assertEqual(
+                _TRACE.get_execution_context(),
+                {"task_id": "task-1", "component": "planning"},
+            )
+        finally:
+            _TRACE.reset_execution_context(token)
+        self.assertIsNone(_TRACE.get_execution_context())
+
     def test_merge_deduplicates_orders_and_bounds_events(self):
         first = _TRACE.create_trace_event(
             task_id="task-1",
@@ -317,6 +329,31 @@ class AgentTraceSchemaTests(unittest.TestCase):
 
 
 class AgentNodeInstrumentationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_execution_context_is_isolated_between_concurrent_tasks(self):
+        ready = asyncio.Event()
+        entered = 0
+        lock = asyncio.Lock()
+
+        async def worker(task_id):
+            nonlocal entered
+            token = _TRACE.set_execution_context(task_id, "planning")
+            try:
+                async with lock:
+                    entered += 1
+                    if entered == 2:
+                        ready.set()
+                await ready.wait()
+                await asyncio.sleep(0)
+                return _TRACE.get_execution_context()
+            finally:
+                _TRACE.reset_execution_context(token)
+
+        first, second = await asyncio.gather(worker("task-1"), worker("task-2"))
+
+        self.assertEqual(first["task_id"], "task-1")
+        self.assertEqual(second["task_id"], "task-2")
+        self.assertIsNone(_TRACE.get_execution_context())
+
     async def test_success_records_start_and_completion_without_mutating_input(self):
         persisted = []
 
