@@ -92,6 +92,7 @@ async def run_with_retry(
     *,
     policy: RetryPolicy,
     on_retry: Callable[[int, BaseException, float], Any] | None = None,
+    retry_if: Callable[[BaseException], bool] = is_retryable_error,
     sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
 ) -> tuple[T, int]:
     """Run an operation with bounded attempts and per-attempt timeouts.
@@ -115,7 +116,7 @@ async def run_with_retry(
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            should_retry = attempt < policy.max_attempts and is_retryable_error(error)
+            should_retry = attempt < policy.max_attempts and retry_if(error)
             if not should_retry:
                 raise
             delay = retry_delay_seconds(policy, attempt)

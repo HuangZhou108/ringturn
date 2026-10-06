@@ -8,11 +8,12 @@ RingTurn 将面向用户的 `thinking_process` 与工程诊断用的
 | 数据 | 用途 | 内容 |
 |---|---|---|
 | `thinking_process` | 前端展示 | 规划说明、友好进度和简化工具反馈 |
-| `execution_trace` | 开发与故障诊断 | 节点、工具、路由、耗时、结果结构、标准错误 |
+| `execution_trace` | 开发与故障诊断 | 节点、工具、LLM、路由、耗时、结果结构、标准错误 |
 
 执行轨迹不保存模型隐藏思维链、API Key、令牌、工具参数值或工具结果
 原文。工具输入只保留参数数量、参数名和类型；输出只保留类型、键名和
-集合大小。
+集合大小。LLM 事件只保留模型名、消息数量、字符数、完成原因、耗时和
+尝试次数，不保留 prompt、注入的用户记忆或响应正文。
 
 可观测性之上增加了独立的执行韧性策略，但不改变音频算法、质量阈值或
 质量返工条件：规划与主图共享总执行时限；只有显式白名单中的无副作用
@@ -57,7 +58,7 @@ function calling 自主编排，失败时回退到确定性流程。主图节点
 
 字段约束：
 
-- `kind`：`task`、`node`、`tool`、`route` 或 `resilience`。
+- `kind`：`task`、`node`、`tool`、`llm`、`route` 或 `resilience`。
 - `status`：`running`、`succeeded`、`failed`、`cancelled` 或
   `selected`；韧性事件还可使用 `retrying`、`fallback`、`exhausted`。
 - `thread_id`：与 LangGraph checkpoint 的 `thread_id` 一致，当前为
@@ -94,6 +95,11 @@ function calling 自主编排，失败时回退到确定性流程。主图节点
 | `NODE_EXECUTION_FAILED` | false | 未进一步分类的节点错误 |
 | `TOOL_EXECUTION_FAILED` | false | 未进一步分类的工具错误 |
 | `TASK_EXECUTION_FAILED` | false | 规划或任务级未分类错误 |
+| `LLM_RATE_LIMITED` | true | 模型服务限流 |
+| `LLM_REQUEST_TIMEOUT` | true | 单次模型请求超时 |
+| `LLM_CONNECTION_FAILED` | true | 无法连接模型服务 |
+| `LLM_PROVIDER_UNAVAILABLE` | true | 模型服务端临时不可用 |
+| `LLM_REQUEST_FAILED` | false | 认证、参数或未分类模型请求错误 |
 
 `retryable` 是错误分类，不代表一定重试。只有工具名同时位于
 `AGENT_RETRYABLE_TOOLS` 白名单、尚未达到尝试上限时，才会自动重试。
@@ -106,6 +112,7 @@ function calling 自主编排，失败时回退到确定性流程。主图节点
 | 机制 | 范围 | 默认策略 |
 |---|---|---|
 | Pipeline deadline | 规划 + LangGraph 主流程 | 1800 秒，共享同一个 deadline |
+| LLM 请求 | SDK 直连及 LangChain 模型 | 单次 60 秒，最多 3 次尝试 |
 | 异常重试 | 白名单中的无副作用分析工具 | 最多 2 次尝试，单次 180 秒，指数退避 |
 | 质量返工 | `reflect → retry_router → arrange` | 继续使用任务的 `max_retries` |
 
@@ -133,13 +140,22 @@ AGENT_TOOL_MAX_ATTEMPTS=2
 AGENT_TOOL_RETRY_BACKOFF_SECONDS=1
 AGENT_TOOL_RETRY_MAX_BACKOFF_SECONDS=8
 AGENT_RETRYABLE_TOOLS=get_metadata,detect_tempo_beats
+LLM_REQUEST_TIMEOUT_SECONDS=60
+LLM_MAX_ATTEMPTS=3
+LLM_RETRY_BACKOFF_SECONDS=1
+LLM_RETRY_MAX_BACKOFF_SECONDS=8
 ```
+
+LLM 只对限流、连接失败、请求超时、HTTP 408/409/429 和服务端 5xx
+进行重试；认证失败、权限错误、参数错误、解析错误和未知异常不会自动重放。
+任务记忆与 trace 身份均使用 `ContextVar` token 成对设置/恢复，并发任务不会
+共享用户偏好或任务 ID。
 
 ## 6. 持久化与 checkpoint 生命周期
 
 1. `AgentState.execution_trace` 使用 LangGraph reducer 合并事件，因此节点和
    路由事件进入 SQLite checkpoint。
-2. 工具回调在执行过程中把事件同步写入现有
+2. 工具和 LLM 回调在执行过程中把事件同步写入现有
    `Task.intermediate_data.execution_trace`，状态 API 可即时看到进展。
 3. 任务完成时，执行器将 checkpoint 中的节点事件与数据库中的工具事件
    按 `event_id` 合并。

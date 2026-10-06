@@ -8,6 +8,7 @@ thought or raw tool arguments.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import re
 import time
@@ -18,6 +19,10 @@ from uuid import uuid4
 
 MAX_TRACE_EVENTS = 500
 MAX_ERROR_MESSAGE_LENGTH = 500
+
+_execution_context: contextvars.ContextVar[dict[str, str] | None] = (
+    contextvars.ContextVar("agent_execution_context", default=None)
+)
 
 _SECRET_ASSIGNMENT = re.compile(
     r"(?i)\b(api[-_]?key|authorization|password|secret|token)\b"
@@ -31,6 +36,27 @@ def utc_now_iso() -> str:
     """Return a stable UTC timestamp that sorts lexicographically."""
 
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def set_execution_context(task_id: str, component: str) -> contextvars.Token:
+    """Bind task identity to the current async context for nested LLM calls."""
+
+    return _execution_context.set(
+        {"task_id": str(task_id), "component": str(component)}
+    )
+
+
+def get_execution_context() -> dict[str, str] | None:
+    """Return a copy of the current task-local execution context."""
+
+    context = _execution_context.get()
+    return dict(context) if context else None
+
+
+def reset_execution_context(token: contextvars.Token) -> None:
+    """Restore the previous task-local execution context."""
+
+    _execution_context.reset(token)
 
 
 def redact_text(value: Any, *, limit: int = MAX_ERROR_MESSAGE_LENGTH) -> str:

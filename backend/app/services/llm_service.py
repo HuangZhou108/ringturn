@@ -7,26 +7,113 @@ LLM服务模块
 - 反思与决策
 """
 
-import os
 import asyncio
-from typing import Optional
-from openai import AsyncOpenAI, RateLimitError
+import os
+import time
+from collections import Counter
+from typing import Any, Callable, Mapping
+
+from app.agent.resilience import RetryPolicy, run_with_retry
+from app.agent.trace import (
+    create_trace_event,
+    get_execution_context,
+    persist_trace_event,
+)
 from app.core.config import get_settings
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    RateLimitError,
+)
 
 settings = get_settings()
 
-# 重试配置
-MAX_RETRIES = 5
-INITIAL_RETRY_DELAY = 2  # 初始重试延迟（秒）
-MAX_RETRY_DELAY = 60  # 最大重试延迟（秒）
+
+def is_retryable_llm_error(error: BaseException) -> bool:
+    """只把无请求副作用的瞬时模型服务故障判定为可重试。"""
+
+    if isinstance(
+        error,
+        (
+            RateLimitError,
+            APIConnectionError,
+            APITimeoutError,
+            asyncio.TimeoutError,
+            TimeoutError,
+        ),
+    ):
+        return True
+    if isinstance(error, APIStatusError):
+        status_code = getattr(error, "status_code", None)
+        return status_code in {408, 409, 429} or (
+            isinstance(status_code, int) and status_code >= 500
+        )
+    return False
+
+
+def build_llm_error(error: BaseException) -> dict[str, Any]:
+    """生成不包含 provider 响应正文或用户输入的稳定错误结构。"""
+
+    if isinstance(error, RateLimitError):
+        code, message = "LLM_RATE_LIMITED", "LLM provider rate limit exceeded"
+    elif isinstance(error, (APITimeoutError, asyncio.TimeoutError, TimeoutError)):
+        code, message = "LLM_REQUEST_TIMEOUT", "LLM request timed out"
+    elif isinstance(error, APIConnectionError):
+        code, message = "LLM_CONNECTION_FAILED", "LLM provider connection failed"
+    elif isinstance(error, APIStatusError) and is_retryable_llm_error(error):
+        code, message = "LLM_PROVIDER_UNAVAILABLE", "LLM provider is unavailable"
+    else:
+        code, message = "LLM_REQUEST_FAILED", "LLM request failed"
+    return {
+        "code": code,
+        "scope": "llm",
+        "component": "chat_completion",
+        "retryable": is_retryable_llm_error(error),
+        "exception_type": type(error).__name__,
+        "message": message,
+    }
+
+
+def summarize_messages(messages: list[dict]) -> dict[str, Any]:
+    """描述消息形状，不复制 prompt、记忆或其他内容。"""
+
+    role_counts = Counter(str(message.get("role", "unknown")) for message in messages)
+    content_chars = 0
+    for message in messages:
+        content = message.get("content", "")
+        if isinstance(content, str):
+            content_chars += len(content)
+        elif isinstance(content, list):
+            content_chars += sum(
+                len(str(part.get("text", "")))
+                for part in content
+                if isinstance(part, Mapping)
+            )
+    return {
+        "message_count": len(messages),
+        "role_counts": dict(sorted(role_counts.items())),
+        "content_chars": content_chars,
+    }
 
 
 class LLMService:
     """LLM服务封装"""
 
-    def __init__(self):
-        self.client = None
-        self._init_client()
+    def __init__(
+        self,
+        client: Any = None,
+        *,
+        trace_persist: Callable[[str, Mapping[str, Any]], Any] | None = (
+            persist_trace_event
+        ),
+        sleep: Callable[[float], Any] = asyncio.sleep,
+    ):
+        # 延迟初始化使非 LLM 命令和测试无需配置密钥即可导入应用。
+        self.client = client
+        self._trace_persist = trace_persist
+        self._sleep = sleep
 
     def _init_client(self):
         """初始化LLM配置"""
@@ -41,6 +128,72 @@ class LLMService:
             base_url=base_url if base_url else None,
         )
 
+    def _emit_trace(
+        self,
+        *,
+        status: str,
+        duration_ms: float | None = None,
+        details: Mapping[str, Any] | None = None,
+        error: Mapping[str, Any] | None = None,
+    ) -> None:
+        context = get_execution_context()
+        if not context or self._trace_persist is None:
+            return
+        event_details = {"component": context["component"], **dict(details or {})}
+        event = create_trace_event(
+            task_id=context["task_id"],
+            kind="llm",
+            name="chat_completion",
+            status=status,
+            duration_ms=duration_ms,
+            details=event_details,
+            error=error,
+        )
+        self._trace_persist(context["task_id"], event)
+
+    async def _request_completion(
+        self,
+        *,
+        messages: list[dict],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> tuple[Any, int]:
+        policy = RetryPolicy(
+            max_attempts=max(1, int(settings.LLM_MAX_ATTEMPTS)),
+            timeout_seconds=max(0.001, float(settings.LLM_REQUEST_TIMEOUT_SECONDS)),
+            backoff_seconds=max(0.0, float(settings.LLM_RETRY_BACKOFF_SECONDS)),
+            max_backoff_seconds=max(0.0, float(settings.LLM_RETRY_MAX_BACKOFF_SECONDS)),
+        )
+
+        async def invoke(_attempt: int) -> Any:
+            return await self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+        def on_retry(attempt: int, error: BaseException, delay: float) -> None:
+            self._emit_trace(
+                status="retrying",
+                details={
+                    "attempt": attempt,
+                    "next_attempt": attempt + 1,
+                    "max_attempts": policy.max_attempts,
+                    "delay_ms": round(delay * 1000, 3),
+                },
+                error=build_llm_error(error),
+            )
+
+        return await run_with_retry(
+            invoke,
+            policy=policy,
+            on_retry=on_retry,
+            retry_if=is_retryable_llm_error,
+            sleep=self._sleep,
+        )
+
     async def chat(
         self,
         messages: list[dict],
@@ -49,7 +202,7 @@ class LLMService:
         max_tokens: int = 1000,
     ) -> str:
         """
-        调用LLM进行对话（带重试机制）
+        调用 LLM：单次请求有超时，仅瞬时错误进行有限重试。
 
         Args:
             messages: 消息列表 [{"role": "user", "content": "..."}]
@@ -64,67 +217,82 @@ class LLMService:
             self._init_client()
 
         model = model or settings.LLM_MODEL
-        last_error = None
 
         # 注入 Agent 记忆（全局偏好指令 + 历史画像），作为最高优先级的 system 指令
         from app.services.memory import get_agent_context
+
         ctx = get_agent_context()
         if ctx:
-            messages = [{"role": "system", "content": ctx}] + list(messages)
+            messages = [{"role": "system", "content": ctx}, *list(messages)]
+        else:
+            messages = list(messages)
 
-        for attempt in range(MAX_RETRIES):
-            # 检查当前任务是否被取消
-            if asyncio.current_task() and asyncio.current_task().cancelled():
-                raise asyncio.CancelledError()
-            try:
-                print(f"[LLM REQUEST] model={model}, base_url={self.client.base_url}")
-                print(f"[LLM REQUEST] messages={messages}")
+        started_at = time.perf_counter()
+        request_summary = summarize_messages(messages)
+        self._emit_trace(
+            status="running",
+            details={
+                "model": model,
+                "max_tokens": max_tokens,
+                **request_summary,
+            },
+        )
+        try:
+            response, attempts = await self._request_completion(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            content = response.choices[0].message.content or ""
+            finish_reason = response.choices[0].finish_reason
 
-                response = await self.client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
+            # 推理 token 耗尽且没有正文时，仅额外扩大一次输出预算；额外请求仍使用
+            # 相同的超时与瞬时错误重试边界。
+            if not content.strip() and finish_reason == "length":
+                retry_tokens = max(max_tokens * 4, 2000)
+                self._emit_trace(
+                    status="retrying",
+                    details={
+                        "reason": "empty_truncated_response",
+                        "next_max_tokens": retry_tokens,
+                    },
                 )
-                print(f"[LLM RESPONSE] {response}")
-                content = response.choices[0].message.content
+                response, extra_attempts = await self._request_completion(
+                    messages=messages,
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=retry_tokens,
+                )
+                attempts += extra_attempts
+                content = response.choices[0].message.content or ""
                 finish_reason = response.choices[0].finish_reason
-                # 推理模型（deepseek-flash 等）在 max_tokens 被推理（reasoning_content）耗尽时，
-                # 最终 content 为空且 finish_reason='length'。此时自动放大 max_tokens 重试一次，避免返回空内容。
-                if (not content or not content.strip()) and finish_reason == "length":
-                    retry_tokens = max(max_tokens * 4, 2000)
-                    print(f"[LLM RETRY] content 为空且被截断，用 max_tokens={retry_tokens} 重试")
-                    response = await self.client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        temperature=temperature,
-                        max_tokens=retry_tokens,
-                    )
-                    return response.choices[0].message.content
-                return content
-            except asyncio.CancelledError:
-                raise
-            except RateLimitError as e:
-                last_error = e
-                # 计算指数退避延迟
-                delay = min(INITIAL_RETRY_DELAY * (2 ** attempt), MAX_RETRY_DELAY)
-                print(f"[LLM RATE LIMIT] 触发限流，等待 {delay:.2f} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRIES})")
-                print(f"[LLM RATE LIMIT] 错误详情: {e}")
-                await asyncio.sleep(delay)
 
-            except Exception as e:
-                last_error = e
-                # 其他错误也尝试重试，但只重试3次
-                if attempt < 2:
-                    delay = INITIAL_RETRY_DELAY * (2 ** attempt)
-                    print(f"[LLM ERROR] 请求失败，等待 {delay:.1f} 秒后重试 (尝试 {attempt + 1}/{MAX_RETRIES}): {e}")
-                    await asyncio.sleep(delay)
-                else:
-                    # 3次后放弃
-                    raise
-
-        # 所有重试都失败
-        raise Exception(f"LLM调用失败，已重试 {MAX_RETRIES} 次。最后错误: {last_error}")
+            self._emit_trace(
+                status="succeeded",
+                duration_ms=(time.perf_counter() - started_at) * 1000,
+                details={
+                    "model": model,
+                    "attempts": attempts,
+                    "retries": attempts - 1,
+                    "finish_reason": finish_reason,
+                    "response_chars": len(content),
+                },
+            )
+            return content
+        except asyncio.CancelledError:
+            self._emit_trace(
+                status="cancelled",
+                duration_ms=(time.perf_counter() - started_at) * 1000,
+            )
+            raise
+        except Exception as error:
+            self._emit_trace(
+                status="failed",
+                duration_ms=(time.perf_counter() - started_at) * 1000,
+                error=build_llm_error(error),
+            )
+            raise
 
     async def parse_user_request(self, user_request: str) -> dict:
         """
@@ -161,6 +329,7 @@ class LLMService:
         ]
 
         import json
+
         response = await self.chat(messages, temperature=0.3)
         try:
             return json.loads(response)
@@ -206,7 +375,7 @@ class LLMService:
             dur = int(float(dur))
             return dur if dur > 0 else None
         except Exception as e:
-            print(f"[LLM] extract_duration failed: {e}")
+            print(f"[LLM] extract_duration failed: {type(e).__name__}")
             return None
 
     async def extract_style_and_mood(self, user_request: str) -> dict:
@@ -222,21 +391,32 @@ class LLMService:
         user_prompt = f"用户请求：{user_request}"
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": user_prompt},
         ]
         try:
             response = await self.chat(messages, temperature=0.2, max_tokens=150)
             import json
+
             result = json.loads(response)
             return {
-                "style": result.get("style") if result.get("style") not in (None, "", "null") else None,
-                "mood": result.get("mood") if result.get("mood") not in (None, "", "null") else None,
+                "style": (
+                    result.get("style")
+                    if result.get("style") not in (None, "", "null")
+                    else None
+                ),
+                "mood": (
+                    result.get("mood")
+                    if result.get("mood") not in (None, "", "null")
+                    else None
+                ),
             }
         except Exception as e:
-            print(f"[LLM] extract_style_and_mood failed: {e}")
+            print(f"[LLM] extract_style_and_mood failed: {type(e).__name__}")
             return {"style": None, "mood": None}
 
-    async def generate_plan(self, user_request: str, analysis_result: dict = None) -> list[str]:
+    async def generate_plan(
+        self, user_request: str, analysis_result: dict = None
+    ) -> list[str]:
         """
         生成执行计划
 
@@ -276,8 +456,10 @@ class LLMService:
         ]
 
         import json
+
         response = await self.chat(messages, temperature=0.5)
         import re
+
         # 在 try 之前提取代码块内容
         content = response
         match = re.search(r"```(?:json)?\s*\n(.*?)\n```", response, re.DOTALL)
@@ -290,9 +472,19 @@ class LLMService:
             plan = []
 
         # 过滤出有效的步骤名称（字符串且属于可选集合）
-        valid_steps = ["fetch_source", "analyze_structure", "extract_melody", "generate_midi", "arrange", "render", "check_quality"]
+        valid_steps = [
+            "fetch_source",
+            "analyze_structure",
+            "extract_melody",
+            "generate_midi",
+            "arrange",
+            "render",
+            "check_quality",
+        ]
         if isinstance(plan, list):
-            filtered = [item for item in plan if isinstance(item, str) and item in valid_steps]
+            filtered = [
+                item for item in plan if isinstance(item, str) and item in valid_steps
+            ]
             if filtered:
                 if "check_quality" not in filtered:
                     filtered.append("check_quality")  # 默认执行质量检查
@@ -353,12 +545,15 @@ class LLMService:
 
         # RAG：检索相关知识，注入提示词（让决策有知识库支撑，而非仅靠硬编码映射）
         try:
-            from app.services.knowledge_base import retrieve_knowledge, format_knowledge
+            from app.services.knowledge_base import format_knowledge, retrieve_knowledge
+
             mood = (analysis_result or {}).get("mood_style", {}).get("mood", "")
             query = f"{user_request} {mood}"
             docs = retrieve_knowledge(query, top_k=3)
             knowledge = format_knowledge(docs)
-            print(f"[RAG] plan_arrangement 检索到 {len(docs)} 篇知识: {[d['title'] for d in docs]}")
+            print(
+                f"[RAG] plan_arrangement 检索到 {len(docs)} 篇知识: {[d['title'] for d in docs]}"
+            )
         except Exception as e:
             print(f"[RAG] plan_arrangement 检索失败: {e}")
             knowledge = ""
@@ -384,7 +579,10 @@ class LLMService:
             result = json.loads(json_str)
 
             out = {}
-            if isinstance(result.get("instrument"), str) and result["instrument"].strip():
+            if (
+                isinstance(result.get("instrument"), str)
+                and result["instrument"].strip()
+            ):
                 out["instrument"] = result["instrument"].strip()
 
             # 速度：用户明确设置（非默认 120）时强制保持；否则限制在检测 BPM 附近
@@ -414,7 +612,7 @@ class LLMService:
                 out["transpose_semitones"] = 0
             return out
         except Exception as e:
-            print(f"[LLM] plan_arrangement failed: {e}")
+            print(f"[LLM] plan_arrangement failed: {type(e).__name__}")
             return {}
 
     async def extract_clip_preference(self, user_request: str) -> dict:
@@ -443,7 +641,9 @@ class LLMService:
         messages = [{"role": "user", "content": f"用户请求：{user_request}\n{prompt}"}]
         try:
             response = await self.chat(messages, temperature=0.2, max_tokens=150)
-            import re, json
+            import json
+            import re
+
             # 清理 markdown 代码块
             match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", response, re.DOTALL)
             if match:
@@ -469,7 +669,7 @@ class LLMService:
             else:
                 return {"category": 4, "value": None}
         except Exception as e:
-            print(f"[LLM] extract_clip_preference failed: {e}")
+            print(f"[LLM] extract_clip_preference failed: {type(e).__name__}")
             return {"category": 4, "value": None}
 
     async def reflect_on_quality(
@@ -516,6 +716,7 @@ class LLMService:
         ]
 
         import json
+
         response = await self.chat(messages, temperature=0.3)
         try:
             return json.loads(response)
@@ -526,19 +727,21 @@ class LLMService:
                 "suggestions": [],
             }
 
+
 # 全局LLM服务实例
 llm_service = LLMService()
+
 
 def get_llm():
     """返回一个 LangChain 兼容的 ChatOpenAI 实例"""
     from langchain_openai import ChatOpenAI
+
     settings = get_settings()
     return ChatOpenAI(
         api_key=settings.LLM_API_KEY,
         base_url=settings.LLM_BASE_URL or None,
         model=settings.LLM_MODEL,
         temperature=0.7,
-        max_retries=5,                # 增加重试次数
-        # retry_on=[RateLimitError],    # 仅对限流错误重试
-        # retry_delay=2,                # 初始延迟 2 秒（指数退避）
+        timeout=max(0.001, settings.LLM_REQUEST_TIMEOUT_SECONDS),
+        max_retries=max(0, settings.LLM_MAX_ATTEMPTS - 1),
     )

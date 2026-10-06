@@ -19,6 +19,7 @@ from app.agent.atomic_tools.arrangement import (
     add_delay_echo_tool,
 )
 from app.agent.atomic_tools.knowledge.search_knowledge import search_knowledge_tool
+from app.agent.callbacks import ThinkingCallbackHandler
 from app.services.llm_service import get_llm
 from app.agent.thinking_utils import record_thought
 from app.agent.utils import clean_state
@@ -74,12 +75,13 @@ async def autonomous_arrange_node(state: AgentState) -> dict:
     record_thought(task_id, "arrange", "自主改编：LLM 用 function calling 决定工具序列")
     try:
         agent = create_react_agent(llm, tools)
+        callback = ThinkingCallbackHandler(task_id, "arrange")
         result = await agent.ainvoke(
             {"messages": [("user", prompt)]},
-            config={"recursion_limit": 30},
+            config={"recursion_limit": 30, "callbacks": [callback]},
         )
         text = str(result["messages"][-1].content) if result.get("messages") else ""
-        record_thought(task_id, "arrange", f"自主改编完成，LLM 输出: {text[:200]}")
+        record_thought(task_id, "arrange", "自主改编完成（模型正文已从诊断日志省略）")
 
         # 解析最终 MIDI 路径（优先 LLM 明确给出的绝对路径）
         m = re.search(r"([A-Za-z]:[\\/][^\s'\"]+\.mid|[\w\-./\\]+\.mid)", text)
@@ -97,5 +99,9 @@ async def autonomous_arrange_node(state: AgentState) -> dict:
             return {"arranged_midi_path": str(candidates[0])}
         return {}
     except Exception as e:
-        record_thought(task_id, "arrange", f"自主改编失败(回退确定性 arrange): {e}")
+        record_thought(
+            task_id,
+            "arrange",
+            f"自主改编失败（{type(e).__name__}），回退确定性 arrange",
+        )
         return {}

@@ -85,7 +85,11 @@ async def analyze_structure_node(state: AgentState) -> dict:
         )
         record_thought(state["task_id"], "analysis", f"LLM 改编决策: {arrangement}")
     except Exception as e:
-        record_thought(state["task_id"], "analysis", f"LLM 改编决策失败，沿用用户参数: {e}")
+        record_thought(
+            state["task_id"],
+            "analysis",
+            f"LLM 改编决策失败（{type(e).__name__}），沿用用户参数",
+        )
         arrangement = {}
 
     if arrangement:

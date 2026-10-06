@@ -38,7 +38,11 @@ async def reflect_node(state: AgentState) -> dict:
         suggestions = reflection.get("suggestions", [])
     except Exception as e:
         # 降级：默认通过
-        record_thought(state["task_id"], "reflect", f"LLM 反思失败: {e}，默认通过")
+        record_thought(
+            state["task_id"],
+            "reflect",
+            f"LLM 反思失败（{type(e).__name__}），默认通过",
+        )
         needs_revision = False
         reason = ""
         suggestions = []

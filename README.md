@@ -114,6 +114,10 @@ Windows下载：
 LLM_API_KEY=your-api-key-here
 LLM_MODEL=glm-4-flash
 LLM_BASE_URL=https://your-api-endpoint
+LLM_REQUEST_TIMEOUT_SECONDS=60
+LLM_MAX_ATTEMPTS=3
+LLM_RETRY_BACKOFF_SECONDS=1
+LLM_RETRY_MAX_BACKOFF_SECONDS=8
 DATABASE_URL=sqlite:///./ringturn.db
 ```
 

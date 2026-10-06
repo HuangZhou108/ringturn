@@ -104,6 +104,24 @@ class RunWithRetryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(calls, [1])
 
+    async def test_custom_retry_classifier_can_extend_policy(self):
+        calls = []
+
+        async def operation(attempt):
+            calls.append(attempt)
+            if attempt == 1:
+                raise LookupError("provider-specific transient failure")
+            return "ok"
+
+        result, attempts = await _RESILIENCE.run_with_retry(
+            operation,
+            policy=_RESILIENCE.RetryPolicy(max_attempts=2),
+            retry_if=lambda error: isinstance(error, LookupError),
+        )
+
+        self.assertEqual((result, attempts), ("ok", 2))
+        self.assertEqual(calls, [1, 2])
+
     async def test_timeout_is_bounded_and_retried(self):
         calls = []
         retries = []
