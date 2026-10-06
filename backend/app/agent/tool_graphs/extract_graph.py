@@ -13,34 +13,37 @@
 """
 
 import copy
+import json
 import os
 from pathlib import Path
 from typing import Any, Dict
-import json
 
-from langgraph.graph import StateGraph, END
-
-from app.agent.state import AgentState
-from app.agent.melody_source import select_melody_sources
-from app.agent.atomic_tools.melody.vocal_separation import separate_vocals
-from app.agent.atomic_tools.melody.extract_with_basic_pitch import extract_melody_basic_pitch
-from app.agent.atomic_tools.melody.extract_with_crepe import extract_melody_crepe
-from app.agent.atomic_tools.melody.extract_with_librosa import extract_melody_librosa
-from app.agent.atomic_tools.melody.stabilize_notes import stabilize_melody_notes
-from app.agent.atomic_tools.melody.quantize_notes import quantize_notes
-from app.agent.atomic_tools.melody.merge_notes import merge_notes
-from app.agent.atomic_tools.melody.snap_to_key import snap_to_key
 from app.agent.atomic_tools.melody.candidate_selection import (
-    select_best_melody_candidate,
-    should_run_fallback_candidate,
-)
-from app.agent.atomic_tools.quality.melody_quality import evaluate_melody_quality
+    select_best_melody_candidate, should_run_fallback_candidate)
+from app.agent.atomic_tools.melody.extract_with_basic_pitch import \
+    extract_melody_basic_pitch
+from app.agent.atomic_tools.melody.extract_with_crepe import \
+    extract_melody_crepe
+from app.agent.atomic_tools.melody.extract_with_librosa import \
+    extract_melody_librosa
+from app.agent.atomic_tools.melody.merge_notes import merge_notes
+from app.agent.atomic_tools.melody.quantize_notes import quantize_notes
+from app.agent.atomic_tools.melody.snap_to_key import snap_to_key
+from app.agent.atomic_tools.melody.stabilize_notes import \
+    stabilize_melody_notes
+from app.agent.atomic_tools.melody.vocal_separation import separate_vocals
+from app.agent.atomic_tools.quality.melody_quality import \
+    evaluate_melody_quality
+from app.agent.melody_source import select_melody_sources
+from app.agent.node_registry import (CONDITION_REGISTRY, NODE_REGISTRY,
+                                     register_condition, register_node)
+from app.agent.state import AgentState
 from app.agent.thinking_utils import record_thought
-from app.agent.utils import log_tool_call
-from app.agent.utils import clean_state
-from app.agent.node_registry import register_node, register_condition, NODE_REGISTRY, CONDITION_REGISTRY
+from app.agent.trace import create_fallback_event, persist_trace_event
+from app.agent.utils import clean_state, log_tool_call
 from app.db.session import SessionLocal
 from app.models import ToolPreference
+from langgraph.graph import END, StateGraph
 
 _EXTRACT_GRAPH_JSON = Path(__file__).parent / "extract_graph.json"
 _extract_graph_cache = {}
@@ -198,6 +201,17 @@ async def node_basic_pitch(state: AgentState) -> Dict[str, Any]:
             task_id,
             "extract_melody",
             f"Basic Pitch 候选提取失败: {error}，将尝试 librosa",
+        )
+        persist_trace_event(
+            task_id,
+            create_fallback_event(
+                task_id=str(task_id or ""),
+                component="melody_extraction",
+                from_strategy="basic_pitch",
+                to_strategy="librosa",
+                reason="primary_extractor_failed",
+                error=error,
+            ),
         )
         melody_data = {
             "melody_notes": [],

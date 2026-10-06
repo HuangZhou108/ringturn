@@ -11,11 +11,13 @@ from datetime import datetime
 from typing import Optional
 
 from app.agent.graph import get_agent_graph
+from app.agent.resilience import ExecutionDeadlineExceeded
 from app.agent.state import AgentState
 from app.agent.thinking_utils import record_thought
 from app.agent.trace import (build_execution_error, create_trace_event,
                              merge_trace_events, persist_trace_event,
                              redact_text)
+from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models import (Conversation, ConversationMessage, ConversationStatus,
                         MessageRole)
@@ -23,6 +25,8 @@ from app.models import Task as TaskModel
 from app.models import TaskStatus
 from app.services.llm_service import llm_service
 from sqlalchemy.orm import Session
+
+settings = get_settings()
 
 
 class RingtoneParams:
@@ -45,6 +49,10 @@ class AgentExecutor:
         self._active_task: Optional[AsyncioTask] = None
         self._cancel_event = asyncio.Event()   # 用于通知内部协程取消
         self._subprocesses = []   # 保存子进程对象
+        self._pipeline_timeout_seconds = max(
+            0.001,
+            float(settings.AGENT_PIPELINE_TIMEOUT_SECONDS),
+        )
 
         # 获取任务
         self.task = self.db.query(TaskModel).filter(TaskModel.id == task_id).first()
@@ -221,6 +229,7 @@ class AgentExecutor:
     async def execute(self) -> dict:
         """执行任务：调用 LangGraph 图"""
         execute_started_at = time.perf_counter()
+        pipeline_deadline = execute_started_at + self._pipeline_timeout_seconds
         try:
             self.task.thread_id = self.task_id
             started_event = create_trace_event(
@@ -228,6 +237,9 @@ class AgentExecutor:
                 kind="task",
                 name="agent_execution",
                 status="running",
+                details={
+                    "pipeline_timeout_seconds": self._pipeline_timeout_seconds,
+                },
             )
             self.state["execution_trace"] = merge_trace_events(
                 self.state.get("execution_trace"),
@@ -254,7 +266,14 @@ class AgentExecutor:
                 print(f"[AGENT] Will resume from node: {self.task.resume_from_node}")
 
             await self._update_task_status(TaskStatus.planning)
-            await self._plan()
+            await self._await_before_deadline(
+                self._plan(),
+                deadline=pipeline_deadline,
+                component="planning",
+            )
+
+            if self._cancel_event.is_set():
+                raise asyncio.CancelledError()
 
             await self._update_task_status(TaskStatus.executing)
             # 异步获取图实例
@@ -266,7 +285,11 @@ class AgentExecutor:
             self._active_task = asyncio.create_task(
                 self.graph.ainvoke(self.state, config=config)
             )
-            final_state = await self._active_task
+            final_state = await self._await_before_deadline(
+                self._active_task,
+                deadline=pipeline_deadline,
+                component="graph_execution",
+            )
 
             # 确保从 final_state 中提取有效值
             self.state.update(final_state)   # 合并最终状态
@@ -460,6 +483,21 @@ class AgentExecutor:
                 component="agent_execution",
             )
             execution_error["task_id"] = self.task_id
+            if isinstance(e, ExecutionDeadlineExceeded):
+                persist_trace_event(
+                    self.task_id,
+                    create_trace_event(
+                        task_id=self.task_id,
+                        kind="resilience",
+                        name="pipeline_deadline",
+                        status="exhausted",
+                        duration_ms=(time.perf_counter() - execute_started_at) * 1000,
+                        details={
+                            "timeout_seconds": self._pipeline_timeout_seconds,
+                        },
+                        error=execution_error,
+                    ),
+                )
             failed_event = create_trace_event(
                 task_id=self.task_id,
                 kind="task",
@@ -485,6 +523,36 @@ class AgentExecutor:
             raise
         finally:
             self.close()  # 确保执行完毕后关闭会话
+
+    async def _await_before_deadline(
+        self,
+        awaitable,
+        *,
+        deadline: float,
+        component: str,
+    ):
+        """Await one pipeline phase without resetting the overall deadline."""
+
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0:
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
+            raise ExecutionDeadlineExceeded(
+                f"Agent pipeline exceeded {self._pipeline_timeout_seconds:.3f}s "
+                f"during {component}"
+            )
+        try:
+            return await asyncio.wait_for(awaitable, timeout=remaining)
+        except asyncio.TimeoutError as error:
+            # A nested dependency may raise its own TimeoutError before the
+            # global deadline. Preserve that exception instead of relabeling it.
+            if time.perf_counter() + 0.01 < deadline:
+                raise
+            raise ExecutionDeadlineExceeded(
+                f"Agent pipeline exceeded {self._pipeline_timeout_seconds:.3f}s "
+                f"during {component}"
+            ) from error
 
     async def _update_task_status(self, status: TaskStatus) -> None:
         self.task.status = status

@@ -1,7 +1,9 @@
 import os
-from pydantic_settings import BaseSettings
 from functools import lru_cache
 from pathlib import Path
+
+from pydantic_settings import BaseSettings
+
 
 class Settings(BaseSettings):
     """应用配置"""
@@ -53,6 +55,19 @@ class Settings(BaseSettings):
     # 任务配置
     DEFAULT_RINGTONE_DURATION: int = 30  # 默认铃声时长（秒）
     MAX_RINGTONE_DURATION: int = 60  # 最大时长
+
+    # Agent 韧性策略。异常重试与质量不达标后的重新编曲相互独立。
+    AGENT_PIPELINE_TIMEOUT_SECONDS: float = 1800.0
+    AGENT_TOOL_TIMEOUT_SECONDS: float = 180.0
+    AGENT_TOOL_MAX_ATTEMPTS: int = 2
+    AGENT_TOOL_RETRY_BACKOFF_SECONDS: float = 1.0
+    AGENT_TOOL_RETRY_MAX_BACKOFF_SECONDS: float = 8.0
+    # 只重放无副作用的读取/分析工具；写文件、渲染和模型分离不在白名单中。
+    AGENT_RETRYABLE_TOOLS: str = (
+        "get_metadata,detect_tempo_beats,detect_tempo_variation,"
+        "analyze_loudness,analyze_spectral,detect_sections,msaf_analyze,"
+        "evaluate_overall_quality"
+    )
 
     class Config:
         env_file = ".env"
