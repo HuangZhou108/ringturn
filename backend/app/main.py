@@ -45,11 +45,12 @@ async def lifespan(app: FastAPI):
         await asyncio.gather(*cancel_tasks, return_exceptions=True)
 
     # 2. 取消并等待后台任务
-    for t in _background_tasks:
+    background_tasks = list(_background_tasks)
+    for t in background_tasks:
         if not t.done():
             t.cancel()
-    if _background_tasks:
-        await asyncio.gather(*_background_tasks, return_exceptions=True)
+    if background_tasks:
+        await asyncio.gather(*background_tasks, return_exceptions=True)
 
     # 3. 可选：强制垃圾回收
     import gc

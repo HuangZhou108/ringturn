@@ -58,7 +58,8 @@ function calling 自主编排，失败时回退到确定性流程。主图节点
 
 字段约束：
 
-- `kind`：`task`、`node`、`tool`、`llm`、`route` 或 `resilience`。
+- `kind`：`task`、`node`、`tool`、`llm`、`route`、`resilience` 或
+  `control`。
 - `status`：`running`、`succeeded`、`failed`、`cancelled` 或
   `selected`；韧性事件还可使用 `retrying`、`fallback`、`exhausted`。
 - `thread_id`：与 LangGraph checkpoint 的 `thread_id` 一致，当前为
@@ -151,7 +152,27 @@ LLM 只对限流、连接失败、请求超时、HTTP 408/409/429 和服务端 5
 任务记忆与 trace 身份均使用 `ContextVar` token 成对设置/恢复，并发任务不会
 共享用户偏好或任务 ID。
 
-## 6. 持久化与 checkpoint 生命周期
+## 6. 任务认领与取消生命周期
+
+1. 后台执行器使用条件更新原子认领任务，只允许 `pending → planning`。已经
+   取消或被其他执行器认领的任务不会启动，也不会被重新置为 `planning`。
+2. 取消接口先持久化 `cancelled` 状态和用户可见消息，再通知当前进程中注册的
+   执行器，避免队列任务在取消后复活。
+3. 重复取消是幂等操作，返回当前 `cancelled` 状态；`completed` 和 `failed`
+   属于终态，返回 400，不允许改写。
+4. 执行器同时绑定外层执行任务和图任务，因此规划、LangGraph 执行及受管理
+   子进程都能收到取消信号。取消后的迟到完成或失败写入会被拒绝，持久化的
+   `cancelled` 状态优先。
+5. API 取消产生 `control/task_cancellation/cancelled` 事件，执行器退出产生
+   `task/agent_execution/cancelled` 事件，可区分控制请求与实际停止。
+6. 后台任务在应用关闭时统一取消并等待，清理逻辑不依赖特定操作系统的内存
+   分配器。
+
+当前进程可以立即中断已注册的协程和子进程。多 worker 部署中，数据库状态
+仍能阻止重复认领和终态覆盖，但另一个 worker 内不可抢占的原生计算只能在
+节点或执行阶段边界观察到取消；这类计算应继续迁移到可终止的独立 worker。
+
+## 7. 持久化与 checkpoint 生命周期
 
 1. `AgentState.execution_trace` 使用 LangGraph reducer 合并事件，因此节点和
    路由事件进入 SQLite checkpoint。
@@ -167,7 +188,7 @@ LLM 只对限流、连接失败、请求超时、HTTP 408/409/429 和服务端 5
 轨迹复用现有 JSON 字段，不需要数据库迁移。完整候选音符和二进制音频不会
 进入轨迹。
 
-## 7. 诊断 API
+## 8. 诊断 API
 
 ```http
 GET /api/v1/tasks/{task_id}/trace

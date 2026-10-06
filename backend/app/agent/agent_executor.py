@@ -48,6 +48,7 @@ class AgentExecutor:
         self._owns_db = db is None  # 标记是否自己创建的会话
         self.conversation_id = conversation_id
         self._active_task: Optional[AsyncioTask] = None
+        self._execution_task: Optional[AsyncioTask] = None
         self._cancel_event = asyncio.Event()   # 用于通知内部协程取消
         self._subprocesses = []   # 保存子进程对象
         self._pipeline_timeout_seconds = max(
@@ -227,6 +228,52 @@ class AgentExecutor:
         self.task.plan = normalized_plan
         self.db.commit()
 
+    def bind_execution_task(self, task: AsyncioTask) -> None:
+        """Bind the outer runner so cancellation also interrupts planning."""
+        self._execution_task = task
+
+    def _cancellation_requested(self) -> bool:
+        """Check both process-local and persisted cancellation signals."""
+        if self._cancel_event.is_set():
+            return True
+        # Avoid flushing partially assembled results while polling a status that
+        # may have been changed by the cancellation endpoint in another session.
+        with self.db.no_autoflush:
+            persisted_status = (
+                self.db.query(TaskModel.status)
+                .filter(TaskModel.id == self.task_id)
+                .scalar()
+            )
+        return persisted_status == TaskStatus.cancelled
+
+    async def _finalize_cancellation(self, execute_started_at: float) -> bool:
+        """Discard partial writes and persist one cancellation outcome."""
+        self.db.rollback()
+        if not await self._update_task_status(TaskStatus.cancelled):
+            return False
+
+        cancelled_error = build_execution_error(
+            asyncio.CancelledError("Task cancelled"),
+            scope="task",
+            component="agent_execution",
+        )
+        persist_trace_event(
+            self.task_id,
+            create_trace_event(
+                task_id=self.task_id,
+                kind="task",
+                name="agent_execution",
+                status="cancelled",
+                duration_ms=(time.perf_counter() - execute_started_at) * 1000,
+                error=cancelled_error,
+            ),
+        )
+        self.task.error_message = "任务已被用户取消"
+        if self.assistant_message:
+            self.assistant_message.content = "任务已取消"
+        self.db.commit()
+        return True
+
     async def execute(self) -> dict:
         """执行任务：调用 LangGraph 图"""
         execute_started_at = time.perf_counter()
@@ -263,7 +310,7 @@ class AgentExecutor:
             memory_context_token = set_agent_context(ctx)
 
             # 检查是否已取消
-            if self.task.status == TaskStatus.cancelled:
+            if self._cancellation_requested():
                 raise asyncio.CancelledError()
             
             # 将反馈指定的起始节点注入 state
@@ -271,17 +318,19 @@ class AgentExecutor:
                 self.state["resume_from_node"] = self.task.resume_from_node
                 print(f"[AGENT] Will resume from node: {self.task.resume_from_node}")
 
-            await self._update_task_status(TaskStatus.planning)
+            if not await self._update_task_status(TaskStatus.planning):
+                raise asyncio.CancelledError()
             await self._await_before_deadline(
                 self._plan(),
                 deadline=pipeline_deadline,
                 component="planning",
             )
 
-            if self._cancel_event.is_set():
+            if self._cancellation_requested():
                 raise asyncio.CancelledError()
 
-            await self._update_task_status(TaskStatus.executing)
+            if not await self._update_task_status(TaskStatus.executing):
+                raise asyncio.CancelledError()
             # 异步获取图实例
             self.graph = await get_agent_graph()
             config = {"configurable": {"thread_id": self.task_id}}
@@ -302,21 +351,8 @@ class AgentExecutor:
 
             # Do not publish success if cancellation won the race with graph
             # completion.
-            if self._cancel_event.is_set():
+            if self._cancellation_requested():
                 raise asyncio.CancelledError()
-
-            succeeded_event = create_trace_event(
-                task_id=self.task_id,
-                kind="task",
-                name="agent_execution",
-                status="succeeded",
-                duration_ms=(time.perf_counter() - execute_started_at) * 1000,
-            )
-            persist_trace_event(self.task_id, succeeded_event)
-            self.state["execution_trace"] = merge_trace_events(
-                self.state.get("execution_trace"),
-                [succeeded_event],
-            )
 
             # 优先使用 final_state 中的路径，其次是 self.state
             midi_path = final_state.get("midi_path") or self.state.get("midi_path")
@@ -386,7 +422,21 @@ class AgentExecutor:
             self.task.final_audio_url = final_state.get("final_audio_url")
             self.task.audio_duration = final_state.get("audio_duration")
             # self.task.thinking_process = final_state.get("thinking_process", [])
-            await self._update_task_status(TaskStatus.completed)
+            if not await self._update_task_status(TaskStatus.completed):
+                raise asyncio.CancelledError()
+
+            succeeded_event = create_trace_event(
+                task_id=self.task_id,
+                kind="task",
+                name="agent_execution",
+                status="succeeded",
+                duration_ms=(time.perf_counter() - execute_started_at) * 1000,
+            )
+            persist_trace_event(self.task_id, succeeded_event)
+            self.state["execution_trace"] = merge_trace_events(
+                self.state.get("execution_trace"),
+                [succeeded_event],
+            )
 
             # 记录完成消息
             plan = self.state.get("plan", [])
@@ -427,61 +477,11 @@ class AgentExecutor:
             }
 
         except asyncio.CancelledError:
-            cancelled_error = build_execution_error(
-                asyncio.CancelledError("Task cancelled"),
-                scope="task",
-                component="agent_execution",
-            )
-            cancelled_event = create_trace_event(
-                task_id=self.task_id,
-                kind="task",
-                name="agent_execution",
-                status="cancelled",
-                duration_ms=(time.perf_counter() - execute_started_at) * 1000,
-                error=cancelled_error,
-            )
-            persist_trace_event(self.task_id, cancelled_event)
-            await self._update_task_status(TaskStatus.cancelled)
-            self.task.error_message = "任务已被用户取消"
-            self.db.commit()
+            await self._finalize_cancellation(execute_started_at)
             return {"success": False, "reason": "cancelled"}
         except Exception as e:
-            if self._cancel_event.is_set():
-                cancelled_error = build_execution_error(
-                    asyncio.CancelledError("Task cancelled"),
-                    scope="task",
-                    component="agent_execution",
-                )
-                persist_trace_event(
-                    self.task_id,
-                    create_trace_event(
-                        task_id=self.task_id,
-                        kind="task",
-                        name="agent_execution",
-                        status="cancelled",
-                        duration_ms=(time.perf_counter() - execute_started_at) * 1000,
-                        error=cancelled_error,
-                    ),
-                )
-                await self._update_task_status(TaskStatus.cancelled)
-                return {"success": False, "reason": "cancelled"}
-            self.db.refresh(self.task)
-            if self.task.status == TaskStatus.cancelled:
-                persist_trace_event(
-                    self.task_id,
-                    create_trace_event(
-                        task_id=self.task_id,
-                        kind="task",
-                        name="agent_execution",
-                        status="cancelled",
-                        duration_ms=(time.perf_counter() - execute_started_at) * 1000,
-                        error=build_execution_error(
-                            asyncio.CancelledError("Task cancelled"),
-                            scope="task",
-                            component="agent_execution",
-                        ),
-                    ),
-                )
+            if self._cancel_event.is_set() or self._cancellation_requested():
+                await self._finalize_cancellation(execute_started_at)
                 return {"success": False, "reason": "cancelled"}
             execution_error = build_execution_error(
                 e,
@@ -518,7 +518,8 @@ class AgentExecutor:
             intermediate = dict(self.task.intermediate_data or {})
             intermediate["execution_error"] = execution_error
             self.task.intermediate_data = intermediate
-            await self._update_task_status(TaskStatus.failed)
+            if not await self._update_task_status(TaskStatus.failed):
+                return {"success": False, "reason": "cancelled"}
             public_error_message = redact_text(e)
             self.task.error_message = public_error_message
             self.db.commit()
@@ -565,10 +566,39 @@ class AgentExecutor:
                 f"during {component}"
             ) from error
 
-    async def _update_task_status(self, status: TaskStatus) -> None:
-        self.task.status = status
-        self.task.updated_at = datetime.utcnow()
+    async def _update_task_status(self, status: TaskStatus) -> bool:
+        active_statuses = (
+            TaskStatus.pending,
+            TaskStatus.planning,
+            TaskStatus.executing,
+            TaskStatus.waiting_input,
+        )
+        if status != TaskStatus.cancelled and self._cancel_event.is_set():
+            return False
+
+        with self.db.no_autoflush:
+            updated = (
+                self.db.query(TaskModel)
+                .filter(
+                    TaskModel.id == self.task_id,
+                    TaskModel.status.in_(active_statuses),
+                )
+                .update(
+                    {
+                        TaskModel.status: status,
+                        TaskModel.updated_at: datetime.utcnow(),
+                    },
+                    synchronize_session=False,
+                )
+            )
+        if updated != 1:
+            self.db.rollback()
+            self.db.refresh(self.task, ["status", "updated_at"])
+            return self.task.status == status
+
         self.db.commit()
+        self.db.refresh(self.task, ["status", "updated_at"])
+        return True
 
     def _add_thinking_step(self, step: str, content: str, type: str = "info", status: str = None) -> None:
         record_thought(self.task_id, step, content, type, status)
@@ -643,21 +673,43 @@ class AgentExecutor:
                 self._subprocesses.remove(proc)
 
     async def cancel(self):
-        """取消正在执行的任务"""
+        """Idempotently cancel planning, graph execution and child processes."""
+        self._cancel_event.set()
+
+        if self.db and self.task and await self._update_task_status(TaskStatus.cancelled):
+            self.task.error_message = "任务已被用户取消"
+            if self.assistant_message:
+                self.assistant_message.content = "任务已取消"
+            self.db.commit()
+
         # 终止所有子进程
-        for proc in self._subprocesses:
+        for proc in list(self._subprocesses):
             try:
                 proc.terminate()
-                await proc.wait()
-            except:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
+            except (ProcessLookupError, RuntimeError):
                 pass
-        self._cancel_event.set()
-        if self.assistant_message:
-            self.assistant_message.content = "任务已取消"
-            self.db.commit()
-        if self._active_task and not self._active_task.done():
+
+        current_task = asyncio.current_task()
+        execution_task = self._execution_task
+        if (
+            execution_task
+            and execution_task is not current_task
+            and not execution_task.done()
+        ):
+            execution_task.cancel()
+            try:
+                await execution_task
+            except asyncio.CancelledError:
+                pass
+        elif self._active_task and not self._active_task.done():
             self._active_task.cancel()
-            # 等待任务真正取消
             try:
                 await self._active_task
             except asyncio.CancelledError:
