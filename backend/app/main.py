@@ -27,6 +27,9 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         ensure_profiles_exist(db)
+        from app.services.knowledge_base import ensure_builtin_knowledge
+
+        ensure_builtin_knowledge(db)
         db.commit()
     finally:
         db.close()

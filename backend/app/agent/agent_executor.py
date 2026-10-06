@@ -308,6 +308,7 @@ class AgentExecutor:
             "agent_execution",
         )
         memory_context_token = None
+        memory_profile_token = None
         try:
             self.task.thread_id = self.task_id
             started_event = create_trace_event(
@@ -325,14 +326,49 @@ class AgentExecutor:
             )
             persist_trace_event(self.task_id, started_event)
             # 注入 Agent 记忆（全局偏好 + 历史画像），供本次任务所有 LLM 调用使用
-            from app.services.memory import build_agent_context, set_agent_context
+            from app.services.memory import (build_agent_context, set_agent_context,
+                                             set_agent_profile_id)
 
             ctx = None
+            memory_metadata = {"memory_count": 0}
+            memory_status = "succeeded"
             try:
-                ctx = await asyncio.to_thread(build_agent_context, self.state.get("profile_id"))
+                memory_query = " ".join(
+                    filter(
+                        None,
+                        [
+                            self.state.get("user_request", ""),
+                            str(self.state.get("instrument", "")),
+                            str(self.state.get("tempo", "")),
+                        ],
+                    )
+                )
+                ctx, memory_metadata = await asyncio.to_thread(
+                    build_agent_context,
+                    self.state.get("profile_id"),
+                    memory_query,
+                    True,
+                )
             except Exception as e:
+                memory_status = "failed"
                 print(f"[MEMORY] build_agent_context failed: {type(e).__name__}")
             memory_context_token = set_agent_context(ctx)
+            memory_profile_token = set_agent_profile_id(self.state.get("profile_id"))
+            memory_event = create_trace_event(
+                task_id=self.task_id,
+                kind="memory",
+                name="context_retrieval",
+                status=memory_status,
+                details={
+                    **memory_metadata,
+                    "context_injected": bool(ctx),
+                },
+            )
+            self.state["execution_trace"] = merge_trace_events(
+                self.state.get("execution_trace"),
+                [memory_event],
+            )
+            persist_trace_event(self.task_id, memory_event)
 
             # 检查是否已取消
             if self._cancellation_requested():
@@ -595,9 +631,11 @@ class AgentExecutor:
             raise
         finally:
             if memory_context_token is not None:
-                from app.services.memory import reset_agent_context
+                from app.services.memory import reset_agent_context, reset_agent_profile_id
 
                 reset_agent_context(memory_context_token)
+                if memory_profile_token is not None:
+                    reset_agent_profile_id(memory_profile_token)
             reset_execution_context(execution_context_token)
             self.close()  # 确保执行完毕后关闭会话
 

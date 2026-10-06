@@ -124,10 +124,16 @@ AGENT_HEARTBEAT_SECONDS=30
 AGENT_RECOVER_ON_STARTUP=true
 TASK_EVENT_POLL_SECONDS=1
 TASK_EVENT_HEARTBEAT_SECONDS=15
+RAG_TOP_K=4
+MEMORY_TOP_K=6
+MEMORY_MAX_PER_PROFILE=200
+MEMORY_HALF_LIFE_DAYS=90
 ```
 
 任务租约、重启恢复、可回放 WebSocket 事件与人工介入协议详见
 [Agent 运行时连续性文档](./docs/Agent运行时连续性.md)。
+RAG 知识检索、Profile 长期记忆和管理接口详见
+[RAG 与长期记忆文档](./docs/RAG与长期记忆.md)。
 
 ## 后端启动
 

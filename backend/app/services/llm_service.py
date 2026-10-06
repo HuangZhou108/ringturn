@@ -546,10 +546,15 @@ class LLMService:
         # RAG：检索相关知识，注入提示词（让决策有知识库支撑，而非仅靠硬编码映射）
         try:
             from app.services.knowledge_base import format_knowledge, retrieve_knowledge
+            from app.services.memory import get_agent_profile_id
 
             mood = (analysis_result or {}).get("mood_style", {}).get("mood", "")
             query = f"{user_request} {mood}"
-            docs = retrieve_knowledge(query, top_k=3)
+            docs = retrieve_knowledge(
+                query,
+                top_k=settings.RAG_TOP_K,
+                profile_id=get_agent_profile_id(),
+            )
             knowledge = format_knowledge(docs)
             print(
                 f"[RAG] plan_arrangement 检索到 {len(docs)} 篇知识: {[d['title'] for d in docs]}"

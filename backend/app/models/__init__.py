@@ -1,4 +1,6 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Enum, Text, JSON, Index
+from sqlalchemy import (Column, DateTime, Enum, Float, ForeignKey, Index,
+                        Integer, JSON, String, Text, UniqueConstraint,
+                        create_engine)
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 import enum
@@ -147,6 +149,46 @@ class HumanIntervention(Base):
     )
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     responded_at = Column(DateTime, nullable=True)
+
+class KnowledgeDocument(Base):
+    """可持久化、可按 Profile 扩展的 RAG 知识文档。"""
+    __tablename__ = "knowledge_documents"
+    __table_args__ = (Index("ix_knowledge_scope_enabled", "profile_id", "enabled"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    document_key = Column(String(128), nullable=False, unique=True, index=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id", ondelete="CASCADE"), nullable=True)
+    title = Column(String(200), nullable=False)
+    content = Column(Text, nullable=False)
+    tags = Column(JSON, nullable=False, default=list)
+    source = Column(String(255), nullable=False, default="manual")
+    enabled = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class LongTermMemory(Base):
+    """Profile 隔离的长期记忆，支持去重、衰减和来源追踪。"""
+    __tablename__ = "long_term_memories"
+    __table_args__ = (
+        UniqueConstraint("profile_id", "kind", "normalized_hash", name="uq_profile_memory_hash"),
+        Index("ix_memory_profile_kind", "profile_id", "kind"),
+    )
+
+    id = Column(String(36), primary_key=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id", ondelete="CASCADE"), nullable=False)
+    kind = Column(String(32), nullable=False, default="preference")
+    content = Column(Text, nullable=False)
+    normalized_hash = Column(String(64), nullable=False)
+    source_task_id = Column(String(36), ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True)
+    importance = Column(Float, nullable=False, default=0.5)
+    confidence = Column(Float, nullable=False, default=0.7)
+    pinned = Column(Integer, nullable=False, default=0)
+    memory_metadata = Column("metadata", JSON, nullable=False, default=dict)
+    access_count = Column(Integer, nullable=False, default=0)
+    last_accessed_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class Preference(Base):
     """偏好表：存储每个 Profile 的 AI 统计与用户覆盖配置"""
