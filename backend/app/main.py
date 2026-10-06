@@ -30,19 +30,24 @@ async def lifespan(app: FastAPI):
         db.commit()
     finally:
         db.close()
+    if settings.AGENT_RECOVER_ON_STARTUP:
+        from app.api.v1.endpoints.tasks import recover_incomplete_tasks
+
+        recovered_task_ids = recover_incomplete_tasks()
+        if recovered_task_ids:
+            print(f"[SCHEDULER] queued {len(recovered_task_ids)} recoverable task(s)")
     yield
-    # 关闭时执行
-    # 关闭时取消所有正在执行的任务
+    # 关闭时执行：暂停本机任务，等待后台协程退出。
     from app.api.v1.endpoints.tasks import _running_tasks, _background_tasks
     import asyncio
 
-    # 1. 取消所有 AgentExecutor
-    cancel_tasks = []
+    # 1. 暂停本机执行，不把可恢复任务误标为用户取消。
+    suspend_tasks = []
     for task_id, executor in list(_running_tasks.items()):
-        if hasattr(executor, 'cancel'):
-            cancel_tasks.append(asyncio.create_task(executor.cancel()))
-    if cancel_tasks:
-        await asyncio.gather(*cancel_tasks, return_exceptions=True)
+        if hasattr(executor, 'suspend'):
+            suspend_tasks.append(asyncio.create_task(executor.suspend()))
+    if suspend_tasks:
+        await asyncio.gather(*suspend_tasks, return_exceptions=True)
 
     # 2. 取消并等待后台任务
     background_tasks = list(_background_tasks)

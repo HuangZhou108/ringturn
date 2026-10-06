@@ -63,6 +63,19 @@ export interface TaskStatusInfo {
     subtask_progress: number
     message?: string
     thinking_process?: { step: string; content: string; timestamp: string }[]
+    intervention_id?: string
+    intervention_question?: string
+}
+
+export interface HumanIntervention {
+    intervention_id: string
+    task_id: string
+    status: 'open' | 'responded' | 'cancelled'
+    question: string
+    response?: string
+    resume_from_node?: string
+    created_at: string
+    responded_at?: string
 }
 
 // 任务生成结果

@@ -42,7 +42,13 @@ class RingtoneParams:
         self.raw_params = params
 
 class AgentExecutor:
-    def __init__(self, task_id: str, db: Session = None, conversation_id: str = None):
+    def __init__(
+        self,
+        task_id: str,
+        db: Session = None,
+        conversation_id: str = None,
+        recovering: bool = False,
+    ):
         self.task_id = task_id
         self.db = db if db is not None else SessionLocal(expire_on_commit=False)
         self._owns_db = db is None  # 标记是否自己创建的会话
@@ -50,6 +56,8 @@ class AgentExecutor:
         self._active_task: Optional[AsyncioTask] = None
         self._execution_task: Optional[AsyncioTask] = None
         self._cancel_event = asyncio.Event()   # 用于通知内部协程取消
+        self._suspend_reason: str | None = None
+        self._recovering = recovering
         self._subprocesses = []   # 保存子进程对象
         self._pipeline_timeout_seconds = max(
             0.001,
@@ -132,8 +140,10 @@ class AgentExecutor:
             "updated_at": datetime.utcnow(),
         }
 
-        # 如果是反馈任务，从父任务的 intermediate_data 加载
-        if self.task.parent_task_id and self.task.intermediate_data:
+        # 反馈、人工恢复和崩溃恢复都复用已持久化的安全中间产物。
+        if self.task.intermediate_data and (
+            self.task.parent_task_id or self.task.resume_from_node or self._recovering
+        ):
             inter = self.task.intermediate_data
             print(f"[DEBUG] intermediate_data: {inter}")
             state.update({
@@ -249,6 +259,7 @@ class AgentExecutor:
     async def _finalize_cancellation(self, execute_started_at: float) -> bool:
         """Discard partial writes and persist one cancellation outcome."""
         self.db.rollback()
+        self.task.error_message = "任务已被用户取消"
         if not await self._update_task_status(TaskStatus.cancelled):
             return False
 
@@ -268,11 +279,25 @@ class AgentExecutor:
                 error=cancelled_error,
             ),
         )
-        self.task.error_message = "任务已被用户取消"
         if self.assistant_message:
             self.assistant_message.content = "任务已取消"
         self.db.commit()
         return True
+
+    async def _finalize_suspension(self, execute_started_at: float) -> None:
+        """Leave the persisted task resumable after shutdown or human pause."""
+        self.db.rollback()
+        persist_trace_event(
+            self.task_id,
+            create_trace_event(
+                task_id=self.task_id,
+                kind="resilience",
+                name="runtime_interruption",
+                status="suspended",
+                duration_ms=(time.perf_counter() - execute_started_at) * 1000,
+                details={"reason": self._suspend_reason or "runtime_shutdown"},
+            ),
+        )
 
     async def execute(self) -> dict:
         """执行任务：调用 LangGraph 图"""
@@ -318,13 +343,17 @@ class AgentExecutor:
                 self.state["resume_from_node"] = self.task.resume_from_node
                 print(f"[AGENT] Will resume from node: {self.task.resume_from_node}")
 
-            if not await self._update_task_status(TaskStatus.planning):
-                raise asyncio.CancelledError()
-            await self._await_before_deadline(
-                self._plan(),
-                deadline=pipeline_deadline,
-                component="planning",
-            )
+            recovering_graph = self._recovering and self.task.status == TaskStatus.executing
+            if not recovering_graph:
+                if not await self._update_task_status(TaskStatus.planning):
+                    raise asyncio.CancelledError()
+                await self._await_before_deadline(
+                    self._plan(),
+                    deadline=pipeline_deadline,
+                    component="planning",
+                )
+            else:
+                self._add_thinking_step("恢复", "检测到未完成执行，正在从持久化检查点恢复。")
 
             if self._cancellation_requested():
                 raise asyncio.CancelledError()
@@ -336,15 +365,45 @@ class AgentExecutor:
             config = {"configurable": {"thread_id": self.task_id}}
             # final_state = await self.graph.ainvoke(self.state, config=config)
 
-            # 创建 asyncio 任务
-            self._active_task = asyncio.create_task(
-                self.graph.ainvoke(self.state, config=config)
-            )
-            final_state = await self._await_before_deadline(
-                self._active_task,
-                deadline=pipeline_deadline,
-                component="graph_execution",
-            )
+            graph_input = self.state
+            checkpoint_state = None
+            if recovering_graph or self.task.resume_from_node:
+                checkpoint_state = await self.graph.aget_state(config)
+                if checkpoint_state and checkpoint_state.values:
+                    self.state.update(dict(checkpoint_state.values))
+                    # Explicit user input starts from the requested node but uses
+                    # the latest checkpointed artifacts and the newly validated
+                    # ringtone parameters.
+                    if self.task.resume_from_node:
+                        self.state.update(
+                            {
+                                "resume_from_node": self.task.resume_from_node,
+                                "instrument": self.ringtone_params.instrument,
+                                "tempo": self.ringtone_params.tempo,
+                                "duration": self.ringtone_params.duration,
+                                "filename": self.ringtone_params.filename,
+                            }
+                        )
+                        graph_input = self.state
+                    elif checkpoint_state.next:
+                        graph_input = None
+
+            if (
+                recovering_graph
+                and checkpoint_state
+                and checkpoint_state.values
+                and not checkpoint_state.next
+            ):
+                final_state = dict(checkpoint_state.values)
+            else:
+                self._active_task = asyncio.create_task(
+                    self.graph.ainvoke(graph_input, config=config)
+                )
+                final_state = await self._await_before_deadline(
+                    self._active_task,
+                    deadline=pipeline_deadline,
+                    component="graph_execution",
+                )
 
             # 确保从 final_state 中提取有效值
             self.state.update(final_state)   # 合并最终状态
@@ -477,9 +536,15 @@ class AgentExecutor:
             }
 
         except asyncio.CancelledError:
+            if self._suspend_reason:
+                await self._finalize_suspension(execute_started_at)
+                return {"success": False, "reason": self._suspend_reason}
             await self._finalize_cancellation(execute_started_at)
             return {"success": False, "reason": "cancelled"}
         except Exception as e:
+            if self._suspend_reason:
+                await self._finalize_suspension(execute_started_at)
+                return {"success": False, "reason": self._suspend_reason}
             if self._cancel_event.is_set() or self._cancellation_requested():
                 await self._finalize_cancellation(execute_started_at)
                 return {"success": False, "reason": "cancelled"}
@@ -518,10 +583,10 @@ class AgentExecutor:
             intermediate = dict(self.task.intermediate_data or {})
             intermediate["execution_error"] = execution_error
             self.task.intermediate_data = intermediate
-            if not await self._update_task_status(TaskStatus.failed):
-                return {"success": False, "reason": "cancelled"}
             public_error_message = redact_text(e)
             self.task.error_message = public_error_message
+            if not await self._update_task_status(TaskStatus.failed):
+                return {"success": False, "reason": "cancelled"}
             self.db.commit()
 
             # 记录错误消息到会话
@@ -598,6 +663,17 @@ class AgentExecutor:
 
         self.db.commit()
         self.db.refresh(self.task, ["status", "updated_at"])
+        from app.services.task_events import emit_task_status
+
+        emit_task_status(
+            self.task_id,
+            status.value,
+            current_subtask=self.task.current_subtask,
+            subtask_progress=self.task.subtask_progress or 0,
+            audio_url=self.task.final_audio_url,
+            duration=self.task.audio_duration,
+            error=self.task.error_message,
+        )
         return True
 
     def _add_thinking_step(self, step: str, content: str, type: str = "info", status: str = None) -> None:
@@ -676,8 +752,9 @@ class AgentExecutor:
         """Idempotently cancel planning, graph execution and child processes."""
         self._cancel_event.set()
 
-        if self.db and self.task and await self._update_task_status(TaskStatus.cancelled):
+        if self.db and self.task:
             self.task.error_message = "任务已被用户取消"
+        if self.db and self.task and await self._update_task_status(TaskStatus.cancelled):
             if self.assistant_message:
                 self.assistant_message.content = "任务已取消"
             self.db.commit()
@@ -703,6 +780,37 @@ class AgentExecutor:
             and execution_task is not current_task
             and not execution_task.done()
         ):
+            execution_task.cancel()
+            try:
+                await execution_task
+            except asyncio.CancelledError:
+                pass
+        elif self._active_task and not self._active_task.done():
+            self._active_task.cancel()
+            try:
+                await self._active_task
+            except asyncio.CancelledError:
+                pass
+
+    async def suspend(self, reason: str = "runtime_shutdown") -> None:
+        """Stop local work without converting the durable task to cancelled."""
+        self._suspend_reason = reason
+        for proc in list(self._subprocesses):
+            try:
+                proc.terminate()
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
+            except (ProcessLookupError, RuntimeError):
+                pass
+
+        current_task = asyncio.current_task()
+        execution_task = self._execution_task
+        if execution_task and execution_task is not current_task and not execution_task.done():
             execution_task.cancel()
             try:
                 await execution_task

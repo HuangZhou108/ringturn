@@ -94,6 +94,8 @@ i18n
                         toolSummaryFallback: "Tool calls completed",
                         uploadTooltip: "Upload audio file",
                         uploadingTooltip: "Uploading... {{progress}}%",
+                        interventionPrompt: "More information is required before the task can continue.",
+                        interventionResuming: "Additional information received. Resuming the task...",
                     },
                     params: {
                         instrument: 'INSTRUMENT',
@@ -438,6 +440,8 @@ i18n
                         feedbackSelectTaskHint: "选择要反馈的任务",
                         feedbackSelectTaskRequired: "请选择要反馈的任务",
                         feedbackDefaultTaskName: "已完成的改编任务",
+                        interventionPrompt: "需要补充信息后才能继续。",
+                        interventionResuming: "已收到补充信息，正在恢复任务...",
                         download: "下载",
                         toolSummaryComplete: "工具调用完成：",
                         toolCallPrefix: "调用工具： ",

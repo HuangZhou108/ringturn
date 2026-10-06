@@ -15,6 +15,9 @@ from .feedback import (
     FeedbackCreateResponse,
     FeedbackResponse,
     FeedbackListResponse,
+    HumanInterventionAnswer,
+    HumanInterventionCreate,
+    HumanInterventionResponse,
 )
 from .upload import UploadResponse, UploadMetadata
 from .conversation import (
@@ -60,6 +63,9 @@ __all__ = [
     "FeedbackCreateResponse",
     "FeedbackResponse",
     "FeedbackListResponse",
+    "HumanInterventionAnswer",
+    "HumanInterventionCreate",
+    "HumanInterventionResponse",
     "UploadResponse",
     "UploadMetadata",
     "ConversationCreate",

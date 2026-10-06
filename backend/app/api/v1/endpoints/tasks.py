@@ -14,7 +14,8 @@ from app.core.exceptions import (AppException, ProfileNotFoundException,
                                  TaskNotFoundException)
 from app.db.session import SessionLocal, get_db
 from app.models import (Conversation, ConversationMessage, ConversationStatus,
-                        Feedback, MessageRole, Profile)
+                        Feedback, HumanIntervention,
+                        HumanInterventionStatus, MessageRole, Profile)
 from app.models import Task as TaskModel
 from app.models import TaskStatus
 from app.schemas import (SUBTASKS, FeedbackCreate, TaskCancelResponse,
@@ -22,6 +23,8 @@ from app.schemas import (SUBTASKS, FeedbackCreate, TaskCancelResponse,
                          TaskListItem, TaskListResponse, TaskResultResponse,
                          TaskStatusResponse)
 from app.services.file_service import file_service
+from app.services import task_scheduler
+from app.services.task_events import emit_task_event, emit_task_status
 from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
                      UploadFile)
 from sqlalchemy.orm import Session
@@ -30,6 +33,7 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 # 一个全局集合，保持对后台任务的引用，防止被 GC
 _background_tasks = set()
 _running_tasks: dict[str, AgentExecutor] = {}
+_scheduled_tasks: dict[str, asyncio.Task] = {}
 
 
 @router.post("")
@@ -156,7 +160,7 @@ async def create_task(
         db.commit()
 
         # 异步触发Agent执行
-        background_tasks.add_task(run_agent_task, task_id)
+        schedule_agent_task(task_id)
 
         return {
             "code": 200,
@@ -236,6 +240,12 @@ async def get_task_status(
         task.intermediate_data,
         task_id=task.id,
     )
+    open_intervention = None
+    if task.status == TaskStatus.waiting_input:
+        open_intervention = db.query(HumanIntervention).filter(
+            HumanIntervention.task_id == task_id,
+            HumanIntervention.status == HumanInterventionStatus.open,
+        ).order_by(HumanIntervention.created_at.desc()).first()
 
     return {
         "code": 200,
@@ -249,6 +259,10 @@ async def get_task_status(
             "trace_event_count": len(execution_trace),
             "latest_trace_event": execution_trace[-1] if execution_trace else None,
             "execution_error": execution_error,
+            "intervention_id": open_intervention.id if open_intervention else None,
+            "intervention_question": (
+                open_intervention.question if open_intervention else None
+            ),
         },
         "message": message,
     }
@@ -440,6 +454,13 @@ async def cancel_task(
     ).first()
     if assistant_message:
         assistant_message.content = "任务已取消"
+    db.query(HumanIntervention).filter(
+        HumanIntervention.task_id == task_id,
+        HumanIntervention.status == HumanInterventionStatus.open,
+    ).update(
+        {HumanIntervention.status: HumanInterventionStatus.cancelled},
+        synchronize_session=False,
+    )
     db.commit()
 
     cancellation_error = build_execution_error(
@@ -457,6 +478,12 @@ async def cancel_task(
             details={"previous_status": previous_status.value},
             error=cancellation_error,
         ),
+    )
+    emit_task_status(
+        task_id,
+        TaskStatus.cancelled.value,
+        previous_status=previous_status.value,
+        error=task.error_message,
     )
 
     # 如果任务已注册，取消同一个执行器的规划、主图与子进程。
@@ -508,19 +535,42 @@ async def run_agent_task(task_id: str):
     Args:
         task_id: 任务ID
     """
-    with SessionLocal(expire_on_commit=False) as db:  # SQLAlchemy 2.x 支持上下文
-        task = _claim_pending_task(db, task_id)
-        if not task:
-            return
+    claim = await asyncio.to_thread(task_scheduler.claim_task, task_id)
+    if not claim:
+        return
 
-        agent_executor = AgentExecutor(task_id=task_id, db=db)
-        # 创建异步任务，并保存引用
-        async_task = asyncio.create_task(agent_executor.execute())
-        agent_executor.bind_execution_task(async_task)
+    emit_task_event(
+        task_id,
+        "scheduler_claimed",
+        {
+            "status": TaskStatus.planning.value,
+            "recovered": claim.recovered,
+            "attempt": claim.attempt_count,
+            "owner_id": task_scheduler.INSTANCE_ID,
+        },
+    )
+    if claim.previous_status == TaskStatus.pending:
+        emit_task_status(task_id, TaskStatus.planning.value)
+
+    stop_heartbeat = asyncio.Event()
+    heartbeat_task = asyncio.create_task(
+        task_scheduler.maintain_lease(task_id, stop_heartbeat)
+    )
+    _background_tasks.add(heartbeat_task)
+    heartbeat_task.add_done_callback(_background_tasks.discard)
+
+    with SessionLocal(expire_on_commit=False) as db:
+        agent_executor = AgentExecutor(
+            task_id=task_id,
+            db=db,
+            recovering=claim.recovered,
+        )
+        execution_task = asyncio.current_task()
+        if execution_task is not None:
+            agent_executor.bind_execution_task(execution_task)
         _running_tasks[task_id] = agent_executor
-        _background_tasks.add(async_task)
         try:
-            result = await async_task
+            result = await agent_executor.execute()
             # 任务执行完成后，如果是成功，则更新偏好统计
             if result and result.get("success"):
                 from app.services.preference_service import \
@@ -540,9 +590,38 @@ async def run_agent_task(task_id: str):
         except Exception as e:
             print(f"[ERROR] Agent task {task_id} failed: {type(e).__name__}")
         finally:
-            _background_tasks.discard(async_task)
+            stop_heartbeat.set()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
+            await asyncio.to_thread(task_scheduler.release_task, task_id)
             agent_executor.close()  # 显式关闭内部会话（如果 db 是外部传入，则不会重复关闭）
             if _running_tasks.get(task_id) is agent_executor:
                 del _running_tasks[task_id]
             import gc
             gc.collect()
+
+
+def schedule_agent_task(task_id: str) -> asyncio.Task:
+    """Schedule one task locally; the durable lease de-duplicates workers."""
+    existing = _scheduled_tasks.get(task_id)
+    if existing and not existing.done():
+        return existing
+
+    scheduled = asyncio.create_task(run_agent_task(task_id))
+    _scheduled_tasks[task_id] = scheduled
+    _background_tasks.add(scheduled)
+
+    def cleanup(done: asyncio.Task) -> None:
+        _background_tasks.discard(done)
+        if _scheduled_tasks.get(task_id) is done:
+            _scheduled_tasks.pop(task_id, None)
+
+    scheduled.add_done_callback(cleanup)
+    return scheduled
+
+
+def recover_incomplete_tasks() -> list[str]:
+    """Schedule tasks left pending or with an expired execution lease."""
+    task_ids = task_scheduler.recoverable_task_ids()
+    for task_id in task_ids:
+        schedule_agent_task(task_id)
+    return task_ids

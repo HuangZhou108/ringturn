@@ -56,6 +56,8 @@ class TaskStatusResponse(BaseModel):
     trace_event_count: int = 0
     latest_trace_event: dict | None = None
     execution_error: dict | None = None
+    intervention_id: str | None = None
+    intervention_question: str | None = None
 
 class TaskResultResponse(BaseModel):
     """任务结果响应"""
