@@ -2,7 +2,10 @@
 // WebSocket客户端工具类
 
 export interface WebSocketMessage {
-  type: 'status_update' | 'completed' | 'failed' | 'error' | 'connected'
+  type: 'status_update' | 'completed' | 'failed' | 'cancelled' | 'waiting_input' |
+    'thinking_update' | 'trace_event' | 'scheduler_claimed' | 'feedback_submitted' |
+    'intervention_answered' | 'heartbeat' | 'error' | 'connected'
+  event_id?: number
   task_id: string
   status?: string
   current_subtask?: string
@@ -14,6 +17,13 @@ export interface WebSocketMessage {
   message?: string
   code?: number
   timestamp: string
+  thinking?: { step: string; content: string; timestamp: string; type?: string; status?: string }
+  trace?: Record<string, unknown>
+  intervention_id?: string
+  intervention_question?: string
+  question?: string
+  resume_from_node?: string
+  after_event_id?: number
 }
 
 export type MessageHandler = (data: WebSocketMessage) => void
@@ -27,11 +37,14 @@ class WebSocketClient {
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null
   private taskCompleted = false  // 标记任务是否已完成
   private connectionRejected = false  // 标记连接是否被拒绝
+  private eventCursors: Map<string, number> = new Map()
 
   connect(taskId: string): boolean {
     // 如果已连接，先断开
     if (this.ws) {
-      this.disconnect()
+      this.ws.onclose = null
+      this.ws.close()
+      this.ws = null
     }
 
     this.currentTaskId = taskId
@@ -39,7 +52,8 @@ class WebSocketClient {
     this.connectionRejected = false  // 重置拒绝标志
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.host
-    const url = `${protocol}//${host}/ws/chat/${taskId}`
+    const cursor = this.eventCursors.get(taskId) || 0
+    const url = `${protocol}//${host}/ws/chat/${taskId}?after_event_id=${cursor}`
 
     try {
       this.ws = new WebSocket(url)
@@ -57,8 +71,14 @@ class WebSocketClient {
       this.ws.onmessage = (event) => {
         try {
           const data: WebSocketMessage = JSON.parse(event.data)
+          if (data.event_id) {
+            this.eventCursors.set(
+              taskId,
+              Math.max(this.eventCursors.get(taskId) || 0, data.event_id),
+            )
+          }
           // 标记任务完成状态，停止后续重连
-          if (data.type === 'completed' || data.type === 'failed') {
+          if (data.type === 'completed' || data.type === 'failed' || data.type === 'cancelled') {
             this.taskCompleted = true
           }
           this.emit(data.type, data)
@@ -71,6 +91,7 @@ class WebSocketClient {
       this.ws.onclose = (event) => {
         console.log('[WebSocket] Disconnected', event.code, event.reason)
         // 只有当前任务且未完成且未拒绝时才重连
+        if (event.code === 4404) this.connectionRejected = true
         if (this.currentTaskId === taskId && !this.taskCompleted && !this.connectionRejected) {
           this.attemptReconnect(taskId)
         } else {
@@ -80,8 +101,6 @@ class WebSocketClient {
 
       this.ws.onerror = (error) => {
         console.error('[WebSocket] Error:', error)
-        // 如果连接失败，标记并停止重连
-        this.connectionRejected = true
         this.emit('error', {
           type: 'error',
           task_id: taskId,

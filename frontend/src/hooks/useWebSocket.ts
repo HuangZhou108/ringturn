@@ -11,6 +11,8 @@ export interface TaskStatusInfo {
     subtask_progress?: number
     message?: string
     thinking_process?: { step: string; content: string; timestamp: string }[]
+    intervention_id?: string
+    intervention_question?: string
 }
 
 export function useWebSocket(taskId: string | null) {
@@ -62,6 +64,8 @@ export function useWebSocket(taskId: string | null) {
                 subtask_progress: data.subtask_progress,
                 message: data.message,
                 thinking_process: data.thinking_process,
+                intervention_id: data.intervention_id,
+                intervention_question: data.intervention_question,
             })
             setLastMessage(data)
         })
@@ -93,6 +97,44 @@ export function useWebSocket(taskId: string | null) {
             setIsConnected(false)
         })
 
+        const unsubCancelled = wsClient.on('cancelled', (data: WebSocketMessage) => {
+            if (taskIdRef.current !== data.task_id) return
+            setTaskStatus(prev => prev ? { ...prev, status: 'cancelled' } : {
+                task_id: data.task_id,
+                status: 'cancelled',
+            })
+            setLastMessage(data)
+            setIsConnected(false)
+        })
+
+        const unsubWaitingInput = wsClient.on('waiting_input', (data: WebSocketMessage) => {
+            if (taskIdRef.current !== data.task_id) return
+            setTaskStatus(prev => ({
+                ...(prev || { task_id: data.task_id }),
+                status: 'waiting_input',
+                message: data.question || data.message,
+                intervention_id: data.intervention_id,
+                intervention_question: data.question,
+            }))
+            setLastMessage(data)
+        })
+
+        const unsubThinking = wsClient.on('thinking_update', (data: WebSocketMessage) => {
+            if (taskIdRef.current !== data.task_id || !data.thinking) return
+            setTaskStatus(prev => {
+                if (!prev) return prev
+                const existing = prev.thinking_process || []
+                const duplicate = existing.some(item =>
+                    item.step === data.thinking!.step && item.timestamp === data.thinking!.timestamp
+                )
+                return duplicate ? prev : {
+                    ...prev,
+                    thinking_process: [...existing, data.thinking!],
+                }
+            })
+            setLastMessage(data)
+        })
+
         // 保存取消订阅函数
         unsubscribeRef.current = [
             unsubConnected,
@@ -100,6 +142,9 @@ export function useWebSocket(taskId: string | null) {
             unsubStatusUpdate,
             unsubCompleted,
             unsubFailed,
+            unsubCancelled,
+            unsubWaitingInput,
+            unsubThinking,
         ]
     }, [])
 

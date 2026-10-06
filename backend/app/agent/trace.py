@@ -287,6 +287,7 @@ def persist_trace_event(task_id: str, event: Mapping[str, Any]) -> None:
     from app.db.session import SessionLocal
     from app.models import Task as TaskModel
 
+    persisted = False
     db = SessionLocal()
     try:
         task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
@@ -301,6 +302,7 @@ def persist_trace_event(task_id: str, event: Mapping[str, Any]) -> None:
             intermediate["execution_error"] = execution_error
         task.intermediate_data = intermediate
         db.commit()
+        persisted = True
     except Exception as persistence_error:
         # Diagnostics must never make an otherwise healthy audio task fail.
         print(
@@ -308,6 +310,10 @@ def persist_trace_event(task_id: str, event: Mapping[str, Any]) -> None:
         )
     finally:
         db.close()
+    if persisted:
+        from app.services.task_events import emit_task_event
+
+        emit_task_event(task_id, "trace_event", {"trace": dict(event)})
 
 
 async def _persist(

@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Enum, Text, JSON
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Enum, Text, JSON, Index
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 import enum
@@ -23,6 +23,12 @@ class TaskStatus(enum.Enum):
     waiting_input = "waiting_input"
     completed = "completed"
     failed = "failed"
+    cancelled = "cancelled"
+
+class HumanInterventionStatus(enum.Enum):
+    """人工介入请求状态。"""
+    open = "open"
+    responded = "responded"
     cancelled = "cancelled"
 
 class Profile(Base):
@@ -102,6 +108,45 @@ class Feedback(Base):
 
     # 关联
     task = relationship("Task", back_populates="feedbacks")
+
+class TaskExecutionLease(Base):
+    """跨进程任务租约，用于防止重复执行并支持崩溃恢复。"""
+    __tablename__ = "task_execution_leases"
+
+    task_id = Column(String(36), ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True)
+    owner_id = Column(String(128), nullable=False, index=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    acquired_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    heartbeat_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False, index=True)
+
+class TaskEvent(Base):
+    """可回放的任务事件日志，WebSocket 以自增 ID 作为游标。"""
+    __tablename__ = "task_events"
+    __table_args__ = (Index("ix_task_events_task_id_id", "task_id", "id"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
+    event_type = Column(String(40), nullable=False)
+    payload = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+class HumanIntervention(Base):
+    """Agent/操作员发起、用户响应的人工介入记录。"""
+    __tablename__ = "human_interventions"
+
+    id = Column(String(36), primary_key=True)
+    task_id = Column(String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    question = Column(Text, nullable=False)
+    response = Column(Text, nullable=True)
+    resume_from_node = Column(String(50), nullable=True)
+    status = Column(
+        Enum(HumanInterventionStatus),
+        nullable=False,
+        default=HumanInterventionStatus.open,
+    )
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    responded_at = Column(DateTime, nullable=True)
 
 class Preference(Base):
     """偏好表：存储每个 Profile 的 AI 统计与用户覆盖配置"""

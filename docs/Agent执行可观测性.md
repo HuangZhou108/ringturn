@@ -205,3 +205,7 @@ GET /api/v1/tasks/{task_id}/trace
 3. 查看前一个 `route` 事件，确认恢复或重试分支。
 4. 用 `thread_id` 对应 LangGraph checkpoint。
 5. 结合 `thinking_process` 查看面向用户的步骤说明，但不要把它当作工程 trace。
+
+完整 trace、thinking 和状态变化也会写入 `task_events`，并通过带事件游标的
+WebSocket 增量推送。断线回放、任务租约和人工介入协议详见
+[Agent运行时连续性.md](Agent运行时连续性.md)。

@@ -18,6 +18,7 @@ def record_thought(task_id: str, step: str, content: str, type: str = "info", st
     :param type: 条目类型，可选值: 'info', 'llm', 'tool_call', 'tool_result', 'error'
     :param status: 状态，可选值: 'success', 'failed', 'pending', 'retry' 等
     """
+    entry = None
     db = SessionLocal()
     try:
         task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
@@ -41,3 +42,7 @@ def record_thought(task_id: str, step: str, content: str, type: str = "info", st
         print(f"[ERROR] record_thought: {e}")
     finally:
         db.close()
+    if entry is not None:
+        from app.services.task_events import emit_task_event
+
+        emit_task_event(task_id, "thinking_update", {"thinking": entry})
