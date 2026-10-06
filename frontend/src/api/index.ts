@@ -1,6 +1,6 @@
 import type { ApiResponse, CreateTaskRequest, CreateTaskResponse,
     Task, TaskStatusInfo, TaskResult, TaskCancelResult,TaskListResponse, UploadResult,
-    ConversationListItem, ConversationDetail, ConversationMessage, Profile,
+    ConversationListItem, ConversationDetail, ConversationMessage, HumanIntervention, Profile,
     ProfilePreferences, ProfileTasksResponse} from '../types'
 
 const BASE_URL = '/api/v1'
@@ -43,6 +43,25 @@ export const api = {
     // 取消任务
     cancelTask: (taskId: string) =>
         request<TaskCancelResult>(`/tasks/${taskId}`, { method: 'DELETE' }),
+
+    requestHumanIntervention: (taskId: string, question: string, resumeFromNode = 'arrange') =>
+        request<HumanIntervention>(`/tasks/${taskId}/interventions`, {
+            method: 'POST',
+            body: JSON.stringify({ question, resume_from_node: resumeFromNode }),
+        }),
+
+    answerHumanIntervention: (
+        taskId: string,
+        interventionId: string,
+        response: string,
+        params?: Record<string, unknown>,
+    ) => request<HumanIntervention>(
+        `/tasks/${taskId}/interventions/${interventionId}/response`,
+        { method: 'POST', body: JSON.stringify({ response, params }) },
+    ),
+
+    getHumanInterventions: (taskId: string) =>
+        request<HumanIntervention[]>(`/tasks/${taskId}/interventions`),
 
 
     // 上传音频文件

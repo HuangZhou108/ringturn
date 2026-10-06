@@ -100,6 +100,7 @@ function ChatFlow() {
     const [availableParentTasks, setAvailableParentTasks] = useState<{ task_id: string; user_request: string }[]>([]);
     const [selectedParentTaskId, setSelectedParentTaskId] = useState<string | null>(null);
     const [feedbackPanelOpen, setFeedbackPanelOpen] = useState(false);
+    const [activeInterventionId, setActiveInterventionId] = useState<string | null>(null)
     // 获取当前会话中已完成的任务列表（用于反馈选择）
     const loadCompletedTasks = useCallback(async () => {
         if (!currentConversationId) {
@@ -320,6 +321,20 @@ function ChatFlow() {
             } else {
                 setIsProcessing(false);
             }
+            if (taskStatus.status === 'waiting_input' && taskStatus.intervention_id) {
+                setActiveInterventionId(taskStatus.intervention_id)
+                const interventionMessageId = `intervention-${taskStatus.intervention_id}`
+                setMessages(prev => prev.some(msg => msg.id === interventionMessageId)
+                    ? prev
+                    : [...prev, {
+                        id: interventionMessageId,
+                        type: 'ai',
+                        taskId: currentTaskId,
+                        content: taskStatus.intervention_question || taskStatus.message || t('chat.interventionPrompt'),
+                    }])
+            } else if (taskStatus.status !== 'waiting_input') {
+                setActiveInterventionId(null)
+            }
             // 更新消息中的思考过程
             // 仅更新思考过程，不覆盖正文
             setMessages((prev) => {
@@ -508,6 +523,42 @@ function ChatFlow() {
     const handleSend = async () => {
         if (!inputValue.trim()) return
 
+        // 人工介入回答优先于普通消息和优化反馈。
+        if (activeInterventionId && currentTaskId) {
+            const response = inputValue.trim()
+            const params: Record<string, unknown> = {}
+            if (instrument.trim()) params.instrument = instrument
+            if (tempo.trim()) params.tempo = parseInt(tempo, 10)
+            if (duration.trim()) params.duration = parseInt(duration, 10)
+            if (filename.trim()) params.filename = filename
+            setMessages(prev => [...prev, { id: nextId(), type: 'user', content: response }])
+            setInputValue('')
+            try {
+                const result = await api.answerHumanIntervention(
+                    currentTaskId,
+                    activeInterventionId,
+                    response,
+                    params,
+                )
+                if (result.code === 200) {
+                    setActiveInterventionId(null)
+                    setIsProcessing(true)
+                    setMessages(prev => [...prev, {
+                        id: nextId(),
+                        type: 'ai',
+                        taskId: currentTaskId,
+                        content: t('chat.interventionResuming'),
+                    }])
+                } else {
+                    showToast(result.message || t('chat.networkError'))
+                }
+            } catch (error) {
+                console.error('Answer intervention failed:', error)
+                showToast(t('chat.networkError'))
+            }
+            return
+        }
+
         // 反馈模式
         if (feedbackMode) {
             if (!selectedParentTaskId) {
@@ -657,7 +708,14 @@ function ChatFlow() {
                 const res = await api.getTaskStatus(taskId)
                 if (res.code !== 200) return
 
-                const { status, current_subtask, message, thinking_process } = res.data
+                const {
+                    status,
+                    current_subtask,
+                    message,
+                    thinking_process,
+                    intervention_id,
+                    intervention_question,
+                } = res.data
 
                 if (['pending', 'planning', 'executing'].includes(status)) {
                     setIsProcessing(true)
@@ -715,6 +773,19 @@ function ChatFlow() {
                     pollingIntervalRef.current = null
                     setCurrentTaskId(null)
                     setIsProcessing(false)
+                }
+
+                if (status === 'waiting_input' && intervention_id) {
+                    setActiveInterventionId(intervention_id)
+                    const interventionMessageId = `intervention-${intervention_id}`
+                    setMessages(prev => prev.some(msg => msg.id === interventionMessageId)
+                        ? prev
+                        : [...prev, {
+                            id: interventionMessageId,
+                            type: 'ai',
+                            taskId,
+                            content: intervention_question || message || t('chat.interventionPrompt'),
+                        }])
                 }
             } catch {
                 // 忽略网络错误，继续轮询

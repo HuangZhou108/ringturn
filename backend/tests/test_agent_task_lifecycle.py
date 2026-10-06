@@ -30,10 +30,12 @@ class AgentTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         task_endpoints._running_tasks.clear()
         task_endpoints._background_tasks.clear()
+        task_endpoints._scheduled_tasks.clear()
 
     def tearDown(self):
         task_endpoints._running_tasks.clear()
         task_endpoints._background_tasks.clear()
+        task_endpoints._scheduled_tasks.clear()
         Base.metadata.drop_all(self.engine)
         self.engine.dispose()
 
@@ -115,8 +117,8 @@ class AgentTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.add_task("task-3", TaskStatus.cancelled)
 
         with patch.object(task_endpoints, "SessionLocal", self.Session), patch.object(
-            task_endpoints, "AgentExecutor"
-        ) as executor_class:
+            task_endpoints.task_scheduler, "SessionLocal", self.Session
+        ), patch.object(task_endpoints, "AgentExecutor") as executor_class:
             await task_endpoints.run_agent_task("task-3")
 
         executor_class.assert_not_called()
@@ -192,8 +194,9 @@ class AgentTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
         instances = []
 
         class FakeExecutor:
-            def __init__(self, task_id, db):
+            def __init__(self, task_id, db, recovering=False):
                 self.task_id = task_id
+                self.recovering = recovering
                 self.bound_task = None
                 self.closed = False
                 instances.append(self)
@@ -209,8 +212,10 @@ class AgentTaskLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 self.closed = True
 
         with patch.object(task_endpoints, "SessionLocal", self.Session), patch.object(
-            task_endpoints, "AgentExecutor", FakeExecutor
-        ):
+            task_endpoints.task_scheduler, "SessionLocal", self.Session
+        ), patch.object(task_endpoints, "emit_task_event"), patch.object(
+            task_endpoints, "emit_task_status"
+        ), patch.object(task_endpoints, "AgentExecutor", FakeExecutor):
             await task_endpoints.run_agent_task("task-4")
 
         self.assertEqual(len(instances), 1)

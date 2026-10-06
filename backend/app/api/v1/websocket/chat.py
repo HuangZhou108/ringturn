@@ -1,167 +1,197 @@
-"""
-WebSocket处理模块
+"""Replayable WebSocket event stream for Agent tasks."""
 
-提供实时流式输出Agent执行过程
-"""
+from __future__ import annotations
 
-import json
 import asyncio
-from datetime import datetime
-from typing import Optional
-from fastapi import WebSocket, WebSocketDisconnect
-from sqlalchemy.orm import Session
+import time
+from datetime import datetime, timezone
 
-from app.db.session import SessionLocal
-from app.models import Task, TaskStatus
+from fastapi import WebSocket, WebSocketDisconnect
+
 from app.agent.state import get_step_message
+from app.core.config import get_settings
+from app.db.session import SessionLocal
+from app.models import (HumanIntervention, HumanInterventionStatus, Task,
+                        TaskStatus)
+from app.services.task_events import broker, get_task_events
+
+settings = get_settings()
+TERMINAL_EVENT_TYPES = {"completed", "failed", "cancelled"}
+
+
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
 
 class ConnectionManager:
-    """WebSocket连接管理器"""
+    """Track multiple clients per task instead of replacing older sockets."""
 
-    def __init__(self):
-        self.active_connections: dict[str, WebSocket] = {}
+    def __init__(self) -> None:
+        self.active_connections: dict[str, set[WebSocket]] = {}
 
-    async def connect(self, task_id: str, websocket: WebSocket):
+    async def connect(self, task_id: str, websocket: WebSocket) -> None:
         await websocket.accept()
-        self.active_connections[task_id] = websocket
+        self.active_connections.setdefault(task_id, set()).add(websocket)
 
-    def disconnect(self, task_id: str):
-        if task_id in self.active_connections:
-            del self.active_connections[task_id]
+    def disconnect(self, task_id: str, websocket: WebSocket | None = None) -> None:
+        connections = self.active_connections.get(task_id)
+        if not connections:
+            return
+        if websocket is None:
+            connections.clear()
+        else:
+            connections.discard(websocket)
+        if not connections:
+            self.active_connections.pop(task_id, None)
 
-    async def send_message(self, task_id: str, message: dict):
-        """发送消息到指定客户端"""
-        if task_id in self.active_connections:
-            await self.active_connections[task_id].send_json(message)
-
-    async def broadcast(self, message: dict):
-        """广播消息到所有客户端"""
-        for task_id, connection in self.active_connections.items():
+    async def send_message(self, task_id: str, message: dict) -> None:
+        stale = []
+        for connection in tuple(self.active_connections.get(task_id, ())):
             try:
                 await connection.send_json(message)
-            except:
-                pass
+            except Exception:
+                stale.append(connection)
+        for connection in stale:
+            self.disconnect(task_id, connection)
+
+    async def broadcast(self, message: dict) -> None:
+        for task_id in tuple(self.active_connections):
+            await self.send_message(task_id, message)
+
 
 manager = ConnectionManager()
 
-async def websocket_endpoint(websocket: WebSocket, task_id: str):
-    """
-    WebSocket端点
 
-    实时推送Agent执行状态
+def _terminal_snapshot(task: Task) -> dict | None:
+    common = {
+        "task_id": task.id,
+        "status": task.status.value,
+        "timestamp": _timestamp(),
+    }
+    if task.status == TaskStatus.completed:
+        return {
+            "type": "completed",
+            **common,
+            "audio_url": task.final_audio_url,
+            "duration": task.audio_duration,
+        }
+    if task.status == TaskStatus.failed:
+        return {"type": "failed", **common, "error": task.error_message}
+    if task.status == TaskStatus.cancelled:
+        return {"type": "cancelled", **common, "error": task.error_message}
+    return None
 
-    不长期持有数据库会话，避免占用连接池。
-    """
+
+async def websocket_endpoint(websocket: WebSocket, task_id: str) -> None:
+    """Stream durable events and resume from ``after_event_id`` on reconnect."""
     await manager.connect(task_id, websocket)
+    subscriber = broker.subscribe(task_id)
+    cursor_text = websocket.query_params.get("after_event_id", "0")
+    try:
+        cursor = max(0, int(cursor_text))
+    except ValueError:
+        cursor = 0
 
-    # 验证任务是否存在（用独立会话，用完即关）
-    with SessionLocal() as db:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
-            await websocket.send_json({
-                "type": "error",
-                "message": "任务不存在",
-                "code": 404,
-            })
-            manager.disconnect(task_id)
+    try:
+        with SessionLocal() as db:
+            task = db.query(Task).filter(Task.id == task_id).first()
+            if not task:
+                await websocket.send_json(
+                    {"type": "error", "message": "任务不存在", "code": 404}
+                )
+                await websocket.close(code=4404)
+                return
+            initial = {
+                "type": "status_update",
+                "task_id": task_id,
+                "status": task.status.value,
+                "current_subtask": task.current_subtask,
+                "subtask_progress": task.subtask_progress or 0.0,
+                "message": get_step_message(task.current_subtask),
+                "thinking_process": task.thinking_process or [],
+                "timestamp": _timestamp(),
+            }
+            if task.status == TaskStatus.waiting_input:
+                intervention = db.query(HumanIntervention).filter(
+                    HumanIntervention.task_id == task_id,
+                    HumanIntervention.status == HumanInterventionStatus.open,
+                ).order_by(HumanIntervention.created_at.desc()).first()
+                if intervention:
+                    initial.update(
+                        {
+                            "intervention_id": intervention.id,
+                            "intervention_question": intervention.question,
+                        }
+                    )
+            terminal = _terminal_snapshot(task)
+
+        await websocket.send_json(initial)
+
+        replayed_terminal = False
+        replay_limit = max(1, settings.TASK_EVENT_REPLAY_LIMIT)
+        while True:
+            replay = await asyncio.to_thread(
+                get_task_events,
+                task_id,
+                after_event_id=cursor,
+                limit=replay_limit,
+            )
+            for event in replay:
+                cursor = max(cursor, int(event["event_id"]))
+                await websocket.send_json(event)
+                replayed_terminal = (
+                    replayed_terminal or event["type"] in TERMINAL_EVENT_TYPES
+                )
+            if len(replay) < replay_limit or replayed_terminal:
+                break
+
+        if terminal and not replayed_terminal:
+            await websocket.send_json(terminal)
+            return
+        if replayed_terminal:
             return
 
-        # 发送初始状态
-        await manager.send_message(task_id, {
-            "type": "status_update",
-            "task_id": task_id,
-            "status": task.status.value,
-            "current_subtask": task.current_subtask,
-            "subtask_progress": task.subtask_progress or 0.0,
-            "message": "连接成功，等待Agent执行...",
-            "timestamp": datetime.utcnow().isoformat(),
-        })
-
-        # 循环监听状态变化
-        last_status = task.status
-        last_subtask = task.current_subtask
-        last_progress = task.subtask_progress
-        last_thinking_count = len(task.thinking_process) if task.thinking_process else 0
-
-    # 进入轮询循环，每次迭代都创建新的数据库会话
-    try:
+        last_heartbeat = time.monotonic()
+        poll_seconds = max(0.1, settings.TASK_EVENT_POLL_SECONDS)
+        heartbeat_seconds = max(poll_seconds, settings.TASK_EVENT_HEARTBEAT_SECONDS)
         while True:
-            await asyncio.sleep(2)   # 每2秒检查一次
-
-            # 每次独立查询，使用 with 语句自动管理会话生命周期
-            with SessionLocal() as db:
-                # 重新获取任务最新状态
-                task = db.query(Task).filter(Task.id == task_id).first()
-                if not task:
-                    # 任务可能已被删除，断开连接
-                    break
-
-                thinking_count = len(task.thinking_process) if task.thinking_process else 0
-
-                # 检测是否有变化
-                has_change = (
-                    task.status != last_status or
-                    task.current_subtask != last_subtask or
-                    task.subtask_progress != last_progress or
-                    thinking_count > last_thinking_count
+            event = None
+            try:
+                event = await asyncio.wait_for(
+                    subscriber.queue.get(),
+                    timeout=poll_seconds,
                 )
+            except asyncio.TimeoutError:
+                catch_up = await asyncio.to_thread(
+                    get_task_events,
+                    task_id,
+                    after_event_id=cursor,
+                    limit=settings.TASK_EVENT_REPLAY_LIMIT,
+                )
+                for persisted_event in catch_up:
+                    cursor = max(cursor, int(persisted_event["event_id"]))
+                    await websocket.send_json(persisted_event)
+                    if persisted_event["type"] in TERMINAL_EVENT_TYPES:
+                        return
 
-                if not has_change:
-                    continue   # 无变化，跳过发送
+            if event and int(event.get("event_id", 0)) > cursor:
+                cursor = int(event["event_id"])
+                await websocket.send_json(event)
+                if event["type"] in TERMINAL_EVENT_TYPES:
+                    return
 
-                # 更新缓存的值
-                last_status = task.status
-                last_subtask = task.current_subtask
-                last_progress = task.subtask_progress
-                last_thinking_count = thinking_count
-
-                # 获取最新的思考过程(全部)
-                thinking_process = task.thinking_process
-
-                # 发送状态更新
-                await manager.send_message(task_id, {
-                    "type": "status_update",
-                    "task_id": task_id,
-                    "status": task.status.value,
-                    "current_subtask": task.current_subtask,
-                    "subtask_progress": task.subtask_progress or 0.0,
-                    "message": get_step_message(task.current_subtask),
-                    "thinking_process": thinking_process,
-                    "timestamp": datetime.utcnow().isoformat(),
-                })
-
-                # 任务完成或失败时，发送最终结果并退出循环
-                if task.status == TaskStatus.completed:
-                    await manager.send_message(task_id, {
-                        "type": "completed",
+            if time.monotonic() - last_heartbeat >= heartbeat_seconds:
+                await websocket.send_json(
+                    {
+                        "type": "heartbeat",
                         "task_id": task_id,
-                        "audio_url": task.final_audio_url,
-                        "duration": task.audio_duration,
-                        "timestamp": datetime.utcnow().isoformat(),
-                    })
-                    break
-                elif task.status == TaskStatus.failed:
-                    await manager.send_message(task_id, {
-                        "type": "failed",
-                        "task_id": task_id,
-                        "error": task.error_message,
-                        "timestamp": datetime.utcnow().isoformat(),
-                    })
-                    break
-
+                        "after_event_id": cursor,
+                        "timestamp": _timestamp(),
+                    }
+                )
+                last_heartbeat = time.monotonic()
     except WebSocketDisconnect:
-        # 客户端主动断开
-        manager.disconnect(task_id)
-    except Exception as e:
-        # 其他异常，尝试发送错误消息
-        try:
-            await websocket.send_json({
-                "type": "error",
-                "message": str(e),
-            })
-        except:
-            pass
-        manager.disconnect(task_id)
+        pass
     finally:
-        # 确保断开连接（如果还没有断开）
-        manager.disconnect(task_id)
+        broker.unsubscribe(task_id, subscriber)
+        manager.disconnect(task_id, websocket)

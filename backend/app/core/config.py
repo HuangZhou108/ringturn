@@ -73,6 +73,17 @@ class Settings(BaseSettings):
         "evaluate_overall_quality"
     )
 
+    # 持久化调度。租约必须显著长于心跳间隔，实例 ID 留空时自动生成。
+    AGENT_INSTANCE_ID: str = ""
+    AGENT_LEASE_SECONDS: float = 120.0
+    AGENT_HEARTBEAT_SECONDS: float = 30.0
+    AGENT_RECOVER_ON_STARTUP: bool = True
+
+    # WebSocket 事件日志与跨进程补偿轮询。
+    TASK_EVENT_REPLAY_LIMIT: int = 500
+    TASK_EVENT_POLL_SECONDS: float = 1.0
+    TASK_EVENT_HEARTBEAT_SECONDS: float = 15.0
+
     class Config:
         env_file = ".env"
         case_sensitive = True
