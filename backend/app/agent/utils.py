@@ -7,7 +7,9 @@ import time
 from typing import Any, Callable, Dict
 
 import numpy as np
+from app.core.config import get_settings
 
+from .resilience import policy_for_name, run_with_retry
 from .thinking_utils import record_thought
 from .trace import (build_execution_error, create_trace_event,
                     persist_trace_event, redact_text, summarize_result,
@@ -68,6 +70,15 @@ async def log_tool_call(
 ):
     """记录工具调用的开始、结果/异常，并返回工具返回值。"""
     tool_name = tool_name or getattr(tool_func, "__name__", "unknown_tool")
+    settings = get_settings()
+    retry_policy = policy_for_name(
+        tool_name,
+        allowlist=settings.AGENT_RETRYABLE_TOOLS,
+        max_attempts=settings.AGENT_TOOL_MAX_ATTEMPTS,
+        timeout_seconds=settings.AGENT_TOOL_TIMEOUT_SECONDS,
+        backoff_seconds=settings.AGENT_TOOL_RETRY_BACKOFF_SECONDS,
+        max_backoff_seconds=settings.AGENT_TOOL_RETRY_MAX_BACKOFF_SECONDS,
+    )
     trace_started = create_trace_event(
         task_id=task_id,
         kind="tool",
@@ -86,11 +97,50 @@ async def log_tool_call(
         status="pending"
     )
     try:
-        # result = await tool_func(*args, **kwargs)
-        if inspect.iscoroutinefunction(tool_func):
-            result = await tool_func(*args, **kwargs)
-        else:
-            result = await asyncio.to_thread(tool_func, *args, **kwargs)
+        async def invoke(_attempt: int):
+            if inspect.iscoroutinefunction(tool_func):
+                return await tool_func(*args, **kwargs)
+            return await asyncio.to_thread(tool_func, *args, **kwargs)
+
+        def on_retry(attempt: int, error: BaseException, delay: float) -> None:
+            normalized_error = build_execution_error(
+                error,
+                scope="tool",
+                component=tool_name,
+            )
+            next_attempt = attempt + 1
+            record_thought(
+                task_id,
+                step_name,
+                (
+                    f"工具发生瞬时故障，将进行第 {next_attempt}/"
+                    f"{retry_policy.max_attempts} 次尝试"
+                ),
+                type="tool_result",
+                status="retry",
+            )
+            persist_trace_event(
+                task_id,
+                create_trace_event(
+                    task_id=task_id,
+                    kind="resilience",
+                    name=tool_name,
+                    status="retrying",
+                    details={
+                        "attempt": attempt,
+                        "next_attempt": next_attempt,
+                        "max_attempts": retry_policy.max_attempts,
+                        "delay_ms": round(delay * 1000, 3),
+                    },
+                    error=normalized_error,
+                ),
+            )
+
+        result, attempts_used = await run_with_retry(
+            invoke,
+            policy=retry_policy,
+            on_retry=on_retry,
+        )
         record_thought(
             task_id,
             step_name,
@@ -106,7 +156,12 @@ async def log_tool_call(
                 name=tool_name,
                 status="succeeded",
                 duration_ms=(time.perf_counter() - started_at) * 1000,
-                details={"step": step_name, "output": summarize_result(result)},
+                details={
+                    "step": step_name,
+                    "output": summarize_result(result),
+                    "attempts": attempts_used,
+                    "retries": attempts_used - 1,
+                },
             ),
         )
         return result

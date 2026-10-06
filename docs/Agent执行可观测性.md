@@ -14,8 +14,9 @@ RingTurn 将面向用户的 `thinking_process` 与工程诊断用的
 原文。工具输入只保留参数数量、参数名和类型；输出只保留类型、键名和
 集合大小。
 
-本阶段只增加观测能力，不改变音频算法、质量阈值或重试条件。外部工具
-的超时、自动重试和降级策略属于后续阶段。
+可观测性之上增加了独立的执行韧性策略，但不改变音频算法、质量阈值或
+质量返工条件：规划与主图共享总执行时限；只有显式白名单中的无副作用
+分析工具可以针对瞬时错误进行有限重试；已有安全降级路径会记录为事件。
 
 ## 2. 当前 Agent 架构
 
@@ -56,9 +57,9 @@ function calling 自主编排，失败时回退到确定性流程。主图节点
 
 字段约束：
 
-- `kind`：`task`、`node`、`tool` 或 `route`。
+- `kind`：`task`、`node`、`tool`、`route` 或 `resilience`。
 - `status`：`running`、`succeeded`、`failed`、`cancelled` 或
-  `selected`。
+  `selected`；韧性事件还可使用 `retrying`、`fallback`、`exhausted`。
 - `thread_id`：与 LangGraph checkpoint 的 `thread_id` 一致，当前为
   `task_id`。
 - `details`：只允许轻量结构摘要，不能放音符列表、音频内容或完整模型输出。
@@ -94,9 +95,47 @@ function calling 自主编排，失败时回退到确定性流程。主图节点
 | `TOOL_EXECUTION_FAILED` | false | 未进一步分类的工具错误 |
 | `TASK_EXECUTION_FAILED` | false | 规划或任务级未分类错误 |
 
-`retryable` 只是错误分类，不会在本阶段自动触发重试。
+`retryable` 是错误分类，不代表一定重试。只有工具名同时位于
+`AGENT_RETRYABLE_TOOLS` 白名单、尚未达到尝试上限时，才会自动重试。
+用户取消、校验错误、文件缺失和未知错误均不会自动重放。
 
-## 5. 持久化与 checkpoint 生命周期
+## 5. 超时、异常重试与降级
+
+三类机制彼此独立：
+
+| 机制 | 范围 | 默认策略 |
+|---|---|---|
+| Pipeline deadline | 规划 + LangGraph 主流程 | 1800 秒，共享同一个 deadline |
+| 异常重试 | 白名单中的无副作用分析工具 | 最多 2 次尝试，单次 180 秒，指数退避 |
+| 质量返工 | `reflect → retry_router → arrange` | 继续使用任务的 `max_retries` |
+
+默认异常重试白名单只包含读取/分析操作，不包含旋律提取、写 MIDI、编曲、
+渲染或 Demucs。同步音频库若长时间不向事件循环让出控制权，协程超时无法
+强制终止底层原生计算；这类工具后续应迁移到可终止的独立 worker/子进程。
+
+当前显式安全降级包括：
+
+- Demucs 失败后使用原始音频；
+- Basic Pitch 失败后尝试 librosa；
+- 自主 function-calling 编曲失败后使用确定性编曲子图；
+- 长休止伴奏失败后保留基础编曲结果。
+
+重试产生 `resilience/retrying` 事件；降级产生 `resilience/fallback` 事件；
+总时限耗尽产生 `resilience/exhausted` 和任务失败事件。工具成功事件包含
+`attempts` 与 `retries`，便于区分首次成功与重试恢复。
+
+可通过环境变量调整策略：
+
+```env
+AGENT_PIPELINE_TIMEOUT_SECONDS=1800
+AGENT_TOOL_TIMEOUT_SECONDS=180
+AGENT_TOOL_MAX_ATTEMPTS=2
+AGENT_TOOL_RETRY_BACKOFF_SECONDS=1
+AGENT_TOOL_RETRY_MAX_BACKOFF_SECONDS=8
+AGENT_RETRYABLE_TOOLS=get_metadata,detect_tempo_beats
+```
+
+## 6. 持久化与 checkpoint 生命周期
 
 1. `AgentState.execution_trace` 使用 LangGraph reducer 合并事件，因此节点和
    路由事件进入 SQLite checkpoint。
@@ -112,7 +151,7 @@ function calling 自主编排，失败时回退到确定性流程。主图节点
 轨迹复用现有 JSON 字段，不需要数据库迁移。完整候选音符和二进制音频不会
 进入轨迹。
 
-## 6. 诊断 API
+## 7. 诊断 API
 
 ```http
 GET /api/v1/tasks/{task_id}/trace

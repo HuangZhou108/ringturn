@@ -136,6 +136,39 @@ def create_trace_event(
     return event
 
 
+def create_fallback_event(
+    *,
+    task_id: str,
+    component: str,
+    from_strategy: str,
+    to_strategy: str,
+    reason: str,
+    error: BaseException | None = None,
+) -> dict:
+    """Create a sanitized event for an explicit, safe fallback."""
+
+    details = {
+        "from": from_strategy,
+        "to": to_strategy,
+        "reason": reason,
+    }
+    normalized_error = None
+    if error is not None:
+        normalized_error = build_execution_error(
+            error,
+            scope="fallback",
+            component=component,
+        )
+    return create_trace_event(
+        task_id=task_id,
+        kind="resilience",
+        name=component,
+        status="fallback",
+        details=details,
+        error=normalized_error,
+    )
+
+
 def merge_trace_events(
     left: Iterable[dict] | None,
     right: Iterable[dict] | None,

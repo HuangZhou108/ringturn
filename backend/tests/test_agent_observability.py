@@ -118,6 +118,22 @@ class AgentTraceSchemaTests(unittest.TestCase):
         self.assertEqual(normalized["code"], "EXECUTION_TIMEOUT")
         self.assertTrue(normalized["retryable"])
 
+    def test_fallback_event_has_explicit_sanitized_transition(self):
+        event = _TRACE.create_fallback_event(
+            task_id="task-1",
+            component="melody_extraction",
+            from_strategy="basic_pitch",
+            to_strategy="librosa",
+            reason="primary_extractor_failed",
+            error=RuntimeError("token=super-secret-value"),
+        )
+
+        serialized = json.dumps(event)
+        self.assertEqual(event["kind"], "resilience")
+        self.assertEqual(event["status"], "fallback")
+        self.assertEqual(event["details"]["to"], "librosa")
+        self.assertNotIn("super-secret-value", serialized)
+
     def test_entry_route_explains_new_resume_and_invalid_targets(self):
         allowed = ["fetch_source", "arrange"]
 

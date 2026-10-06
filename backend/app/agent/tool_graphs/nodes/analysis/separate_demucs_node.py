@@ -1,8 +1,10 @@
+from app.agent.atomic_tools.analysis import separate_sources_demucs
 from app.agent.node_registry import register_node
 from app.agent.state import AgentState
-from app.agent.atomic_tools.analysis import separate_sources_demucs
 from app.agent.thinking_utils import record_thought
+from app.agent.trace import create_fallback_event, persist_trace_event
 from app.agent.utils import log_tool_call
+
 
 @register_node("separate_demucs")
 async def node_separate_demucs(state: AgentState) -> dict:
@@ -38,4 +40,15 @@ async def node_separate_demucs(state: AgentState) -> dict:
     except Exception as e:
         if task_id:
             record_thought(task_id, "analysis", f"Demucs 分离失败: {e}")
+            persist_trace_event(
+                task_id,
+                create_fallback_event(
+                    task_id=str(task_id),
+                    component="source_separation",
+                    from_strategy="demucs",
+                    to_strategy="original_audio",
+                    reason="optional_separation_failed",
+                    error=e,
+                ),
+            )
         return {"demucs_separated": False}

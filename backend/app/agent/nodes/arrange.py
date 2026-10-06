@@ -1,26 +1,30 @@
 import json
 from pathlib import Path
-from sqlalchemy.orm import Session
-from langgraph.prebuilt import create_react_agent
-from langchain_core.messages import SystemMessage, HumanMessage
-from app.services.llm_service import get_llm
-from app.agent.state import AgentState
-from app.core.config import get_settings
-from app.agent.atomic_tools.arrangement import (
-    change_instrument_tool, change_tempo_tool, quantize_midi_tool
-)
-from app.agent.utils import clean_state
-from app.services.llm_service import llm_service
-from app.agent.thinking_utils import record_thought
+
 import mido
+from app.agent.atomic_tools.arrangement import (change_instrument_tool,
+                                                change_tempo_tool,
+                                                quantize_midi_tool)
+from app.agent.state import AgentState
+from app.agent.thinking_utils import record_thought
 from app.agent.tool_graphs.arrange_graph import get_arrange_graph
+from app.agent.trace import create_fallback_event, persist_trace_event
+from app.agent.utils import clean_state
+from app.core.config import get_settings
+from app.services.llm_service import get_llm, llm_service
+from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.prebuilt import create_react_agent
+from sqlalchemy.orm import Session
+
 settings = get_settings()
 
 
 async def _apply_gap_accompaniment(state: AgentState, arranged_path: str) -> str:
     """只在长旋律休止中添加低力度伴奏；失败时保留原编曲结果。"""
-    from app.agent.atomic_tools.arrangement.gap_accompaniment import plan_gap_accompaniment
-    from app.agent.atomic_tools.arrangement.harmonize_midi import harmonize_midi
+    from app.agent.atomic_tools.arrangement.gap_accompaniment import \
+        plan_gap_accompaniment
+    from app.agent.atomic_tools.arrangement.harmonize_midi import \
+        harmonize_midi
 
     try:
         analysis = state.get("analysis_result") or {}
@@ -39,6 +43,17 @@ async def _apply_gap_accompaniment(state: AgentState, arranged_path: str) -> str
         )
     except Exception as e:
         record_thought(state["task_id"], "arrange", f"长休止伴奏规划失败，安全跳过: {e}")
+        persist_trace_event(
+            state["task_id"],
+            create_fallback_event(
+                task_id=state["task_id"],
+                component="gap_accompaniment",
+                from_strategy="gap_accompaniment",
+                to_strategy="base_arrangement",
+                reason="planning_failed",
+                error=e,
+            ),
+        )
         return arranged_path
 
     if not plan["segments"]:
@@ -69,6 +84,17 @@ async def _apply_gap_accompaniment(state: AgentState, arranged_path: str) -> str
         return harmonized_path
     except Exception as e:
         record_thought(state["task_id"], "arrange", f"长休止伴奏失败，保留原编曲结果: {e}")
+        persist_trace_event(
+            state["task_id"],
+            create_fallback_event(
+                task_id=state["task_id"],
+                component="gap_accompaniment",
+                from_strategy="gap_accompaniment",
+                to_strategy="base_arrangement",
+                reason="render_or_validation_failed",
+                error=e,
+            ),
+        )
         return arranged_path
 
 @clean_state
@@ -94,7 +120,8 @@ async def arrange_node(state: AgentState) -> dict:
     if correction and state.get("melody_data"):
         try:
             from app.agent.atomic_tools.melody.snap_to_key import snap_to_key
-            from app.agent.atomic_tools.midi.create_from_notes import create_midi_from_notes
+            from app.agent.atomic_tools.midi.create_from_notes import \
+                create_midi_from_notes
             melody_notes = state["melody_data"].get("melody_notes", [])
             harmony = (state.get("analysis_result") or {}).get("harmony") or {}
             detected_bpm = ((state.get("analysis_result") or {}).get("tempo_beats") or {}).get("bpm") or 120
@@ -132,8 +159,41 @@ async def arrange_node(state: AgentState) -> dict:
                 return {"arranged_midi_path": auto_path}
             except Exception as e:
                 record_thought(state["task_id"], "arrange", f"自主改编结果无效，回退确定性: {e}")
+                persist_trace_event(
+                    state["task_id"],
+                    create_fallback_event(
+                        task_id=state["task_id"],
+                        component="arrangement",
+                        from_strategy="autonomous_function_calling",
+                        to_strategy="deterministic_graph",
+                        reason="invalid_autonomous_result",
+                        error=e,
+                    ),
+                )
+        else:
+            persist_trace_event(
+                state["task_id"],
+                create_fallback_event(
+                    task_id=state["task_id"],
+                    component="arrangement",
+                    from_strategy="autonomous_function_calling",
+                    to_strategy="deterministic_graph",
+                    reason="missing_autonomous_output",
+                ),
+            )
     except Exception as e:
         record_thought(state["task_id"], "arrange", f"自主改编异常，回退确定性: {e}")
+        persist_trace_event(
+            state["task_id"],
+            create_fallback_event(
+                task_id=state["task_id"],
+                component="arrangement",
+                from_strategy="autonomous_function_calling",
+                to_strategy="deterministic_graph",
+                reason="autonomous_execution_failed",
+                error=e,
+            ),
+        )
 
     profile_id = state.get("profile_id")
     # 准备工具链图需要的状态（原样传递）
@@ -172,7 +232,8 @@ async def arrange_node(state: AgentState) -> dict:
     transpose = (state.get("arrangement_params") or {}).get("transpose_semitones", 0)
     if transpose:
         try:
-            from app.agent.atomic_tools.arrangement.transpose_pitch import transpose_pitch
+            from app.agent.atomic_tools.arrangement.transpose_pitch import \
+                transpose_pitch
             transposed_path = str(Path(arranged_path).with_name("arrange_transposed.mid"))
             await transpose_pitch(
                 midi_path=arranged_path,
