@@ -42,6 +42,7 @@ from .profile import (
     PreferencesExport,
     PreferencesApply,
 )
+from .memory import KnowledgeDocumentCreate, MemoryCreate, MemoryUpdate
 
 __all__ = [
     "ResponseBase",
@@ -86,4 +87,7 @@ __all__ = [
     "PreferencesImport",
     "PreferencesExport",
     "PreferencesApply",
+    "KnowledgeDocumentCreate",
+    "MemoryCreate",
+    "MemoryUpdate",
 ]

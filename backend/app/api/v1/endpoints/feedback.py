@@ -110,6 +110,22 @@ async def submit_feedback(
 
     db.commit()
 
+    if parent_task.profile_id:
+        try:
+            from app.services.memory import remember
+
+            remember(
+                parent_task.profile_id,
+                request.feedback,
+                kind="feedback",
+                source_task_id=parent_task.id,
+                importance=0.85,
+                confidence=0.95,
+                metadata={"resume_from_node": resume_node, "params": new_params},
+            )
+        except Exception as error:
+            print(f"[MEMORY] feedback capture failed: {type(error).__name__}")
+
     from app.agent.thinking_utils import record_thought
     record_thought(
         new_task_id,
@@ -284,6 +300,22 @@ async def answer_human_intervention(
         assistant_message.content = "已收到补充信息，正在恢复任务..."
     db.commit()
     db.refresh(intervention)
+
+    if task.profile_id:
+        try:
+            from app.services.memory import remember
+
+            remember(
+                task.profile_id,
+                request.response,
+                kind="feedback",
+                source_task_id=task_id,
+                importance=0.8,
+                confidence=0.9,
+                metadata={"intervention_id": intervention.id, "resume_from_node": resume_node},
+            )
+        except Exception as error:
+            print(f"[MEMORY] intervention capture failed: {type(error).__name__}")
 
     emit_task_event(
         task_id,

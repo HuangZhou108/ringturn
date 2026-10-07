@@ -84,6 +84,12 @@ class Settings(BaseSettings):
     TASK_EVENT_POLL_SECONDS: float = 1.0
     TASK_EVENT_HEARTBEAT_SECONDS: float = 15.0
 
+    # RAG 与长期记忆。检索完全本地运行，不依赖外部向量数据库。
+    RAG_TOP_K: int = 4
+    MEMORY_TOP_K: int = 6
+    MEMORY_MAX_PER_PROFILE: int = 200
+    MEMORY_HALF_LIFE_DAYS: float = 90.0
+
     class Config:
         env_file = ".env"
         case_sensitive = True

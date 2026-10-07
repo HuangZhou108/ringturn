@@ -9,12 +9,13 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from app.services.knowledge_base import retrieve_knowledge, format_knowledge
+from app.services.memory import get_agent_profile_id
 
 
 def search_knowledge(query: str) -> str:
     """检索音乐编曲知识库，返回相关的编曲知识。"""
     print(f"[RAG] search_knowledge 被调用，query={query}")
-    docs = retrieve_knowledge(query, top_k=3)
+    docs = retrieve_knowledge(query, top_k=3, profile_id=get_agent_profile_id())
     if not docs:
         return "未找到相关知识。"
     print(f"[RAG] 命中 {len(docs)} 篇知识: {[d['title'] for d in docs]}")

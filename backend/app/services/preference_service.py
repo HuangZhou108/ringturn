@@ -71,6 +71,12 @@ async def update_profile_preference_stats(profile_id: int, task_id: str) -> None
         print(f"[ERROR] update_profile_preference_stats: {e}")
     finally:
         db.close()
+    try:
+        from app.services.memory import capture_task_memory
+
+        capture_task_memory(profile_id, task_id)
+    except Exception as e:
+        print(f"[MEMORY] task capture failed: {type(e).__name__}")
 
 
 def get_ai_recommendation(stats: Dict[str, Any]) -> Dict[str, Any]:
