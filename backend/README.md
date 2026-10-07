@@ -1,81 +1,71 @@
 # RingTurn 后端
 
-AI音乐改编Agent - 将歌曲自动改编为独特铃声
+FastAPI + LangGraph 实现的 AI 音乐改编后端。当前架构不是“所有节点均为 ReAct
+子 Agent”，而是固定主工作流、条件路由、领域子图与可选 function calling 的
+混合模式。
 
-## 项目概述
+## 核心职责
 
-RingTurn是一个基于AI Agent的智能音乐改编系统。用户上传音频文件并用自然语言描述想要的风格，系统自动完成：音乐分析 → 主旋律提取 → MIDI生成 → 乐器改编 → 渲染输出为纯音乐铃声。
+- 提供任务、会话、Profile、反馈、人工介入、知识和记忆 REST API。
+- 使用数据库租约调度任务，支持重复执行防护、心跳和重启恢复。
+- 运行可 checkpoint 的 LangGraph 音频改编流程。
+- 持久化任务事件，通过 WebSocket 实时推送并支持游标回放。
+- 记录执行 trace、结构化错误、重试、降级和路由决策。
+- 管理持久化 RAG 知识与 Profile 长期记忆。
 
-### 技术栈
+## 快速启动
 
-| 类别 | 技术 |
-|------|------|
-| Web框架 | FastAPI |
-| Agent框架 | LangGraph |
-| 推理模式 | ReAct |
-| 数据库 | SQLite |
-| 状态持久化 | langgraph-checkpoint-sqlite |
+推荐 Python 3.10；Python 3.11 也可使用。当前部分音频依赖不适配 Python 3.12。
 
-## 快速开始
-
-### 1. 安装依赖
-推荐创建虚拟环境：
 ```bash
 conda create -n ringturn python=3.10
-```
-安装依赖：
-```bash
+conda activate ringturn
 cd backend
 pip install -r requirements.txt
 ```
-#### 其他
-**FFmpeg：**  
-在没有FFmpeg的情况下，依然可以处理WAV音频。
-> 本项目使用 `FFmpeg` 进行音频格式转换、时长获取等操作。虽然代码在缺少 FFmpeg 时会降级运行（仅支持 WAV 复制），但完整功能（如 MP3 与 WAV 互转、任意格式转换）需要依赖 FFmpeg。
-检验是否已安装工具：
-```bash
-ffmpeg -version # 应输出版本信息
-```
-（虚拟环境）conda安装：
-```bash
-conda install -c conda-forge ffmpeg
-```
-Windows安装：
-1. 访问 [FFmpeg 官网](https://ffmpeg.org/download.html) → Windows 图标 → Windows builds from gyan.dev。
-2. 下载 ffmpeg-release-full.7z 或 ffmpeg-release-full.zip。
-3. 解压到本地，如`C:\ffmpeg`
-4. 将路径添加到系统环境变量PATH
-Linux安装：
-```bash
-sudo apt update
-sudo apt install ffmpeg
-```
 
-**FluidSynth：**  
-Windows下载：
-访问github仓库[分发界面](https://github.com/FluidSynth/fluidsynth/releases)，下载最新版本，例如`fluidsynth-v2.5.4-win10-x64-cpp11.zip`。
-由于`pyFluidSynth`的局限性，暂时必须把FluidSynth下载解压到`C:\tools\fluidsynth`路径，请确保`C:\tools\fluidsynth\bin`存在。
-> 之后我们会尝试通过替换工具等方法解决这个问题，使得项目的部署更加简单。
+完整渲染还需要：
 
-**下载音色库**：  
-为了保证项目正常运行，你至少需要在`backend/soundfonts`文件下下载一个音色库，具体可查看SOUNDFONTS.md。
+- FFmpeg：音频探测、裁剪和格式转换；
+- FluidSynth：MIDI 渲染；
+- GM SoundFont：默认配置为 `./soundfonts/default.sf2`。
 
-### 2. 配置环境变量（可选）
+SoundFont 说明见 [SOUNDFONTS.md](./SOUNDFONTS.md)。
 
-创建 `.env` 文件：
+配置 `backend/.env`：
 
 ```env
-LLM_API_KEY=your-api-key-here
+LLM_API_KEY=your-api-key
 LLM_MODEL=gpt-4
-LLM_BASE_URL=https://your-api-endpoint
+LLM_BASE_URL=
 LLM_REQUEST_TIMEOUT_SECONDS=60
 LLM_MAX_ATTEMPTS=3
-LLM_RETRY_BACKOFF_SECONDS=1
-LLM_RETRY_MAX_BACKOFF_SECONDS=8
+
 DATABASE_URL=sqlite:///./ringturn.db
+CHECKPOINT_DB_URL=sqlite:///./checkpoints.db
+
+FLUIDSYNTH_PATH=fluidsynth
+SOUNDFONT_PATH=./soundfonts/default.sf2
+FFMPEG_PATH=
+
+AGENT_PIPELINE_TIMEOUT_SECONDS=1800
+AGENT_TOOL_TIMEOUT_SECONDS=180
+AGENT_TOOL_MAX_ATTEMPTS=2
+AGENT_LEASE_SECONDS=120
+AGENT_HEARTBEAT_SECONDS=30
+AGENT_RECOVER_ON_STARTUP=true
+
+TASK_EVENT_REPLAY_LIMIT=500
+TASK_EVENT_POLL_SECONDS=1
+TASK_EVENT_HEARTBEAT_SECONDS=15
+
+RAG_TOP_K=4
+MEMORY_TOP_K=6
+MEMORY_MAX_PER_PROFILE=200
+MEMORY_HALF_LIFE_DAYS=90
 ```
 
-### 3. 启动服务
+启动服务：
 
 ```bash
 python -m app.main
@@ -83,392 +73,148 @@ python -m app.main
 uvicorn app.main:app --reload
 ```
 
-服务运行在 `http://localhost:8000`
+- Swagger UI：`http://localhost:8000/docs`
+- ReDoc：`http://localhost:8000/redoc`
+- 健康检查：`GET http://localhost:8000/api/v1/health`
 
-### 4. API文档
+## Agent 架构
 
-启动后访问：
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+### 主图
 
-## 项目结构
+`app/agent/graph.py` 定义固定主流程：
 
-```
-backend/
-├── app/
-│   ├── main.py              # FastAPI应用入口
-│   ├── core/                # 核心配置
-│   │   ├── config.py        # 配置管理（Settings类）
-│   │   └── exceptions.py    # 自定义异常类
-│   ├── models/              # 数据库模型（SQLAlchemy）
-│   │   └── __init__.py      # User, Task, Feedback, Preference
-│   ├── schemas/             # Pydantic数据模型
-│   │   ├── common.py        # 通用响应格式
-│   │   ├── task.py          # 任务相关schema
-│   │   └── feedback.py      # 反馈相关schema
-│   ├── api/                 # API路由层
-│   │   └── v1/
-│   │       └── endpoints/
-│   │           ├── tasks.py  # 任务CRUD接口
-│   │           ├── users.py  # 用户相关接口
-│   │           └── health.py # 健康检查
-│   ├── agent/               # Agent核心模块
-│   │   ├── state.py         # Agent状态定义
-│   │   ├── graph.py         # LangGraph工作流
-│   │   ├── agent_executor.py # Agent执行器
-│   │   ├── callbacks.py     # LangChain回调处理器
-│   │   ├── thinking_utils.py # 思考记录工具
-│   │   └── nodes/           # 节点处理器（拆分后的模块）
-│   │       ├── __init__.py  # 导出节点 + NODE_HANDLERS
-│   │       ├── _helpers.py  # 辅助函数
-│   │       ├── fetch_source.py
-│   │       ├── analyze_structure.py
-│   │       ├── extract_melody.py
-│   │       ├── generate_midi.py
-│   │       ├── arrange.py
-│   │       ├── render.py
-│   │       └── check_quality.py
-│   └── atomic_tools/    # 原子工具集
-│   ├── services/            # 业务服务
-│   │   └── file_service.py  # 文件上传/下载
-│   └── db/                   # 数据库相关
-│       └── session.py       # 会话管理
-├── uploads/                  # 上传的音频文件
-├── static/ringtones/        # 生成的铃声文件
-└── requirements.txt
+```text
+entry_router
+  → fetch_source
+  → analyze_structure
+  → extract_melody
+  → generate_midi
+  → arrange
+  → render
+  → check_quality
+  → reflect
+  → retry_router → END / arrange
 ```
 
-## 核心模块详解
+- `entry_router` 支持新任务、反馈子任务和人工介入恢复。
+- `retry_router` 只在质量反思要求且未超过 `max_retries` 时回到 `arrange`。
+- 主图使用 `AsyncSqliteSaver` 保存 checkpoint，`thread_id` 与任务 ID 一致。
+- 每个节点由 `instrument_node` 包装，生成统一 trace 和结构化错误。
 
-### 1. Agent架构（app/agent/）
+### 子图与工具
 
-RingTurn采用**LangGraph + ReAct**架构实现智能Agent。
+| 主节点 | 实现方式 | 说明 |
+|---|---|---|
+| `analyze_structure` | `analysis_graph` | 元数据、节拍、响度、频谱、段落、情绪等分析 |
+| `extract_melody` | `extract_graph` | 音源选择、多提取器候选、评分与稳定化 |
+| `arrange` | `arrange_graph` | 确定性编曲；可选 function calling，自主失败后回退 |
+| `check_quality` | `quality_graph` | 音频与音乐性质量检查 |
+| `reflect` | LLM + 确定性边界 | 决定是否有界返工并给出纠正动作 |
 
-#### 状态管理（state.py）
+原子工具位于 `app/agent/atomic_tools/`：
 
-```python
-class AgentState(TypedDict):
-    task_id: str              # 任务标识
-    user_request: str         # 用户需求
-    audio_path: str | None    # 音频文件路径
-    analysis_result: dict     # 分析结果
-    melody_data: dict         # 旋律数据
-    midi_path: str            # MIDI文件路径
-    plan: list[str]           # 执行计划
-    current_step: TaskStep    # 当前步骤
-    ...
+- `analysis/`：节拍、调性、和弦、响度、频谱、段落、分离等；
+- `melody/`：Basic Pitch、librosa、候选选择、量化、调性修正等；
+- `midi/`：音符转 MIDI、节拍写入、验证；
+- `arrangement/`：换音色、变速、移调、和声、合并轨道等；
+- `rendering/`：FluidSynth、MP3 转换和智能截取；
+- `quality/`：响度、动态、频谱、旋律和综合质量；
+- `knowledge/`：编曲知识检索。
+
+详细说明见 [Agent 详细设计](../docs/Agent详细设计.md)。
+
+## 任务调度与恢复
+
+`services/task_scheduler.py` 使用 `task_execution_leases`：
+
+1. 创建任务后只做本机调度提示，真正执行前必须原子取得数据库租约；
+2. 心跳延长租约；其他 worker 不能重复认领；
+3. 进程崩溃后租约过期，应用启动会扫描 `pending` 或孤儿活跃任务；
+4. `AgentExecutor` 从 LangGraph checkpoint 和任务中间数据恢复；
+5. 正常停机使用 `suspend`，不会把任务误标为用户取消。
+
+取消接口先持久化 `cancelled`，再中断当前进程内执行器。终态更新采用条件写入，
+迟到的完成/失败不能覆盖取消。
+
+## 实时事件与诊断
+
+`services/task_events.py` 把任务事件写入 `task_events`，同时通过进程内 broker
+低延迟扇出。WebSocket：
+
+```text
+/ws/chat/{task_id}?after_event_id={cursor}
 ```
 
-#### 执行流程（graph.py）
+连接时先订阅 broker，再回放数据库事件；之后用轮询补偿其他 worker 的写入。
+一个任务可有多个客户端。`GET /api/v1/tasks/{task_id}/trace` 返回清洗后的执行
+诊断，敏感参数、路径和提示词正文不会进入 trace。
 
-```
-用户请求 → 规划器(planner) → 分析音频(analyze)
-    → 生成MIDI(generate_midi) → 乐器改编(arrange)
-    → 渲染音频(render) → 质量反思(reflect) → 完成
-                              ↓ (质量不达标)
-                         等待用户反馈(human_input)
-                              ↓
-                         返回改编步骤重新执行
-```
+详见：
 
-#### 节点处理（nodes.py）
+- [Agent 执行可观测性](../docs/Agent执行可观测性.md)
+- [Agent 运行时连续性](../docs/Agent运行时连续性.md)
 
-每个节点对应一个处理步骤：
+## RAG 与长期记忆
 
-| 节点 | 功能 | 说明 |
-|------|------|------|
-| `fetch_source` | 获取音频源 | 根据source_type获取文件 |
-| `analyze` | 分析结构 | 提取BPM、调性、段落 |
-| `extract_melody` | 提取旋律 | 获取主旋律音符 |
-| `generate_midi` | 生成MIDI | 创建MIDI中间文件 |
-| `arrange` | 乐器改编 | 更换乐器音色 |
-| `render` | 音频渲染 | MIDI转音频 |
-| `quality_check` | 质量检查 | 评估生成质量 |
+- `knowledge_documents`：全局或 Profile 专属知识；启动时幂等写入内置文档。
+- `long_term_memories`：Profile 隔离的偏好、约束、反馈、指令和历史。
+- 检索融合 BM25 与中文单字/双字、英文词项的哈希向量余弦相似度。
+- 反馈、人工回答和成功任务会自动写入；执行前按当前请求召回。
+- 记忆带去重、重要度、置信度、置顶、时间衰减、来源和容量上限。
 
-#### 工具层（atomic_tools/）
+详见 [RAG 与长期记忆](../docs/RAG与长期记忆.md)。
 
-原子工具按功能分组，通过 LangChain `@tool` 装饰器定义：
+## API 路由
 
-```python
-# 分析工具
-get_bpm_tool, get_key_tool, extract_chord_progression_tool, detect_instruments_tool, ...
+路由统一挂载在 `/api/v1`：
 
-# 旋律工具
-extract_melody_basic_pitch_tool, extract_melody_librosa_tool, quantize_notes_tool, ...
+| 模块 | 前缀/路径 | 主要能力 |
+|---|---|---|
+| Health | `/health` | 健康检查 |
+| Upload | `/upload` | 音频上传 |
+| Tasks | `/tasks` | 创建、状态、结果、trace、取消 |
+| Feedback/HITL | `/tasks/{id}/feedback`、`/interventions` | 反馈重做与人工介入 |
+| Conversations | `/conversations` | 会话、消息、活跃任务 |
+| Profiles | `/profiles` | 档案、激活、导入导出、偏好、工具配置 |
+| Memory | `/profiles/{id}/memories` | 长期记忆管理与检索 |
+| Knowledge | `/knowledge` | 知识文档管理与检索 |
 
-# MIDI工具
-create_midi_from_notes_tool, validate_midi_file_tool
+完整请求与响应见 [接口文档](../docs/接口文档.md)。
 
-# 改编工具
-change_instrument_tool, change_tempo_tool, quantize_midi_tool
+## 数据模型
 
-# 渲染工具
-render_midi_with_fluidsynth_tool, convert_wav_to_mp3_tool, smart_clip_audio_tool
+| 表 | 用途 |
+|---|---|
+| `profiles` | 本地档案 |
+| `tasks` | 任务、计划、状态、产物和恢复数据 |
+| `task_execution_leases` | 调度租约与心跳 |
+| `task_events` | WebSocket 可回放事件 |
+| `feedbacks` | 用户反馈 |
+| `human_interventions` | 人工问题与回答 |
+| `conversations` / `conversation_messages` | 历史会话 |
+| `preferences` / `tool_preferences` | 统计偏好、覆盖参数和子图配置 |
+| `knowledge_documents` | RAG 知识 |
+| `long_term_memories` | Profile 长期记忆 |
 
-# 质量工具
-evaluate_overall_quality_tool, loudness_check_tool, dynamic_range_tool, ...
-```
+应用启动通过 SQLAlchemy `create_all` 创建缺失表。当前仓库尚未建立完整的 Alembic
+版本迁移流程；生产数据库变更应先补迁移脚本和备份策略。
 
-#### 工具网关（tools.py）
-
-`ToolGateway` 类提供辅助方法：
-
-```python
-class ToolGateway:
-    async def parse_user_request(user_request) -> dict  # 解析用户需求
-    async def ensure_tool_available(tool_name) -> None  # 检查工具可用性
-```
-
-### 2. 任务状态机（models/__init__.py）
-
-```
-pending → planning → executing → completed
-              ↓            ↓
-         cancelled      waiting_input
-              ↓            ↓
-            failed     (等待用户输入后回到executing)
-```
-
-| 状态 | 说明 |
-|------|------|
-| `pending` | 任务已创建，等待调度 |
-| `planning` | Agent分析需求，制定计划 |
-| `executing` | 执行中（包含多个子步骤） |
-| `waiting_input` | 等待用户补充信息 |
-| `completed` | 完成 |
-| `failed` | 失败 |
-| `cancelled` | 已取消 |
-
-### 3. API接口（api/v1/endpoints/）
-
-#### 任务相关
-
-| 方法 | 端点 | 功能 |
-|------|------|------|
-| POST | `/tasks` | 创建任务 |
-| GET | `/tasks/{task_id}` | 获取任务详情 |
-| GET | `/tasks/{task_id}/status` | 获取任务状态 |
-| GET | `/tasks/{task_id}/result` | 获取生成结果 |
-| POST | `/tasks/{task_id}/feedback` | 提交反馈 |
-| DELETE | `/tasks/{task_id}` | 取消任务 |
-
-#### 用户相关
-
-| 方法 | 端点 | 功能 |
-|------|------|------|
-| GET | `/users/{user_id}/tasks` | 获取用户任务列表 |
-
-### 4. 响应格式
-
-所有API返回统一格式：
-
-```json
-{
-    "code": 200,
-    "data": { ... },
-    "message": "success"
-}
-```
-
-| code | 含义 |
-|------|------|
-| 200 | 成功 |
-| 400 | 业务失败 |
-| 401 | 认证/异常错误 |
-| 404 | 资源不存在 |
-| 500 | 服务器错误 |
-
-## 数据库表
-
-### users（用户表）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT | 主键 |
-| username | VARCHAR(64) | 用户名（唯一） |
-| created_at | DATETIME | 创建时间 |
-
-### tasks（任务表）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | CHAR(36) | UUID主键 |
-| user_id | INT | 关联用户 |
-| user_request | TEXT | 用户需求 |
-| status | ENUM | 任务状态 |
-| plan | JSON | 执行计划 |
-| current_subtask | VARCHAR | 当前子步骤 |
-| subtask_progress | INT | 进度 0-100 |
-| final_audio_url | VARCHAR | 生成的铃声URL |
-| thread_id | VARCHAR | LangGraph检查点ID |
-| error_message | TEXT | 错误信息 |
-
-### feedbacks（反馈表）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT | 主键 |
-| task_id | CHAR(36) | 关联任务 |
-| content | TEXT | 反馈内容 |
-| created_at | DATETIME | 创建时间 |
-
-### preferences（偏好表）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT | 主键 |
-| user_id | INT | 关联用户 |
-| key | VARCHAR(64) | 偏好键 |
-| value | JSON | 偏好值 |
-
-## 使用示例
-
-### 1. 创建任务
+## 测试
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/tasks \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_request": "把《起风了》做成温暖钢琴风格的铃声",
-    "source_type": "upload",
-    "source_value": "file-uuid-here"
-  }'
+python -m pytest -q
+python -m compileall -q app tests
+python -m ruff check app tests --select=F821,F822,F823 --ignore=I
 ```
 
-响应：
+当前回归基线：`114 passed, 3 skipped`。
 
-```json
-{
-    "code": 200,
-    "data": {
-        "task_id": "550e8400-e29b-41d4-a716-446655440000",
-        "status": "pending",
-        "created_at": "2025-04-15T10:00:00Z"
-    },
-    "message": "success"
-}
-```
+## 扩展约定
 
-### 2. 查询状态
-
-```bash
-curl http://localhost:8000/api/v1/tasks/{task_id}/status
-```
-
-响应：
-
-```json
-{
-    "code": 200,
-    "data": {
-        "task_id": "...",
-        "status": "executing",
-        "current_subtask": "render",
-        "subtask_progress": 0.6,
-        "message": "正在渲染音频..."
-    },
-    "message": "success"
-}
-```
-
-### 3. 获取结果
-
-```bash
-curl http://localhost:8000/api/v1/tasks/{task_id}/result
-```
-
-响应：
-
-```json
-{
-    "code": 200,
-    "data": {
-        "audio_url": "/static/ringtones/xxx.mp3",
-        "duration": 18.5,
-        "format": "mp3"
-    },
-    "message": "success"
-}
-```
-
-## 后续开发
-
-### 已实现功能
-
-1. **音频分析** ✅
-   - librosa 本地分析（BPM、调性、频谱特征）
-   - FluidSynth: MIDI转WAV音频 ✅
-
-2. **旋律提取** ✅
-   - Basic Pitch (Spotify) 深度学习模型
-   - librosa 峰值检测（降级方案）
-
-3. **MIDI处理** ✅
-   - 从音符生成MIDI
-   - 乐器更换、速度调整、量化
-
-4. **质量评估** ✅
-   - 响度检查、动态范围、频谱平衡、过零率
-
-5. **WebSocket实时流** ✅
-   - Agent思考过程实时推送（`app/api/v1/websocket/chat.py`）
-
-### 待扩展功能
-
-1. **高级音频分析API**
-   - ChordMini: 和弦/BPM检测（可选接入）
-   - Essentia: 更多音乐特征提取
-
-2. **乐器改编模型**
-   - MuseMorphose: 钢琴风格迁移
-   - Groove2Groove: 伴奏风格迁移
-
-3. **用户系统**
-   - 登录认证
-   - 偏好存储
-   - 历史记录
-
-### 添加新工具
-
-在 `app/agent/atomic_tools/<category>/` 目录下创建工具文件：
-
-```python
-# app/agent/atomic_tools/analysis/my_tool.py
-from langchain_core.tools import tool
-
-@tool
-def my_analysis_tool(audio_path: str) -> dict:
-    """我的分析工具"""
-    # 实现逻辑
-    return {"result": "value"}
-```
-
-然后在对应目录的 `__init__.py` 中导出，在 `nodes.py` 中引入使用。
-
-### 添加新Agent节点
-
-1. 在 `app/agent/state.py` 的 `TaskStep` 枚举添加步骤
-2. 在 `app/agent/nodes.py` 实现节点处理器
-3. 在 `nodes.py` 的 `NODE_HANDLERS` 映射中注册
-4. 在 `app/agent/graph.py` 中连接节点
-
-### 添加新API
-
-1. 在 `app/schemas/` 添加Pydantic模型
-2. 在 `app/api/v1/endpoints/` 添加路由
-3. 在 `app/api/v1/__init__.py` 注册路由
-
-### 数据库迁移
-
-使用SQLAlchemy的 `create_all()` 自动创建表。后续可切换到Alembic进行版本管理。
-
-## 常见问题
-
-**Q: 启动报错 "No module named 'app'"**
-A: 确保在 `backend/` 目录下执行，或使用 `PYTHONPATH=. python -m app.main`
-
-**Q: 数据库被锁定**
-A: SQLite WAL模式已启用，减少并发写入可解决
-
-**Q: FluidSynth 渲染失败**
-A: 确保已安装 FluidSynth 并配置 `SOUNDFONT_PATH`，参考 README 中的安装说明
+- 新原子工具放入对应的 `atomic_tools/<domain>/`，声明清晰输入输出；只有无副
+  作用、幂等的分析工具才应加入重试白名单。
+- 新主节点需更新 `AgentState`、主图、入口路由允许列表、trace 和恢复策略。
+- 新子图节点应通过子图状态与主状态显式映射，避免未声明字段丢失。
+- 新状态写入必须保留 `cancelled` 终态优先级并考虑租约所有权。
+- 新事件必须先持久化再发布，客户端以 `event_id` 去重和续传。
+- 任何长期记忆正文都不得写入执行 trace；召回内容应继续视为用户数据。

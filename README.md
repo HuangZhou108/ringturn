@@ -1,262 +1,258 @@
 # RingTurn
+
 [![en](https://img.shields.io/badge/lang-English-red.svg)](./README.en.md)
 [![zh](https://img.shields.io/badge/lang-中文-blue.svg)](./README.md)
+
+RingTurn 是一个面向个性化铃声制作的 AI 音乐改编应用。用户上传 MP3/WAV，
+输入自然语言需求并设置乐器、速度和时长后，系统通过 LangGraph Agent 完成
+音频分析、主旋律提取、MIDI 生成、编曲、渲染和质量检查，并支持反馈重做、
+人工介入、重启恢复、实时事件流、RAG 与 Profile 长期记忆。
+
+> 当前实现基线：2026-10。README 说明的是仓库现行代码；历史需求稿和页面
+> 设计稿用于追溯早期方案，不代表所有能力均按原设计实现。
+
 ## 免责声明
 
-**本项目为南京大学智能软件与工程学院本科《软件工程与计算Ⅲ》课程项目，仅供学习使用。**
+本项目为南京大学智能软件与工程学院本科课程项目，仅供学习使用。
 
-1. **音频版权**：用户使用的音频文件版权归原权利人所有。用户须确保自己拥有使用该音频的合法权利。本项目仅提供技术处理工具，不承担因用户上传使用内容而产生的任何法律责任。
+- 用户须确保对上传音频拥有合法使用权。
+- 生成内容仅供个人、非商业使用。
+- 软件按“原样”提供，不作适销性、特定用途或不侵权保证。
+- FFmpeg、FluidSynth、Demucs、Basic Pitch 等第三方组件适用各自许可证。
 
-2. **生成内容的使用**：本项目生成的铃声音频仅供用户个人使用。用户不得将生成内容用于商业目的或进行公开传播。因用户使用生成内容引发的任何版权纠纷，与本项目开发者无关。
+## 当前能力
 
-3. **“按原样”提供**：本软件按“原样”提供，不提供任何明示或暗示的担保，包括但不限于对适销性、特定用途适用性和非侵权性的担保。在任何情况下，作者或版权持有人均不对任何索赔、损害或其他责任负责。
+- **完整改编流水线**：音源获取 → 结构分析 → 旋律提取 → MIDI → 编曲 →
+  渲染 → 质量检查 → 反思。
+- **混合 Agent 架构**：主流程采用固定 LangGraph 与条件路由；分析、旋律
+  提取、编曲和质量检查使用子图；编曲阶段可选 function calling，并有确定性
+  回退路径。
+- **旋律质量治理**：人声优先的旋律源选择、多候选评分、音符稳定化、调性/
+  八度修正、质量报告和有界返工。
+- **可靠执行**：数据库租约、心跳、重复执行防护、启动恢复、LangGraph
+  checkpoint、总时限、工具时限、白名单重试和显式降级。
+- **实时可观测性**：持久化任务事件、WebSocket 多连接、断线游标回放、执行
+  trace、结构化错误和思考过程。
+- **反馈与人工介入**：完成后的反馈生成子任务；执行中的人工问题可暂停任务，
+  回答后从指定节点恢复同一任务。
+- **RAG 与长期记忆**：持久化全局/Profile 知识库、混合检索、反馈和成功任务
+  自动学习、相关记忆召回、去重与容量治理。
+- **产品功能**：Profile、偏好、工具链配置、历史会话、中英文界面和结果下载。
 
-4. **第三方依赖**：本项目依赖的部分外部工具（如 FluidSynth、Demucs 等）可能有其独立的许可证条款，请用户自行遵守。
+## 架构概览
 
-## 项目概述
-
-RingTurn 是一款 AI 音乐改编应用，支持用户上传音频、设置参数并用自然语言描述需求，系统自动完成音乐分析、旋律提取、MIDI 生成、乐器改编和音频渲染。
-
-本项目包含前端（React + Vite）和后端（FastAPI + LangGraph）。
-
-本项目默认以本地部署方式运行，不涉及用户注册、登录或任何云端账户体系。因此我们没有采用传统的 User 模块，而是使用 Profile（档案）来管理用户的个性化配置。Profile 仅存储乐器偏好、默认参数等本地配置信息，不收集任何个人敏感数据，既降低了部署与维护的复杂度，也避免了用户隐私合规方面的额外负担。（可参考[Profile与本地存储方案文档](./docs/设计说明文档：Profile模块与本地存储方案.md)）
-
-### 项目背景与动机
-
-当前，普通用户想要将喜欢的歌曲改编为手机铃声面临多重阻碍：**专业软件门槛高**、**AI 生成工具不可控**、**人工编曲成本高**。
-RingTurn 尝试填补这一空白，在流程上利用外部工具+LLM语义理解模仿人类编曲师，期望提供一个 **免费、基于原曲进行可控改编** 的 AI Agent，让非专业人士也能轻松获得个性化铃声。
-
-## 前端部署
-
+```mermaid
+flowchart TD
+    UI["React 前端"] --> API["FastAPI REST / WebSocket"]
+    API --> SCH["持久化任务调度器"]
+    SCH --> EXE["AgentExecutor"]
+    EXE --> GRAPH["LangGraph 主工作流"]
+    GRAPH --> SUB["分析 / 旋律 / 编曲 / 质量子图"]
+    SUB --> TOOLS["原子音频与 MIDI 工具"]
+    EXE --> DB["任务、事件、知识、记忆数据库"]
+    GRAPH --> CP["LangGraph Checkpoint"]
+    DB --> WS["可回放事件流"]
+    WS --> UI
 ```
+
+主工作流：
+
+```text
+entry_router
+  → fetch_source
+  → analyze_structure
+  → extract_melody
+  → generate_midi
+  → arrange
+  → render
+  → check_quality
+  → reflect
+  → retry_router ──→ END
+                   └→ arrange（有界返工）
+```
+
+反馈任务和人工介入恢复可通过 `resume_from_node` 从中间节点进入。调度器只允许
+持有有效租约的实例执行任务；应用重启后，过期租约对应的未完成任务会重新入队，
+并优先从 checkpoint 恢复。
+
+## 快速开始
+
+### 环境要求
+
+| 工具 | 建议版本 | 用途 |
+|---|---|---|
+| Node.js | ≥ 18.18 | 前端构建和开发 |
+| Python | 3.10 或 3.11 | 后端及音频模型依赖 |
+| FFmpeg | 可用的新版本 | 音频探测和格式转换 |
+| FluidSynth | ≥ 2.3 | MIDI 渲染 |
+| SoundFont | GM `.sf2` | FluidSynth 音色库 |
+
+Python 3.10 是当前依赖组合最稳妥的选择。缺少 FFmpeg 时仅有有限的 WAV 降级
+能力；缺少 FluidSynth 或 SoundFont 时无法完成标准渲染。
+
+### 1. 前端
+
+```bash
+cd frontend
 npm install
-```
-
-## 前端启动
-
-```
 npm run dev
 ```
 
-访问 `http://localhost:5173/`
+访问 `http://localhost:5173/`。Vite 开发服务器会把 API 和 WebSocket 请求代理到
+后端。
 
-## 后端部署
+### 2. 后端
 
-### 1. 创建虚拟环境
-
-```
+```bash
 conda create -n ringturn python=3.10
 conda activate ringturn
-或
-cd backend
-python -m venv venv
-+
-# Windows
-venv\Scripts\Activate
-
-# macOS / Linux
-source venv/bin/activate
-```
-
-### 2.安装依赖
-
-```
 cd backend
 pip install -r requirements.txt
 ```
 
-### 3.安装FFmpeg
+准备 SoundFont，示例路径为 `backend/soundfonts/default.sf2`。详细说明见
+[SOUNDFONTS.md](./backend/SOUNDFONTS.md)。
 
-在没有FFmpeg的情况下，依然可以处理WAV音频。
+在 `backend/.env` 中配置：
 
-> 本项目使用 `FFmpeg` 进行音频格式转换、时长获取等操作。虽然代码在缺少 FFmpeg 时会降级运行（仅支持 WAV 复制），但完整功能（如 MP3 与 WAV 互转、任意格式转换）需要依赖 FFmpeg。
-> 检验是否已安装工具：
+```env
+LLM_API_KEY=your-api-key
+LLM_MODEL=gpt-4
+LLM_BASE_URL=
 
-```bash
-ffmpeg -version # 应输出版本信息
-```
-
-（虚拟环境）conda安装：
-
-```bash
-conda install -c conda-forge ffmpeg
-```
-
-Windows安装：
-
-1. 访问 [FFmpeg 官网](https://ffmpeg.org/download.html) → Windows 图标 → Windows builds from gyan.dev。
-2. 下载 ffmpeg-release-full.7z 或 ffmpeg-release-full.zip。
-3. 解压到本地，如`C:\ffmpeg`
-4. 将路径添加到系统环境变量PATH
-   Linux安装：
-
-```bash
-sudo apt update
-sudo apt install ffmpeg
-```
-
-### 4.安装FluidSynth
-
-Windows下载：
-访问github仓库[分发界面](https://github.com/FluidSynth/fluidsynth/releases)，下载最新版本，例如`fluidsynth-v2.5.4-win10-x64-cpp11.zip`。
-由于`pyFluidSynth`的局限性，暂时必须把FluidSynth下载解压到`C:\tools\fluidsynth`路径，请确保`C:\tools\fluidsynth\bin`存在。
-（在测试中注意到在不同环境下有变化，建议按照实际情况处理）
-
-### 5.下载音色库
-为了保证项目正常运行，你至少需要在`backend/soundfonts`文件下下载一个音色库，具体可参考[SOUNDFONTS.md](./backend/SOUNDFONTS.md)。
-
-## 配置环境变量
-
-创建 `.env` 文件：
-
-```
-# LLM 配置
-LLM_API_KEY=your-api-key-here
-LLM_MODEL=glm-4-flash
-LLM_BASE_URL=https://your-api-endpoint
-LLM_REQUEST_TIMEOUT_SECONDS=60
-LLM_MAX_ATTEMPTS=3
-LLM_RETRY_BACKOFF_SECONDS=1
-LLM_RETRY_MAX_BACKOFF_SECONDS=8
 DATABASE_URL=sqlite:///./ringturn.db
+CHECKPOINT_DB_URL=sqlite:///./checkpoints.db
+FLUIDSYNTH_PATH=fluidsynth
+SOUNDFONT_PATH=./soundfonts/default.sf2
+FFMPEG_PATH=
+
+AGENT_PIPELINE_TIMEOUT_SECONDS=1800
+AGENT_TOOL_TIMEOUT_SECONDS=180
+AGENT_TOOL_MAX_ATTEMPTS=2
 AGENT_LEASE_SECONDS=120
 AGENT_HEARTBEAT_SECONDS=30
 AGENT_RECOVER_ON_STARTUP=true
+
+TASK_EVENT_REPLAY_LIMIT=500
 TASK_EVENT_POLL_SECONDS=1
 TASK_EVENT_HEARTBEAT_SECONDS=15
+
 RAG_TOP_K=4
 MEMORY_TOP_K=6
 MEMORY_MAX_PER_PROFILE=200
 MEMORY_HALF_LIFE_DAYS=90
 ```
 
-任务租约、重启恢复、可回放 WebSocket 事件与人工介入协议详见
-[Agent 运行时连续性文档](./docs/Agent运行时连续性.md)。
-RAG 知识检索、Profile 长期记忆和管理接口详见
-[RAG 与长期记忆文档](./docs/RAG与长期记忆.md)。
+启动：
 
-## 后端启动
-
-```
+```bash
+cd backend
 python -m app.main
 # 或
 uvicorn app.main:app --reload
 ```
 
-服务运行在 `http://localhost:8000`
+- API：`http://localhost:8000/api/v1`
+- Swagger UI：`http://localhost:8000/docs`
+- ReDoc：`http://localhost:8000/redoc`
 
-### API文档
+## 任务状态与实时事件
 
-启动后访问：
+任务状态为：
 
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+```text
+pending → planning → executing → completed
+                        ├──────→ failed
+                        ├──────→ cancelled
+                        └──────→ waiting_input → pending
+```
+
+`completed`、`failed`、`cancelled` 是终态。取消操作幂等，终态不会被迟到的执行
+结果覆盖。
+
+WebSocket 地址：
+
+```text
+ws://localhost:8000/ws/chat/{task_id}?after_event_id={cursor}
+```
+
+客户端保存最后一个 `event_id`，重连时可以回放遗漏事件。常见事件包括
+`status_update`、`thinking_update`、`trace_event`、`waiting_input`、
+`completed`、`failed`、`cancelled` 和 `heartbeat`。
+
+## 常用 API
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/v1/upload` | 上传音频 |
+| POST | `/api/v1/tasks` | 创建任务 |
+| GET | `/api/v1/tasks/{task_id}/status` | 查询状态和人工介入信息 |
+| GET | `/api/v1/tasks/{task_id}/trace` | 查询执行诊断 |
+| GET | `/api/v1/tasks/{task_id}/result` | 获取结果 |
+| DELETE | `/api/v1/tasks/{task_id}` | 幂等取消任务 |
+| POST | `/api/v1/tasks/{task_id}/feedback` | 对完成结果提交反馈 |
+| POST | `/api/v1/tasks/{task_id}/interventions` | 暂停并请求人工输入 |
+| POST | `/api/v1/tasks/{task_id}/interventions/{id}/response` | 回答并恢复任务 |
+| GET/POST | `/api/v1/profiles/{profile_id}/memories` | 管理长期记忆 |
+| GET | `/api/v1/knowledge/search` | 检索编曲知识 |
+| GET/POST | `/api/v1/knowledge/documents` | 管理知识文档 |
+
+完整协议见 [接口文档](./docs/接口文档.md)。
 
 ## 项目结构
 
-更详细的结构信息参见前端和后端的readme
-
-```
+```text
 ringturn/
-├── frontend/ # 前端项目
-│ ├── src/
-│ │ ├── api/index.ts # API 请求封装
-│ │ ├── components/ # 通用组件
-│ │ ├── pages/
-│ │ │ ├── Home.tsx # 首页
-│ │ │ └── ChatFlow.tsx # 聊天页
-│ │ ├── types/index.ts # TypeScript 类型
-│ │ ├── App.tsx # 路由配置
-│ │ ├── main.tsx # 应用入口
-│ │ ├── i18n.ts # 国际化配置
-│ │ └── index.css # 全局样式
-│ ├── vite.config.ts # Vite 配置（含代理）
-│ ├── tailwind.config.js # Tailwind 配置
-│ └── package.json # 前端依赖
-│
-└── backend/ # 后端项目
-  ├── app/
-  │ ├── main.py # FastAPI 入口
-  │ ├── core/config.py # 配置管理
-  │ ├── models/ # 数据库模型
-  │ ├── api/v1/ # API 路由
-  │ ├── agent/ # LangGraph Agent
-  │ ├── atomic_tools/ # 原子工具集
-  │ ├── schemas/ # Pydantic 数据模型
-  │ ├── services/ # 业务服务
-  │ └── db/session.py # 数据库管理
-  ├── soundfonts/ # SoundFont 音色库
-  └── requirements.txt # Python 依赖
+├── frontend/                       # React + TypeScript + Vite
+│   └── src/
+│       ├── api/                    # REST 请求封装
+│       ├── components/             # 页面与工具链组件
+│       ├── hooks/                  # WebSocket 等 Hooks
+│       ├── pages/                  # Home / ChatFlow / Settings
+│       ├── types/                  # TypeScript 类型
+│       └── utils/websocket.ts      # 游标重连客户端
+├── backend/
+│   ├── app/
+│   │   ├── agent/                  # 主图、子图、节点、工具、trace
+│   │   ├── api/v1/                 # REST 与 WebSocket
+│   │   ├── models/                 # SQLAlchemy 模型
+│   │   ├── schemas/                # Pydantic 协议
+│   │   ├── services/               # 调度、事件、LLM、RAG、记忆
+│   │   ├── core/                   # 配置与异常
+│   │   └── db/                     # 数据库会话
+│   ├── evaluation/                 # 旋律基准工具
+│   └── tests/                      # 单元和回归测试
+└── docs/                            # 当前实现与历史设计文档
 ```
 
-## 环境要求
+## 测试
 
-| 工具       | 版本        | 用途            |
-| ---------- | ----------- | --------------- |
-| Node.js    | ≥ 18.18.0   | 前端运行环境    |
-| Python     | 3.10 ~ 3.12 | 后端运行环境    |
-| FFmpeg     | 最新版      | 音频格式转换    |
-| FluidSynth | ≥ 2.3       | MIDI 渲染为音频 |
+```bash
+cd backend
+python -m pytest -q
+python -m compileall -q app tests
+python -m ruff check app tests --select=F821,F822,F823 --ignore=I
+```
 
-## API 接口（部分）
+当前回归基线为 `114 passed, 3 skipped`。跳过项通常依赖本机模型、外部二进制或
+可选测试资源。
 
-| 方法   | 路径                             | 说明               |
-| :----- | :------------------------------- | :----------------- |
-| POST   | `/api/v1/upload`                 | 上传音频文件       |
-| POST   | `/api/v1/tasks`                  | 创建改编任务       |
-| GET    | `/api/v1/tasks/{task_id}`        | 获取任务详情       |
-| GET    | `/api/v1/tasks/{task_id}/status` | 获取任务状态       |
-| GET    | `/api/v1/tasks/{task_id}/result` | 获取生成结果       |
-| DELETE | `/api/v1/tasks/{task_id}`        | 取消任务           |
-| GET    | `/api/v1/profiles/{profile_id}/tasks` | 获取当前档案的任务列表 |
-| WS     | `/ws/chat/{task_id}`             | WebSocket 实时推送 |
+## 文档导航
 
-详情请见[接口文档](./docs/接口文档.md)。
+- [文档索引](./docs/README.md)
+- [Agent 当前实现](./docs/Agent详细设计.md)
+- [Agent 可观测性与韧性](./docs/Agent执行可观测性.md)
+- [任务调度、重启恢复与人工介入](./docs/Agent运行时连续性.md)
+- [RAG 与长期记忆](./docs/RAG与长期记忆.md)
+- [完整接口文档](./docs/接口文档.md)
+- [Profile 与本地存储](./docs/设计说明文档：Profile模块与本地存储方案.md)
+- [工具链配置](./docs/用户工具管理功能设计.md)
 
-### 常见问题
+## 当前边界
 
-**Q: 音频生成失败，日志显示 `FluidSynth未找到`**
-A: 检查 FluidSynth 是否安装并添加 PATH。
-
-**Q: 音频生成失败，日志显示 `FFmpeg 不可用`**
-A: 安装 FFmpeg 并确认 `ffmpeg -version` 能正常输出。
-
-**Q: librosa 相关 warning 导致生成质量差**
-A: 使用 Python 3.10 创建虚拟环境，避免 3.13 的兼容性问题。
-
-## 页面
-详情请查看[前端页面设计文档](./docs/前端页面设计.md)。
-
-## 技术选型
-
-| 层级 | 技术栈 | 说明 |
-| :--- | :--- | :--- |
-| **前端** | React 18 + TypeScript | 构建交互式用户界面 |
-| **前端可视化** | ReactFlow | 用于工具链图的展示与编辑 |
-| **国际化** | i18next | 支持中英文界面切换 |
-| **后端框架** | FastAPI + Uvicorn | 提供高性能 REST API 与 WebSocket |
-| **Agent 框架** | LangGraph + LangChain | 构建有状态、可恢复的 Agent 工作流 |
-| **LLM 模型** | GLM-4-Flash | 负责自然语言理解、任务规划与反思决策 |
-| **音频处理** | Librosa, Basic Pitch, Demucs, FluidSynth | 涵盖音频分析、旋律提取、音源分离与 MIDI 渲染 |
-| **数据库** | SQLite + SQLAlchemy | 轻量级数据持久化，配合 LangGraph Checkpoint 实现任务状态保存 |
-
-## 项目反思与经验总结
-
-### 1. 设计与实现的错位
-
-在实际开发过程中，我们发现规划与落地之间存在一定差距：
-
-- **页面设计**：原计划通过 Figma/Penpot 进行精细的 UI 设计，但相关工具学习曲线陡峭，且设计和开发之间的错位难以弥合。后期我们改用“快速原型 + 开发中迭代优化”的模式，在保证界面可用性的同时，根据实际开发情况动态调整交互细节。
-- **工具链效果**：设计阶段计划利用工具进行精准的音乐分析。但在实际 Windows 环境中测试发现，部分论文中的 SOTA（State-of-the-art）模型落地效果不佳或环境兼容性差，我们不得不重新调整改编策略。
-- **开发计划**：原计划在迭代三重点提升 `Arrange` 节点（引入 RAG 知识库、支持用户保存改编 Skill），但由于 `Analysis` 和 `Extract_Melody` 等前置节点的基础不牢，我们花费了大量时间测试外部工具，最终导致学期剩余时间不足以完成 Arrange 节点的进阶功能。
-
-### 2. 架构收获
-
-尽管面临挑战，我们在架构设计上取得了一定进展：
-
-- **动态子图重构**：将 `Analysis`、`Extract_Melody`、`Arrange` 等核心节点重构为基于 JSON 配置驱动的动态子图，极大提升了系统的可扩展性与灵活性。（可参考[用户工具管理功能设计文档](./docs/用户工具管理功能设计.md)）
-- **产品化功能落地**：成功实现了历史对话管理、多轮重做（反馈）机制、用户偏好统计与注入等功能，确保了项目在交互层面的完整性。
-
-### 3. 现状与展望
-
-目前，RingTurn 受限于外部工具的实际效果和开发时间，仅能稳定支持**简单的纯音乐乐器更换与基础节奏调整**。但我们在代码结构上为未来接入更多模型与工具预留了充分的空间，体现了本课程项目 **“工程化与可拓展性”** 的核心设计思想。
+- 任务调度使用主数据库租约与进程内协程，尚未接入独立消息队列或分布式工作
+  池；不可抢占的原生计算只能在边界处观察取消。
+- RAG 使用本地持久化文档和轻量混合检索，不依赖外部向量数据库或 Embedding
+  服务；适合当前小型知识库。
+- 音频质量受源文件、模型、SoundFont 和本机工具链影响。当前更适合课程演示和
+  简单旋律铃声改编，不应视为专业母带制作系统。
