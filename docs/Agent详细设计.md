@@ -1,625 +1,283 @@
-# RingTurn Agent 详细设计文档
+# RingTurn Agent 详细设计
 
-> **实现状态说明（2026-10）**：当前主 Agent 是固定 LangGraph 工作流与条件
-> 路由的混合架构，并非每个节点都创建 ReAct 子 Agent。部分分析/提取/编排/
-> 质量节点内部使用子图，`arrange` 可选启用 function calling。执行诊断、错误
-> 模型和 checkpoint 生命周期以 [Agent执行可观测性.md](Agent执行可观测性.md)
-> 为准；本文其余 ReAct 示例保留为早期设计背景。
+> 实现基线：2026-10。本文描述当前代码，而非早期“每个节点都是 ReAct
+> 子 Agent”的设想。执行诊断见 [Agent 执行可观测性](./Agent执行可观测性.md)，
+> 调度与恢复见 [Agent 运行时连续性](./Agent运行时连续性.md)，检索与记忆见
+> [RAG 与长期记忆](./RAG与长期记忆.md)。
 
-## 1. 概述
+## 1. 定位与架构原则
 
-### 1.1 Agent 定位
+RingTurn Agent 把用户的自然语言改编需求转换为一条可执行、可诊断、可恢复的
+音频处理流程。设计原则如下：
 
-RingTurn Agent 是整个系统的智能核心，负责理解用户需求、规划执行步骤、调用外部工具完成音乐改编任务，并支持多轮对话迭代优化。
+1. **确定性主干**：文件处理和音频产物不完全交给 LLM 自由规划，主流程由
+   LangGraph 固定边和条件路由约束。
+2. **领域子图**：分析、旋律提取、编曲和质量检查在独立子图内组织，Profile
+   可以覆盖部分工具链配置。
+3. **有限自主性**：编曲阶段允许 LLM 通过 function calling 自主选择工具，
+   但结果缺失、无效或异常时回退到确定性编曲子图。
+4. **持久化边界**：任务状态、事件、租约、知识和记忆进入主数据库；LangGraph
+   状态进入 checkpoint 数据库；中间文件保存在任务目录。
+5. **终态优先**：取消、失败和完成写入均受条件约束，迟到执行结果不能覆盖已
+   持久化的终态。
+6. **诊断不泄露正文**：trace 记录结构、时长、路由、重试和错误模型，不记录
+   提示词、记忆正文、密钥或私有文件路径。
 
-### 1.2 技术选型
+## 2. 组件关系
 
-| 组件 | 技术 | 作用 |
-|------|------|------|
-| Agent 框架 | LangGraph | 构建有状态、可中断、可恢复的工作流 |
-| 推理模式 | 固定图 + 条件路由 + 可选 function calling | 确定性音频流水线，编排阶段可自主调用工具 |
-| 状态持久化 | langgraph-checkpoint-sqlite | 支持任务中断恢复 |
-| LLM 调用 | OpenAI / ChatGLM | 理解自然语言、决策规划 |
-
-### 1.3 核心能力
-
-1. **自然语言理解**：解析用户模糊需求（"温柔钢琴风" → 乐器=钢琴，力度=柔和）
-2. **任务规划**：将复杂任务分解为有序步骤（通过 LLM 生成）
-3. **工具编排**：调用原子工具完成音频处理、MIDI 生成、渲染等
-4. **质量反思**：评估生成结果，决定是否需要重试
-5. **多轮对话**：支持基于用户反馈迭代优化
-
----
-
-## 2. 架构设计
-
-### 2.1 整体架构图
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         用户请求                                  │
-│              (上传音频 + 铃声参数 + 自然语言描述)                   │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      FastAPI 入口                                │
-│                   POST /api/v1/tasks                             │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    AgentExecutor                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │              LangGraph Workflow (graph.py)               │   │
-│  │                                                          │   │
-│  │   ┌──────────┐    ┌──────────┐    ┌──────────┐          │   │
-│  │   │ planner │───▶│ fetch_   │───▶│ analyze_ │───▶...   │   │
-│  │   │         │    │ source   │    │ structure│          │   │
-│  │   └──────────┘    └──────────┘    └──────────┘          │   │
-│  │                                                          │   │
-│  │   主节点按固定边和条件路由执行，复杂节点可调用子图          │   │
-│  │   arrange 可选使用 function calling，失败时确定性回退       │   │
-│  └─────────────────────────────────────────────────────────┘   │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                  原子工具层 (atomic_tools/)                      │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐              │
-│  │  analysis/  │ │   melody/   │ │    midi/    │              │
-│  │  BPM,Key... │ │ BasicPitch..│ │ create,val..│              │
-│  └─────────────┘ └─────────────┘ └─────────────┘              │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐              │
-│  │arrangement/ │ │ rendering/  │ │  quality/   │              │
-│  │instrument.. │ │FluidSynth.. │ │ evaluate... │              │
-│  └─────────────┘ └─────────────┘ └─────────────┘              │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    API["Tasks / Feedback API"] --> SCHED["Task Scheduler"]
+    SCHED --> EXEC["AgentExecutor"]
+    EXEC --> MAIN["LangGraph Main Graph"]
+    MAIN --> ANALYSIS["Analysis Graph"]
+    MAIN --> EXTRACT["Extract Graph"]
+    MAIN --> ARRANGE["Autonomous + Arrange Graph"]
+    MAIN --> QUALITY["Quality Graph + Reflect"]
+    EXEC --> MEMORY["Profile Memory Context"]
+    ARRANGE --> RAG["Knowledge Retrieval"]
+    EXEC --> TRACE["Trace + Task Events"]
+    MAIN --> CHECKPOINT["SQLite Checkpoint"]
 ```
 
-### 2.2 目录结构
+关键目录：
 
-```
-backend/app/agent/
-├── __init__.py              # 模块导出
-├── state.py                 # AgentState 定义、TaskStep 枚举
-├── graph.py                 # LangGraph 工作流定义（节点编排）
-├── agent_executor.py        # Agent 执行器入口
-├── callbacks.py             # LangChain 回调处理器（思考记录）
-├── thinking_utils.py        # 思考记录工具
-├── nodes/                   # 节点处理器模块
-│   ├── __init__.py         # 导出节点 + NODE_HANDLERS
-│   ├── _helpers.py         # 辅助函数
-│   ├── fetch_source.py
-│   ├── analyze_structure.py
-│   ├── extract_melody.py
-│   ├── generate_midi.py
-│   ├── arrange.py
-│   ├── render.py
-│   └── check_quality.py
-└── atomic_tools/           # 原子工具集
-```
-
----
-
-## 3. 状态管理 (state.py)
-
-### 3.1 AgentState 定义
-
-```python
-class AgentState(TypedDict, total=False):
-    # 任务标识
-    task_id: str
-    user_id: int
-    thread_id: str              # LangGraph 检查点 ID
-
-    # 用户输入
-    user_request: str           # 原始用户需求
-    source_type: str            # 'upload', 'link', 'search'
-    source_value: str           # 文件ID或链接
-    file_id: str | None         # 上传文件的ID
-
-    # 铃声参数
-    instrument: str             # 目标乐器
-    duration: int               # 时长（秒）
-    tempo: int                  # 速度
-    filename: str               # 文件名
-
-    # 中间结果
-    audio_path: str | None      # 音频文件路径
-    analysis_result: dict | None # 音频分析结果
-    melody_data: dict | None    # 旋律数据
-    midi_path: str | None       # 原始 MIDI 路径
-    arrangement_params: dict | None  # 改编参数
-    arranged_midi_path: str | None   # 改编后 MIDI
-
-    # 输出
-    final_audio_path: str | None
-    final_audio_url: str | None
-    audio_duration: float | None
-
-    # 执行状态
-    current_step: TaskStep | None
-    current_step_index: int
-    plan: list[str]
-    step_results: dict
-
-    # 反馈与反思
-    feedback_history: list[dict]
-    reflection: str | None
-    needs_revision: bool
-
-    # 错误处理
-    error: str | None
-    retry_count: int
-
-    # 元数据
-    created_at: datetime
-    updated_at: datetime
+```text
+backend/app/
+├── agent/
+│   ├── graph.py                 # 主图和入口/重试路由
+│   ├── agent_executor.py        # 任务执行、恢复、终态同步
+│   ├── state.py                 # AgentState 与 reducer
+│   ├── trace.py                 # 事件、错误、清洗和节点包装器
+│   ├── resilience.py            # 超时、重试、错误分类
+│   ├── nodes/                   # 主节点
+│   ├── tool_graphs/             # 分析、提取、编曲、质量子图
+│   └── atomic_tools/            # 原子工具
+├── services/
+│   ├── task_scheduler.py        # 租约、心跳和恢复扫描
+│   ├── task_events.py           # 持久化事件和进程内 broker
+│   ├── llm_service.py           # LLM、规划、反思和结构化决策
+│   ├── knowledge_base.py        # RAG 文档与检索
+│   └── memory.py                # 长期记忆与任务上下文
+└── api/v1/
+    ├── endpoints/tasks.py       # 任务 API 与后台 runner
+    ├── endpoints/feedback.py    # 反馈和人工介入
+    └── websocket/chat.py        # 事件回放与实时订阅
 ```
 
-### 3.2 TaskStep 枚举
+## 3. 主工作流
 
-```python
-class TaskStep(str, Enum):
-    """子步骤枚举"""
-    FETCH_SOURCE = "fetch_source"
-    ANALYZE_STRUCTURE = "analyze_structure"
-    EXTRACT_MELODY = "extract_melody"
-    GENERATE_MIDI = "generate_midi"
-    ARRANGE = "arrange"
-    RENDER = "render"
-    CHECK_QUALITY = "check_quality"
+`agent/graph.py` 构建并缓存一个 `CompiledStateGraph`：
+
+```text
+entry_router
+  ├─ new_task / invalid target → fetch_source
+  └─ feedback_resume           → 指定节点
+
+fetch_source
+  → analyze_structure
+  → extract_melody
+  → generate_midi
+  → arrange
+  → render
+  → check_quality
+  → reflect
+  → retry_router
+       ├─ quality_accepted / retry_limit_reached → END
+       └─ quality_revision_requested             → arrange
 ```
 
-### 3.3 任务状态机
-
-```
-                    ┌──────────────┐
-                    │   pending    │ ←─── 新建任务
-                    └──────┬───────┘
-                           │
-                           ▼
-              ┌────────────────────────┐
-              │   planning → executing │
-              └────────────┬───────────┘
-                           │
-           ┌───────────────┼───────────────┐
-           │               │               │
-           ▼               ▼               ▼
-    ┌──────────┐   ┌──────────┐   ┌──────────┐
-    │completed │   │executing │   │ cancelled│
-    └──────────┘   └────┬─────┘   └──────────┘
-                        │
-         ┌──────────────┼──────────────┐
-         │              │              │
-         ▼              ▼              ▼
-  ┌──────────┐   ┌──────────┐   ┌──────────┐
-  │completed │   │waiting_  │   │  failed  │
-  │ (通过)   │   │  input   │   │ (失败)   │
-  └──────────┘   └──────────┘   └──────────┘
-                      (用户反馈后回到 executing)
-```
-
-| 状态 | 说明 |
-|------|------|
-| `pending` | 任务已创建，等待调度 |
-| `planning` | Agent 分析需求，制定计划 |
-| `executing` | 执行中（包含多个子步骤） |
-| `waiting_input` | 等待用户补充信息或反馈 |
-| `completed` | 任务完成 |
-| `failed` | 执行失败 |
-| `cancelled` | 用户取消 |
-
-`completed`、`failed` 和 `cancelled` 是终态。取消操作幂等；持久化的取消状态
-优先于迟到的成功或失败写入，后台执行器只能原子地认领 `pending` 任务。
-
----
-
-## 4. 工作流设计 (graph.py)
-
-### 4.1 LangGraph 工作流
-
-RingTurn 使用 LangGraph 定义状态机工作流，支持：
-
-- **节点编排**：顺序执行各处理步骤
-- **条件分支**：根据执行结果决定下一步
-- **循环**：质量不达标时重新执行改编步骤
-- **检查点**：任务可中断、可恢复
-
-### 4.2 节点图
-
-```
-                    ┌─────────┐
-                    │ planner │
-                    └────┬────┘
-                         │
-                         ▼
-                 ┌───────────────┐
-                 │ FETCH_SOURCE  │ ←── 获取上传的音频文件
-                 └───────┬───────┘
-                         │
-                         ▼
-                 ┌───────────────┐
-                 │ ANALYZE_      │ ←── 调用分析工具提取特征
-                 │ STRUCTURE     │    (BPM, Key, Chords, Energy...)
-                 └───────┬───────┘
-                         │
-                         ▼
-                 ┌───────────────┐
-                 │ EXTRACT_      │ ←── 旋律提取
-                 │ MELODY        │    (Basic Pitch / librosa)
-                 └───────┬───────┘
-                         │
-                         ▼
-                 ┌───────────────┐
-                 │ GENERATE_MIDI │ ←── 从音符生成 MIDI 文件
-                 └───────┬───────┘
-                         │
-                         ▼
-                 ┌───────────────┐
-                 │   ARRANGE     │ ←── 更换乐器、调整速度
-                 └───────┬───────┘
-                         │
-                         ▼
-                 ┌───────────────┐
-                 │    RENDER     │ ←── FluidSynth 渲染 + 格式转换
-                 └───────┬───────┘
-                         │
-                         ▼
-                 ┌───────────────┐
-                 │CHECK_QUALITY │ ←── 质量评估
-                 └───────┬───────┘
-                         │
-                         ▼
-                 ┌───────────────┐
-                 │    REFLECT    │ ←── 反思决策
-                 └───────┬───────┘
-                         │
-          ┌──────────────┼──────────────┐
-          │              │              │
-          ▼              ▼              ▼
-   ┌──────────┐   ┌──────────┐   ┌──────────┐
-   │   END     │   │WAITING_  │   │  RETRY    │
-   │(完成)     │   │  INPUT   │   │(重试)    │
-   └──────────┘   └──────────┘   └────┬─────┘
-                                       │
-                              (回到 ARRANGE 重新执行)
-```
-
-### 4.3 执行流程说明
-
-1. **planner**: 使用 LLM 生成执行计划
-2. **每个节点**: 使用 `create_react_agent` 创建子 Agent，传入相关原子工具
-3. **子 Agent**: 通过 ReAct 模式自主决定调用哪些工具
-4. **失败重试**: `generate_midi`, `arrange`, `render` 步骤失败时自动重试
-5. **质量循环**: 质量不达标时，重新执行改编和渲染步骤
-
----
-
-## 5. 节点处理 (nodes.py)
-
-### 5.1 节点处理器映射
-
-```python
-# app/agent/nodes/__init__.py
-from .fetch_source import fetch_source_node
-from .analyze_structure import analyze_structure_node
-from .extract_melody import extract_melody_node
-from .generate_midi import generate_midi_node
-from .arrange import arrange_node
-from .render import render_node
-from .check_quality import check_quality_node
-
-NODE_HANDLERS = {
-    TaskStep.FETCH_SOURCE.value: fetch_source_node,
-    TaskStep.ANALYZE_STRUCTURE.value: analyze_structure_node,
-    TaskStep.EXTRACT_MELODY.value: extract_melody_node,
-    TaskStep.GENERATE_MIDI.value: generate_midi_node,
-    TaskStep.ARRANGE.value: arrange_node,
-    TaskStep.RENDER.value: render_node,
-    TaskStep.CHECK_QUALITY.value: check_quality_node,
-}
-```
-
-### 5.2 各节点职责
-
-| 节点 | 文件 | 子 Agent 工具 | 说明 |
-|------|------|--------------|------|
-| `fetch_source_node` | `fetch_source.py` | - | 验证上传文件，初始化 audio_path |
-| `analyze_structure_node` | `analyze_structure.py` | get_bpm, get_key, get_spectral_centroid, get_rms_energy, extract_chord_progression, detect_instruments | 提取 BPM、调性、和弦、乐器等 |
-| `extract_melody_node` | `extract_melody.py` | extract_melody_basic_pitch, extract_melody_librosa, filter_short_notes, quantize_notes | 提取主旋律音符 |
-| `generate_midi_node` | `generate_midi.py` | create_midi_from_notes | 从音符生成 MIDI |
-| `arrange_node` | `arrange.py` | change_instrument, change_tempo, quantize_midi | 更换乐器、调整速度 |
-| `render_node` | `render.py` | render_midi_with_fluidsynth, convert_wav_to_mp3, smart_clip_audio | 渲染并截取 |
-| `check_quality_node` | `check_quality.py` | evaluate_overall_quality | 综合质量评估 |
-
-### 5.3 子 Agent Prompt 设计
-
-每个节点使用结构化 Prompt，引导 LLM 按 `[思考]` → 工具调用 → 结果 的格式执行：
-
-```
-**你必须严格遵守以下交互格式：**
-在每次调用任何工具之前，先输出一句中文说明，格式为："[思考] 我接下来将使用 <工具名>，因为 <原因>。"
-然后调用工具。
-完成所有工具调用后，再单独输出最终的 JSON 结果。
-**绝对不要省略 `[思考]` 行！**
-
-示例：
-[思考] 我接下来将使用 get_bpm，因为需要知道歌曲速度。
-（随后调用 get_bpm 工具）
-[思考] 我接下来将使用 get_key，因为需要确定调性以便后续改编。
-（随后调用 get_key 工具）
-最终 JSON 结果：
-{"bpm": 120, "key": "C Major", ...}
-```
-
----
-
-## 6. 原子工具 (atomic_tools/)
-
-### 6.1 工具分类
-
-#### 分析工具 (analysis/)
-
-| 工具 | 功能 |
-|------|------|
-| `get_bpm_tool` | 检测 BPM |
-| `get_key_tool` | 检测调性 |
-| `get_spectral_centroid_tool` | 频谱质心 |
-| `get_rms_energy_tool` | RMS 能量 |
-| `extract_chord_progression_tool` | 和弦进行 |
-| `detect_instruments_tool` | 乐器检测 |
-| `get_sections_tool` | 段落检测 |
-
-#### 旋律工具 (melody/)
-
-| 工具 | 功能 |
-|------|------|
-| `extract_melody_basic_pitch_tool` | Basic Pitch 深度学习提取 |
-| `extract_melody_librosa_tool` | librosa 峰值提取（降级） |
-| `filter_short_notes_tool` | 过滤短音符 |
-| `quantize_notes_tool` | 量化音符到网格 |
-
-#### MIDI 工具 (midi/)
-
-| 工具 | 功能 |
-|------|------|
-| `create_midi_from_notes_tool` | 从音符创建 MIDI |
-| `validate_midi_file_tool` | 验证 MIDI 文件 |
-| `set_tempo_tool` | 设置速度 |
-
-#### 改编工具 (arrangement/)
-
-| 工具 | 功能 |
-|------|------|
-| `change_instrument_tool` | 更换乐器 |
-| `change_tempo_tool` | 调整速度 |
-| `quantize_midi_tool` | MIDI 量化 |
-
-#### 渲染工具 (rendering/)
-
-| 工具 | 功能 |
-|------|------|
-| `render_midi_with_fluidsynth_tool` | FluidSynth 渲染 |
-| `convert_wav_to_mp3_tool` | WAV 转 MP3 |
-| `smart_clip_audio_tool` | 智能截取 |
-
-#### 质量工具 (quality/)
-
-| 工具 | 功能 |
-|------|------|
-| `evaluate_overall_quality_tool` | 综合质量评估 |
-| `loudness_check_tool` | 响度检查 |
-| `dynamic_range_tool` | 动态范围 |
-| `spectral_balance_tool` | 频谱平衡 |
-| `zero_crossing_rate_tool` | 过零率 |
-
-### 6.2 降级策略
-
-```python
-# 旋律提取降级示例
-step_tools = [
-    extract_melody_basic_pitch_tool,   # 优先使用 Basic Pitch
-    extract_melody_librosa_tool,       # 备选
-    filter_short_notes_tool,
-    quantize_notes_tool,
-]
-
-# 如果子 Agent 失败，降级到直接调用
-melody_data = await extract_melody_librosa(audio_path)
-```
-
----
-
-## 7. 回调机制 (callbacks.py)
-
-### 7.1 ThinkingCallbackHandler
-
-```python
-class ThinkingCallbackHandler(AsyncCallbackHandler):
-    """LangChain 异步回调处理器"""
-
-    async def on_llm_start(self, ...):
-        record_thought(task_id, step, "开始调用 LLM...")
-
-    async def on_llm_end(self, response, ...):
-        # 提取 LLM 输出并记录
-        for gen in response.generations:
-            text = gen.message.content
-            record_thought(task_id, step, f"[LLM 思考] {text[:500]}")
-
-    async def on_tool_start(self, serialized, input_str, ...):
-        record_thought(task_id, step, f"调用工具: {name}")
-
-    async def on_tool_end(self, output, ...):
-        record_thought(task_id, step, f"工具返回: {content[:200]}")
-```
-
-### 7.2 思考记录存储
-
-思考记录存储在数据库 `Task.thinking_process` JSON 字段中，可通过 WebSocket 实时推送给前端展示。
-
----
-
-## 8. 执行器 (agent_executor.py)
-
-### 8.1 AgentExecutor 类
-
-```python
-class AgentExecutor:
-    """Agent 执行入口"""
-
-    async def execute(self) -> dict:
-        # 1. 规划阶段
-        await self._update_task_status(TaskStatus.planning)
-        await self._plan()
-
-        # 2. 执行阶段
-        await self._update_task_status(TaskStatus.executing)
-        await self._execute_steps()
-
-        # 3. 完成
-        await self._update_task_status(TaskStatus.completed)
-
-    async def execute_optimization(self, feedback: str) -> dict:
-        """基于用户反馈的优化"""
-        # 添加反馈到历史
-        self.state["feedback_history"].append({...})
-
-        # 重新执行改编和渲染步骤
-        await self._execute_step(TaskStep.ARRANGE.value)
-        await self._execute_step(TaskStep.RENDER.value)
-        await self._execute_step(TaskStep.CHECK_QUALITY.value)
-```
-
-### 8.2 步骤执行
-
-```python
-async def _execute_step(self, step: str) -> None:
-    handler = NODE_HANDLERS.get(step)
-    if not handler:
-        raise ValueError(f"未知步骤: {step}")
-
-    max_attempts = 2
-    for attempt in range(max_attempts):
-        try:
-            await handler(self.state, self.db, None)
-            return
-        except Exception as e:
-            if attempt < max_attempts - 1 and step in ("generate_midi", "arrange", "render"):
-                continue  # 重试
-            raise
-```
+所有主节点通过 `instrument_node` 包装。包装器负责：
 
-### 8.3 任务生命周期与取消
-
-- `run_agent_task` 通过条件更新原子认领任务，只有 `pending` 能进入
-  `planning`；已取消或已被认领的任务直接跳过。
-- 取消接口先提交 `cancelled`，再向进程内注册的 `AgentExecutor` 发出信号。
-  重复取消返回成功；`completed` 和 `failed` 不允许取消。
-- 执行器绑定外层执行协程、LangGraph 图任务与受管理子进程。持久化取消状态
-  优先于迟到的完成/失败状态更新，因此并发竞态不会复活任务。
-- 控制请求与执行器退出分别记录 `control/task_cancellation` 和
-  `task/agent_execution` 取消事件；应用关闭时会取消并等待后台任务快照。
-
----
-
-## 9. LLM 集成 (services/llm_service.py)
-
-### 9.1 LLMService 类
-
-```python
-class LLMService:
-    async def chat(self, messages, model, temperature, max_tokens) -> str:
-        """带单次超时、瞬时错误重试和脱敏 trace 的 LLM 调用"""
-
-    async def parse_user_request(self, user_request: str) -> dict:
-        """解析用户需求"""
-
-    async def generate_plan(self, user_request: str) -> list[str]:
-        """生成执行计划"""
-
-    async def reflect_on_quality(self, quality_result: dict, user_request: str) -> dict:
-        """反思质量评估结果"""
-
-def get_llm():
-    """返回 LangChain 兼容的 ChatOpenAI 实例"""
-    return ChatOpenAI(
-        api_key=settings.LLM_API_KEY,
-        base_url=settings.LLM_BASE_URL,
-        model=settings.LLM_MODEL,
-        temperature=0.7,
-        timeout=settings.LLM_REQUEST_TIMEOUT_SECONDS,
-        max_retries=settings.LLM_MAX_ATTEMPTS - 1,
-    )
-```
-
-`LLMService` 延迟初始化 SDK 客户端。直连调用只重试限流、连接、超时和
-服务端 5xx；结构化事件不保存 prompt、用户记忆或响应正文。Agent 执行器在
-任务结束时恢复记忆和 trace 的 `ContextVar`，避免并发任务上下文串用。
-
----
-
-## 10. 扩展指南
-
-### 10.1 添加新原子工具
-
-1. 在对应目录创建工具文件：
-
-```python
-# app/agent/atomic_tools/analysis/my_tool.py
-from langchain_core.tools import tool
-
-@tool
-def my_analysis_tool(audio_path: str) -> dict:
-    """我的分析工具"""
-    # 实现逻辑
-    return {"result": "value"}
-```
-
-2. 在 `__init__.py` 中导出：
-
-```python
-# app/agent/atomic_tools/analysis/__init__.py
-from .my_tool import my_analysis_tool
-my_new_tool = my_analysis_tool
-```
-
-3. 在 `nodes.py` 的对应节点中引入并使用
-
-### 10.2 添加新节点
-
-1. 在 `state.py` 的 `TaskStep` 枚举添加步骤
-
-2. 在 `nodes.py` 实现节点处理器
-
-3. 在 `nodes.py` 的 `NODE_HANDLERS` 映射中添加
-
-4. 在 `graph.py` 中连接新节点
-
-### 10.3 接入外部 API
-
-1. 在 `.env` 中添加配置
-
-2. 在 `atomic_tools/` 中创建对应的工具封装
-
----
-
-## 11. 数据库模型
-
-### Task 表关键字段
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | String(36) | UUID 主键 |
-| user_id | Integer | 关联用户 |
-| user_request | Text | 用户需求 |
-| source_type | String | 'upload', 'link', 'search' |
-| source_value | String | 文件ID或链接 |
-| ringtone_params | JSON | 铃声参数 |
-| status | Enum | 任务状态 |
-| plan | JSON | 执行计划 |
-| thinking_process | JSON | 思考记录 |
-| final_audio_url | String | 输出URL |
-| error_message | Text | 错误信息 |
+- 写入 `running/succeeded/failed/cancelled` trace；
+- 计算节点耗时；
+- 归一化异常并清洗敏感内容；
+- 将节点结果中的字段变化写入摘要，而不是记录完整载荷。
+
+主图使用 `AsyncSqliteSaver`。配置中的 `thread_id` 等于任务 ID，因此恢复、反馈
+续跑和诊断使用同一身份。
+
+## 4. AgentState
+
+`AgentState` 是 `TypedDict(total=False)`。主要字段分组：
+
+| 分组 | 关键字段 |
+|---|---|
+| 身份 | `task_id`、`thread_id`、`profile_id` |
+| 输入 | `user_request`、`source_type`、`source_value`、`file_id` |
+| 参数 | `instrument`、`tempo`、`duration`、`filename` |
+| 规划 | `plan`、`plan_description`、`current_step`、`current_step_index` |
+| 音频分析 | `audio_path`、`analysis_result`、Demucs 路径和状态 |
+| 旋律 | `melody_data`、旋律/和声源、候选摘要、选中提取器 |
+| MIDI/编曲 | `midi_path`、`arrangement_params`、`arranged_midi_path` |
+| 结果 | `final_audio_path`、`final_audio_url`、`audio_duration` |
+| 质量返工 | `needs_revision`、`reflection`、`correction`、`retry_count`、`max_retries` |
+| 恢复 | `resume_from_node`、`human_feedback`、`waiting_for_feedback` |
+| 诊断 | `execution_trace`、`execution_error`、`step_results` |
+
+`analysis_result`、`step_results` 等字典使用后写入胜出的 reducer；
+`execution_trace` 使用有界、去重、按时间排序的事件 reducer。
+
+## 5. 节点与子图
+
+### 5.1 `fetch_source`
+
+解析上传文件、链接或搜索来源，生成本地 `audio_path`。失败会终止当前图，不会
+凭空构造后续产物。
+
+### 5.2 `analyze_structure`
+
+调用 `analysis_graph` 进行元信息、BPM、速度变化、响度、频谱、段落、可选情绪/
+效果分析和必要的 Demucs 分离。完成后：
+
+- 把结构化结果写入 `analysis_result`；
+- 生成面向用户的分析摘要；
+- 调用 `plan_arrangement`，结合用户需求、分析结果、当前参数和 RAG 知识决定
+  乐器、速度与可选移调。
+
+用户显式设置的非默认参数优先，LLM 输出经过范围校验。
+
+### 5.3 `extract_melody`
+
+调用 `extract_graph`：
+
+1. 优先选择已分离的人声作为旋律源，原音频/伴奏保留为和声上下文；
+2. 运行可用提取器并形成候选；
+3. 根据有效音符、覆盖率、碎片率、音高范围等选择候选；
+4. 稳定化音符，过滤过短音符，量化并结合调性做修正；
+5. 输出 `melody_data`、来源、选中提取器和候选摘要。
+
+子图没有输出时，节点可直接调用 Basic Pitch 作为最后降级路径。降级会写 trace。
+
+### 5.4 `generate_midi`
+
+把旋律音符转换为 MIDI 并进行结构验证。该节点输出 `midi_path`，后续编曲只
+消费有效的本地 MIDI。
+
+### 5.5 `arrange`
+
+编曲采用两层策略：
+
+1. `autonomous_arrange_node` 创建 ReAct/function-calling Agent，工具包括知识
+   检索、换乐器、变速、移调、量化和回声；
+2. 自主结果必须存在且能被 `mido` 解析，否则记录 fallback，并执行
+   `arrange_graph` 的确定性工具链。
+
+编曲后可应用 LLM 决策的移调，并仅在旋律长休止区域增加低力度和声。纠正性
+重试会先对旋律做调性修正并重建 MIDI。
+
+### 5.6 `render`
+
+使用 FluidSynth 将 MIDI 渲染为音频，按配置和需求进行截取、格式转换并生成
+用户可访问的结果 URL。外部二进制调用受执行器管理，取消或停机时会尝试终止。
+
+### 5.7 `check_quality` 与 `reflect`
+
+`quality_graph` 汇总音频和音乐性检查，结果进入 `step_results.quality_check`。
+`reflect` 调用 LLM 生成是否返工、原因和建议；LLM 失败时安全降级为“不返工”。
+
+只有 `max_retries > 0` 且反思要求修订时，`retry_router` 才回到 `arrange`。
+返工次数达到上限后结束，避免无限循环。
+
+## 6. AgentExecutor 生命周期
+
+`AgentExecutor` 连接数据库任务、LangGraph 状态和用户可见消息：
+
+1. 初始化任务状态和铃声参数；恢复任务时读取持久化中间数据。
+2. 设置执行 trace 上下文、Profile 记忆上下文和 Profile ID ContextVar。
+3. 新任务进入 `planning` 并由 LLM 生成允许列表内的步骤；崩溃恢复任务可跳过
+   重复规划。
+4. 进入 `executing`，读取 checkpoint：
+   - checkpoint 有待执行节点时，以 `None` 输入继续；
+   - 显式反馈/人工回答恢复时，复用 checkpoint 产物，覆盖新参数并从
+     `resume_from_node` 进入；
+   - checkpoint 已完成但数据库未同步时，从 checkpoint values 修复结果。
+5. 成功后写入产物和 `completed`；失败写入结构化错误和 `failed`；用户取消写入
+   `cancelled`；运行时停机使用 suspension，不改变持久化任务状态。
+6. 最终恢复 ContextVar 并关闭数据库会话。
+
+状态更新使用条件 UPDATE。只允许活跃状态转入下一状态，持久化取消优先于迟到
+成功或失败。
+
+## 7. 调度、租约与重启恢复
+
+API 创建任务后调用 `schedule_agent_task`，但进程内调度不是执行所有权。真正
+执行前必须通过 `claim_task`：
+
+- `pending` 原子转为 `planning`；
+- `planning/executing` 只有租约缺失或过期才能被恢复实例认领；
+- 心跳持续延长租约；执行结束释放租约；
+- 应用启动扫描 `pending` 和孤儿活跃任务；
+- 同进程 `_scheduled_tasks` 只负责减少重复协程，数据库租约负责跨进程去重。
+
+## 8. 反馈与人工介入
+
+两条链路用途不同：
+
+| 场景 | 行为 |
+|---|---|
+| 对完成/失败结果提交反馈 | 保存 `Feedback`，结构化分析反馈，创建继承产物的子任务，从合适节点重跑 |
+| 运行中请求人工输入 | 当前任务进入 `waiting_input`，保存问题并暂停本机执行器 |
+| 回答人工问题 | 保存回答和参数，原任务转回 `pending`，从指定节点恢复 |
+
+反馈和人工回答会进入 Profile 长期记忆。人工介入记录有 `open/responded/cancelled`
+状态；取消任务会关闭仍开放的介入记录。
+
+## 9. RAG 与长期记忆
+
+执行开始前，系统以当前请求、乐器和速度召回 Profile 相关记忆，构建三层上下文：
+
+1. 用户明确设置的全局偏好；
+2. 历史统计画像；
+3. 与当前任务相关的长期记忆。
+
+长期记忆明确标注为用户数据而非系统指令。编曲知识检索只能看到全局文档和
+当前 Profile 的专属文档。知识正文可注入编曲决策，但不会写入 trace。
+
+## 10. 可观测性与韧性
+
+trace 事件类型包括 `task`、`node`、`tool`、`llm`、`route`、`resilience`、
+`control` 和 `memory`。关键边界：
+
+- LLM 请求和工具执行有独立超时；
+- 只有白名单中的无副作用分析工具自动重试；
+- 自主编曲、旋律提取和伴奏均有显式 fallback 事件；
+- pipeline 使用总 deadline，避免每个阶段重新获得完整预算；
+- 错误模型包含 scope、component、code、retryable 和清洗后的摘要；
+- WebSocket 的 `trace_event` 与诊断 API 均来自持久化数据。
+
+## 11. 数据持久化
+
+| 数据 | 存储 |
+|---|---|
+| 任务状态、计划、参数、产物、中间摘要 | `tasks` |
+| 执行所有权 | `task_execution_leases` |
+| 实时事件 | `task_events` |
+| LangGraph 状态 | `checkpoints.db` |
+| 用户反馈与人工介入 | `feedbacks`、`human_interventions` |
+| 知识和长期记忆 | `knowledge_documents`、`long_term_memories` |
+| 用户可见思考步骤 | `tasks.thinking_process` |
+| 工程 trace 与错误 | `tasks.intermediate_data` 及事件表 |
+
+## 12. 扩展指南
+
+### 新增原子工具
+
+1. 放入正确领域目录并提供明确、可序列化的输入输出。
+2. 决定是否有副作用；只有安全幂等工具可进入自动重试白名单。
+3. 通过现有 trace 包装器记录结构摘要，不记录参数值或文件内容。
+4. 在子图或自主 Agent 工具列表中显式注册。
+
+### 修改子图
+
+1. 更新子图状态定义与主状态映射。
+2. 保留 Profile 工具偏好覆盖逻辑。
+3. 为分支、降级和产物验证增加测试。
+4. 验证旧 checkpoint 缺少新字段时仍能使用默认值。
+
+### 新增主节点
+
+1. 更新 `AgentState` 和 `graph.py`；
+2. 更新入口路由允许列表、规划步骤允许列表和恢复节点白名单；
+3. 定义取消、失败和重启恢复语义；
+4. 补充 trace、任务事件、API 状态和回归测试。
